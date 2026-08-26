@@ -2,11 +2,11 @@
  * Start the server first:  python3 app.py --no-browser --port 7899
  * Then:                    node test/verify.mjs [http://127.0.0.1:7899] */
 
-import { chromium } from 'playwright';
+import { launch, base } from './browser.mjs';
 import fs from 'fs';
 import path from 'path';
 
-const BASE = process.argv[2] || 'http://127.0.0.1:7871';
+const BASE = base('http://127.0.0.1:7871/').replace(/\/$/, '');
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname);
 const out = [];
 let fails = 0;
@@ -16,7 +16,7 @@ function t(name, pass, note) {
   if (!pass) fails++;
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await launch();
 
 async function newPage(width = 1600, height = 950) {
   const page = await browser.newPage({ viewport: { width, height } });

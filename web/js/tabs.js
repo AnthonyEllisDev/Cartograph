@@ -5,6 +5,7 @@ import { library, loadLibrary, forgetPatterns, warm } from './assets.js';
 import { extensions } from './extensions.js';
 import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
+import * as hex from './hex.js';
 import * as R from './render.js';
 import { ACCENTS, BACKDROPS, THEMES, applyLook, look } from './theme.js';
 import { $, $$, ago, el, modal, toast } from './util.js';
@@ -201,8 +202,17 @@ export async function newMapDialog() {
       ['40x30', 'Large map — 40 × 30 squares'],
       ['60x40', 'Dungeon level — 60 × 40 squares'],
     ],
+    hex: [
+      ['20x14', 'Local — 20 × 14 hexes'],
+      ['26x18', 'Region — 26 × 18 hexes'],
+      ['34x24', 'Domain — 34 × 24 hexes'],
+      ['44x30', 'Continent — 44 × 30 hexes'],
+    ],
   };
   const CELL = 70;
+  // Hex columns interlock, so a map twenty hexes across is not twenty hex
+  // widths across. hex.spacing knows the difference.
+  const HEX = hex.spacing(MAP_KINDS.hex.grid);
 
   const kind = el('select', {}, Object.entries(MAP_KINDS).map(([id, k]) =>
     el('option', { value: id, text: k.label })));
@@ -218,16 +228,27 @@ export async function newMapDialog() {
   };
   const size = () => {
     const [a, b] = preset.value.split('x').map(Number);
-    return kind.value === 'battle' ? [a * CELL, b * CELL] : [a, b];
+    if (kind.value === 'battle') return [a * CELL, b * CELL];
+    if (kind.value === 'hex') return [Math.round(a * HEX.col), Math.round(b * HEX.row)];
+    return [a, b];
   };
   const describe = () => {
     const [w, h] = size();
     const k = MAP_KINDS[kind.value];
-    note.textContent = kind.value === 'battle'
-      ? `${w} × ${h} pixels, ${CELL} px to the square, one square is ${k.scale.perCell} ${k.scale.unit}. `
-        + 'Grid and snapping are on, and there is a walls layer for the tabletop export.'
-      : `${w} × ${h} pixels, one grid cell is ${k.scale.perCell} ${k.scale.unit}. `
+    if (kind.value === 'battle') {
+      note.textContent =
+        `${w} × ${h} pixels, ${CELL} px to the square, one square is ${k.scale.perCell} ${k.scale.unit}. `
+        + 'Grid and snapping are on, and there is a walls layer for the tabletop export.';
+    } else if (kind.value === 'hex') {
+      note.textContent =
+        `${w} × ${h} pixels, ${k.grid.size} px to the hex. `
+        + 'Stamps land in the middle of a hex, paths and borders on the edges, '
+        + 'and the measure tool counts hexes rather than miles.';
+    } else {
+      note.textContent =
+        `${w} × ${h} pixels, one grid cell is ${k.scale.perCell} ${k.scale.unit}. `
         + 'Starts with sea, a landmass and parchment.';
+    }
   };
   kind.addEventListener('change', refresh);
   preset.addEventListener('change', describe);

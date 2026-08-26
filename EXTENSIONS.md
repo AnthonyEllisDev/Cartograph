@@ -201,10 +201,41 @@ api.registerExporter({
 | `api.server` | the local HTTP API: `state`, `packs`, `importAsset`, `projects`, `createProject`, `readProject`, `writeProject`, `deleteProject`, `writeLayer`, `writeThumb`, `exportImage`, `openFolder` |
 | `api.ui` | `{ el, modal, toast, icon }` |
 | `api.util` | `{ clamp, rng, uid, hashString }` — `rng` is seeded, for repeatable noise |
-| `api.map` | `{ makeLayer, snapPoint, distanceLabel, LAYER_KINDS }` |
+| `api.map` | `{ makeLayer, snapPoint, distanceLabel, measureBetween, gridStepPx, hex, LAYER_KINDS }` — see *Grids* below |
 | `api.markDirty()` | mark the document changed |
 | `api.scheduleAutosave()` | poke the autosave timer |
 | `api.invalidate(layer, box)` | rebuild a layer, optionally only inside a rectangle |
+
+### Grids
+
+`api.map.gridStepPx(doc)` is how many pixels one cell is — the grid layer is the
+authority, not `doc.scale.cellPx`, and on a hex grid the step is across the
+flats rather than the corner-to-corner `size` the layer stores. Anything
+reporting a distance should go through it.
+
+`api.map.measureBetween(doc, from, to)` returns `{ text, cells, pixels, hex,
+path }`. On a hex grid `cells` is a count of hexes and `path` is the hexes
+crossed; on a square grid `cells` is a fraction and `path` is `null`.
+
+`api.map.hex` is the geometry itself, and anything drawing into hexes should use
+it rather than working the arithmetic out again — that is exactly how a grid
+ends up drawn in one place and snapped to in another. Every function takes the
+grid layer as its first argument and reads `size` and `orientation` off it.
+
+| | |
+|---|---|
+| `at(grid, pt)` | the hex containing a point, as axial `{q, r}` |
+| `toPixel(grid, q, r)` | that hex's centre |
+| `corners(grid, q, r)` | its six vertices, in drawing order |
+| `edgeMidpoints(grid, q, r)` | the middle of each of its six edges |
+| `neighbours(q, r)` | the six hexes around it |
+| `distance(a, b)` | hexes crossed between two axial coordinates |
+| `line(a, b)` | every hex on the shortest path, ends included |
+| `snap(grid, pt, prefer, mode)` | what `snapPoint` calls for hex grids |
+| `forEach(grid, w, h, fn)` | every hex on the map: `fn(x, y, col, row, q, r)` |
+| `fromOffset` / `toOffset` | axial ↔ the `col, row` a person reads off a map |
+| `step(grid)` | centre-to-centre distance |
+| `spacing(grid)` | `{ col, row }` — how far apart columns and rows sit |
 
 ### Undo
 

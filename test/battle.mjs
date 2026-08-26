@@ -1,11 +1,11 @@
-import { chromium } from 'playwright';
+import { launch, base } from './browser.mjs';
 import fs from 'fs';
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const b = await launch();
 const p = await b.newPage({ viewport: { width: 1700, height: 1000 } });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE ' + m.text()); });
-await p.goto('http://127.0.0.1:7871/', { waitUntil: 'networkidle' });
+await p.goto(base('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
 await p.waitForTimeout(1200);
 
 // new battle map through the real dialog

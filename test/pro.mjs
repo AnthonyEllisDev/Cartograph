@@ -1,10 +1,10 @@
-import { chromium } from 'playwright';
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+import { launch, base } from './browser.mjs';
+const b = await launch();
 const p = await b.newPage({ viewport: { width: 1600, height: 950 } });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE ' + m.text()); });
-await p.goto('http://127.0.0.1:7871/', { waitUntil: 'networkidle' });
+await p.goto(base('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
 await p.waitForTimeout(1400);
 const ok = [], bad = [];
 const t = (l, c, x='') => (c ? ok : bad).push(l + (x ? ' — ' + x : ''));

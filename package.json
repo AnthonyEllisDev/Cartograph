@@ -4,7 +4,14 @@
   "private": true,
   "description": "Test harness for Cartograph. The program itself needs no Node.",
   "scripts": {
+    "browser": "playwright install chromium",
     "verify": "node test/verify.mjs",
+    "hex": "node test/hex.mjs",
+    "battle": "node test/battle.mjs",
+    "brushes": "node test/brushes.mjs",
+    "ext": "node test/ext.mjs",
+    "theme": "node test/theme.mjs",
+    "pro": "node test/pro.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

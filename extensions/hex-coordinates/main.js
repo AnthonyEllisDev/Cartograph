@@ -39,7 +39,7 @@ export default function setup(api) {
       const size = grid.size;
       const ox = grid.offsetX || 0, oy = grid.offsetY || 0;
       const scheme = SCHEMES[layer.scheme] || SCHEMES.alphanumeric;
-      const hex = grid.type === 'hex';
+      const isHex = grid.type === 'hex';
 
       ctx.save();
       ctx.fillStyle = layer.color || '#3a2c1e';
@@ -48,17 +48,14 @@ export default function setup(api) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      if (hex) {
+      if (isHex) {
+        // api.map.hex owns the layout, so this label lands in the hex the
+        // editor would snap to — including when the hexes are pointy-top.
         const r = size / 2;
-        const dx = r * 1.5, dy = r * Math.sqrt(3);
-        for (let col = 0; ox + col * dx < doc.width; col++) {
-          for (let row = 0; oy + row * dy < doc.height; row++) {
-            const x = ox + col * dx;
-            const y = oy + row * dy + (col % 2 ? dy / 2 : 0);
-            if (x < 0 || y < 0) continue;
-            ctx.fillText(scheme.make(col, row), x, y - r * (layer.inset || 0.55));
-          }
-        }
+        api.map.hex.forEach(grid, doc.width, doc.height, (x, y, col, row) => {
+          if (x < 0 || y < 0 || col < 0 || row < 0) return;
+          ctx.fillText(scheme.make(col, row), x, y - r * (layer.inset || 0.55));
+        });
       } else {
         for (let cx = 0; ox + cx * size < doc.width; cx++) {
           for (let cy = 0; oy + cy * size < doc.height; cy++) {

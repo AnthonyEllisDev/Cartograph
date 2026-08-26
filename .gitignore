@@ -9,6 +9,10 @@ exports/
 assets/packs/starter/
 assets/packs/user/
 
+# Python leaves these behind next to the source
+__pycache__/
+*.pyc
+
 # Test tooling
 node_modules/
 package-lock.json

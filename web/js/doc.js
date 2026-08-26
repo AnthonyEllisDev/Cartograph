@@ -3,6 +3,7 @@
    readable, diffable, and re-renders identically rather than being a flat
    picture of itself. */
 
+import * as hex from './hex.js';
 import { uid } from './util.js';
 
 export const FORMAT = 1;
@@ -43,8 +44,12 @@ export function makeLayer(kind, extra = {}) {
   if (kind === 'walls') Object.assign(base, {
     color: '#20242c', thickness: 7, doorColor: '#a8763c',
   });
+  // `size` is corner-to-corner on a hex grid, which is what it has always been;
+  // `orientation` is only read when type is 'hex', and defaults to the flat-top
+  // layout every existing document was drawn with.
   if (kind === 'grid') Object.assign(base, {
-    type: 'none', size: 64, color: '#3a2c1e', opacity: 0.25, offsetX: 0, offsetY: 0, lineWidth: 1,
+    type: 'none', size: 64, orientation: 'flat',
+    color: '#3a2c1e', opacity: 0.25, offsetX: 0, offsetY: 0, lineWidth: 1,
   });
   if (kind === 'paper') Object.assign(base, {
     texture: 'starter/parchment', scale: 2, opacity: 0.42, blend: 'multiply',
@@ -71,6 +76,18 @@ export const MAP_KINDS = {
     grid: { type: 'square', size: 70, opacity: 0.34, color: '#1c2028' },
     snap: 'grid',
     layers: ['floor', 'terrain', 'objects', 'walls', 'labels', 'grid', 'paper'],
+  },
+  // A hex crawl is a region map that counts in hexes: the grid is the unit, so
+  // the scale is one hex per cell and snapping is on from the start.
+  hex: {
+    label: 'Hex crawl',
+    scale: { unit: 'hex', perCell: 1 },
+    // A hex crawl is read at a glance and often zoomed out, so the grid has to
+    // survive being downscaled — a one-pixel line at 0.3 alpha does not.
+    grid: { type: 'hex', size: 110, orientation: 'flat', opacity: 0.5,
+            color: '#3d3018', lineWidth: 1.5 },
+    snap: 'grid',
+    layers: ['water', 'land', 'terrain', 'paths', 'objects', 'labels', 'grid', 'paper'],
   },
 };
 
@@ -112,6 +129,9 @@ export function newDocument(opts = {}) {
   }
   const grid = doc.layers.find((l) => l.kind === 'grid');
   if (grid) Object.assign(grid, recipe.grid);
+  // Only now is the grid layer real, and the grid is what decides how many
+  // pixels a cell is worth — on a hex map that is not the same as its size.
+  doc.scale.cellPx = gridStepPx(doc);
   return doc;
 }
 
@@ -124,7 +144,8 @@ export function newDocument(opts = {}) {
 export function snapPoint(doc, pt, prefer = 'corner') {
   const mode = doc.snap || 'off';
   if (mode === 'off') return pt;
-  const grid = doc.layers.find((l) => l.kind === 'grid');
+  const grid = gridLayer(doc);
+  if (grid && grid.type === 'hex') return hex.snap(grid, pt, prefer, mode);
   const size = (grid && grid.size) || (doc.scale && doc.scale.cellPx) || 64;
   const ox = (grid && grid.offsetX) || 0, oy = (grid && grid.offsetY) || 0;
   const step = mode === 'half' ? size / 2 : size;
@@ -135,14 +156,67 @@ export function snapPoint(doc, pt, prefer = 'corner') {
   };
 }
 
-/** Distance in map units, for the measure tool and the scale bar. */
-export function distanceLabel(doc, pixels) {
-  const scale = doc.scale || { unit: 'px', perCell: 1, cellPx: 64 };
-  const cells = pixels / (scale.cellPx || 64);
-  const value = cells * (scale.perCell || 1);
-  const rounded = value >= 100 ? Math.round(value)
+export function gridLayer(doc) {
+  return (doc && doc.layers.find((l) => l.kind === 'grid')) || null;
+}
+
+/** How many pixels one cell step is.
+ *
+ * The grid layer is the authority, not `scale.cellPx`: the two start in sync
+ * and the Map panel keeps them that way, but a document written before that
+ * was true can have a stale `cellPx`, and a stale scale silently makes every
+ * distance on the map wrong. On a hex grid the step is centre-to-centre, which
+ * is shorter than the corner-to-corner `size` the layer stores. */
+export function gridStepPx(doc) {
+  const grid = gridLayer(doc);
+  if (grid && grid.type === 'hex') return hex.step(grid);
+  if (grid && grid.type === 'square' && grid.size) return grid.size;
+  return (doc && doc.scale && doc.scale.cellPx) || (grid && grid.size) || 64;
+}
+
+function roundish(value) {
+  return value >= 100 ? Math.round(value)
     : value >= 10 ? Math.round(value * 10) / 10 : Math.round(value * 100) / 100;
-  return rounded + ' ' + (scale.unit || 'units');
+}
+
+/** Distance in map units, for the scale bar and for anything holding only a
+ *  length. Measurement between two known points should use `measureBetween`,
+ *  which can count hexes properly. */
+export function distanceLabel(doc, pixels) {
+  const scale = (doc && doc.scale) || { unit: 'px', perCell: 1, cellPx: 64 };
+  const cells = pixels / (gridStepPx(doc) || 64);
+  return roundish(cells * (scale.perCell || 1)) + ' ' + (scale.unit || 'units');
+}
+
+/** Measure between two points on the map.
+ *
+ * On a square grid this is the straight-line distance, as it always was. On a
+ * hex grid it is the number of hexes you cross, which is a different number
+ * and the only one a hex crawl cares about — three hexes is three hexes
+ * whether they run east or north-east, and the pixel distance is not.
+ *
+ * Returns the path as well, so the measure tool can show its work. */
+export function measureBetween(doc, from, to) {
+  const scale = (doc && doc.scale) || { unit: 'units', perCell: 1 };
+  const pixels = Math.hypot(to.x - from.x, to.y - from.y);
+  const grid = gridLayer(doc);
+  const unit = scale.unit || 'units';
+  const perCell = scale.perCell || 1;
+
+  if (grid && grid.type === 'hex') {
+    const a = hex.at(grid, from), b = hex.at(grid, to);
+    const cells = hex.distance(a, b);
+    const hexes = cells + (cells === 1 ? ' hex' : ' hexes');
+    return {
+      hex: true, cells, pixels, path: hex.line(a, b),
+      text: unit === 'hex' ? hexes : roundish(cells * perCell) + ' ' + unit + '  ·  ' + hexes,
+    };
+  }
+  const cells = pixels / (gridStepPx(doc) || 64);
+  return {
+    hex: false, cells, pixels, path: null,
+    text: roundish(cells * perCell) + ' ' + unit,
+  };
 }
 
 export function findLayer(doc, id) {

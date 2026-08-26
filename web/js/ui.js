@@ -5,7 +5,8 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, makeLayer } from './doc.js';
+import { LAYER_KINDS, gridLayer, gridStepPx, makeLayer } from './doc.js';
+import * as hex from './hex.js';
 import { history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
 import { extensions } from './extensions.js';
@@ -441,13 +442,36 @@ function renderLayerProps() {
       (v) => coast('shallowColor', v)));
   }
   if (layer.kind === 'grid') {
+    const isHex = layer.type === 'hex';
+    // The grid is what a cell is. Change it and the scale, the measure tool and
+    // the scale bar have to follow, or the map quietly starts lying about how
+    // far apart things are.
+    const regrid = () => {
+      R.invalidate(layer);
+      if (app.doc.scale) app.doc.scale.cellPx = gridStepPx(app.doc);
+      markDirty();
+      renderMapProps();
+    };
     root.appendChild(field({ type: 'select', label: 'Grid', value: layer.type,
       options: [['none', 'None'], ['square', 'Square'], ['hex', 'Hex']] },
-      (v) => { layer.type = v; R.invalidate(layer); markDirty(); }));
-    root.appendChild(field({ type: 'range', label: 'Cell size', min: 8, max: 320, step: 1,
-      value: layer.size, suffix: 'px' }, (v) => { layer.size = v; R.invalidate(layer); markDirty(); }));
+      (v) => { layer.type = v; regrid(); renderLayerProps(); }));
+    if (isHex) {
+      root.appendChild(field({ type: 'select', label: 'Orientation',
+        value: layer.orientation || 'flat',
+        options: [['flat', 'Flat top'], ['pointy', 'Pointy top']] },
+        (v) => { layer.orientation = v; regrid(); }));
+    }
+    root.appendChild(field({ type: 'range', label: isHex ? 'Hex width' : 'Cell size',
+      min: 8, max: 320, step: 1, value: layer.size, suffix: 'px' },
+      (v) => { layer.size = v; regrid(); }));
     root.appendChild(field({ type: 'color', label: 'Colour', value: layer.color },
       (v) => { layer.color = v; R.invalidate(layer); markDirty(); }));
+    if (isHex) {
+      root.appendChild(el('p', { class: 'empty', text:
+        'Hex width is corner to corner. One hex measures '
+        + Math.round(gridStepPx(app.doc)) + ' px across the flats, which is what '
+        + 'the scale and the measure tool count in.' }));
+    }
   }
   if (layer.kind === 'paper') {
     root.appendChild(field({ type: 'range', label: 'Vignette', min: 0, max: 1, step: 0.01,
@@ -555,10 +579,16 @@ export function renderMapProps() {
   const root = $('#map-props');
   root.innerHTML = '';
   if (!app.doc) return;
-  const grid = app.doc.layers.find((l) => l.kind === 'grid');
-  const cells = grid && grid.size
-    ? `${Math.round(app.doc.width / grid.size)} × ${Math.round(app.doc.height / grid.size)} cells`
-    : '—';
+  const grid = gridLayer(app.doc);
+  let cells = '—';
+  if (grid && grid.size) {
+    if (grid.type === 'hex') {
+      const sp = hex.spacing(grid);
+      cells = `${Math.round(app.doc.width / sp.col)} × ${Math.round(app.doc.height / sp.row)} hexes`;
+    } else {
+      cells = `${Math.round(app.doc.width / grid.size)} × ${Math.round(app.doc.height / grid.size)} cells`;
+    }
+  }
   root.appendChild(el('dl', { class: 'kv' }, [
     el('dt', { text: 'Size' }), el('dd', { text: `${app.doc.width} × ${app.doc.height}` }),
     el('dt', { text: 'Grid' }), el('dd', { text: cells }),
@@ -579,8 +609,10 @@ export function renderMapProps() {
   root.appendChild(field({ type: 'select', label: 'Snap to grid', value: app.doc.snap || 'off',
     options: [['off', 'Off'], ['grid', 'To the grid'], ['half', 'To half cells']] },
     (v) => { app.doc.snap = v; markDirty(); }));
-  root.appendChild(el('p', { class: 'empty', text:
-    'Walls and shapes snap to cell corners, stamps to cell centres. Hold Alt to ignore it.' }));
+  root.appendChild(el('p', { class: 'empty', text: grid && grid.type === 'hex'
+    ? 'Walls, paths and shapes snap to hex corners, stamps to hex centres. '
+      + 'Half cells add the edge midpoints. Hold Alt to ignore it.'
+    : 'Walls and shapes snap to cell corners, stamps to cell centres. Hold Alt to ignore it.' }));
   root.appendChild(el('button', {
     class: 'btn', text: 'Resize canvas…', onclick: resizeDialog,
   }));

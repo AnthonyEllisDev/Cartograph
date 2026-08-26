@@ -7,7 +7,8 @@
  */
 
 import { imageNow, pattern } from './assets.js';
-import { LAYER_KINDS } from './doc.js';
+import { LAYER_KINDS, gridStepPx } from './doc.js';
+import * as hex from './hex.js';
 import { clamp, makeCanvas, rng } from './util.js';
 
 export const view = {
@@ -963,19 +964,15 @@ function renderGrid(layer, ctx) {
     for (let x = ox % size; x <= w; x += size) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); }
     for (let y = oy % size; y <= h; y += size) { ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); }
   } else {
-    const r = size / 2;
-    const dx = r * 1.5, dy = r * Math.sqrt(3);
-    for (let col = -1; col * dx <= w + dx; col++) {
-      for (let row = -1; row * dy <= h + dy; row++) {
-        const cx = ox + col * dx, cy = oy + row * dy + (col % 2 ? dy / 2 : 0);
-        for (let i = 0; i < 6; i++) {
-          const a = (Math.PI / 3) * i;
-          const px = cx + r * Math.cos(a), py = cy + r * Math.sin(a);
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
+    // The geometry lives in hex.js so that what is drawn here and what the
+    // snapping picks can never drift apart.
+    hex.forEach(layer, w, h, (cx, cy, col, row, q, r) => {
+      const pts = hex.corners(layer, q, r);
+      for (let i = 0; i < 6; i++) {
+        if (i === 0) ctx.moveTo(pts[i].x, pts[i].y); else ctx.lineTo(pts[i].x, pts[i].y);
       }
-    }
+      ctx.closePath();
+    });
   }
   ctx.stroke();
   ctx.restore();
@@ -1109,7 +1106,7 @@ function drawScaleBar(ctx, w, h) {
   const doc = view.doc;
   const scale = doc && doc.scale;
   if (!scale || !scale.perCell) return;
-  const unitsPerPx = scale.perCell / (scale.cellPx || 64);
+  const unitsPerPx = scale.perCell / (gridStepPx(doc) || 64);
 
   // Aim for ~150 screen pixels, then round the distance it represents up to a
   // 1 / 2 / 2.5 / 5 times a power of ten.

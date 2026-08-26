@@ -8,7 +8,8 @@
 
 import { imageNow, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, scheduleAutosave, setToolSetting, toolSetting } from './app.js';
-import { LAYER_KINDS, distanceLabel } from './doc.js';
+import { LAYER_KINDS, gridLayer, measureBetween } from './doc.js';
+import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
 import { modal, el, toast, uid } from './util.js';
@@ -726,8 +727,27 @@ define({
     const { from, to } = this.state;
     if (!from || !to) return;
     const a = R.mapToScreen(from.x, from.y), b = R.mapToScreen(to.x, to.y);
-    const pixels = Math.hypot(to.x - from.x, to.y - from.y);
+    const reading = measureBetween(app.doc, from, to);
     ctx.save();
+    // On a hex grid the answer is a count of hexes, so show which ones: a
+    // straight line labelled "4 hexes" is the one place a measurement can look
+    // like it is lying when it is not.
+    if (reading.path) {
+      const grid = gridLayer(app.doc);
+      ctx.fillStyle = 'rgba(217,164,65,.18)';
+      ctx.strokeStyle = 'rgba(217,164,65,.5)';
+      ctx.lineWidth = 1;
+      for (const cell of reading.path) {
+        const pts = hex.corners(grid, cell.q, cell.r).map((p) => R.mapToScreen(p.x, p.y));
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          if (i === 0) ctx.moveTo(pts[i].x, pts[i].y); else ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
     ctx.strokeStyle = '#d9a441';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
@@ -742,7 +762,7 @@ define({
       ctx.fillStyle = '#d9a441';
       ctx.fill();
     }
-    const text = distanceLabel(app.doc, pixels);
+    const text = reading.text;
     ctx.font = '600 12px ui-monospace, monospace';
     const w = ctx.measureText(text).width + 14;
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;

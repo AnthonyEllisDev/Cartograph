@@ -15,7 +15,8 @@
 import { api as serverApi } from './api.js';
 import { image, imageNow, library, pattern, warm } from './assets.js';
 import { activeLayer, app, emit, markDirty, on, scheduleAutosave } from './app.js';
-import { LAYER_KINDS, distanceLabel, makeLayer, snapPoint } from './doc.js';
+import { LAYER_KINDS, distanceLabel, gridStepPx, makeLayer, measureBetween, snapPoint } from './doc.js';
+import * as hex from './hex.js';
 import { pushEntry, restore, snapshot } from './history.js';
 import { icon, ICONS } from './icons.js';
 import * as R from './render.js';
@@ -114,7 +115,8 @@ function makeApi(manifest) {
     server: serverApi,
     ui: { el, modal, toast, icon },
     util: { clamp, rng, uid, hashString },
-    map: { makeLayer, snapPoint, distanceLabel, LAYER_KINDS },
+    // Additive only: API_VERSION stays 1 because nothing here was taken away.
+    map: { makeLayer, snapPoint, distanceLabel, measureBetween, gridStepPx, hex, LAYER_KINDS },
     markDirty,
     scheduleAutosave,
     invalidate: (layer, box) => R.invalidate(layer, box),

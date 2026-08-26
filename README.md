@@ -65,6 +65,7 @@ extensions/           extensions; one folder each, loaded at startup
   hex-coordinates/      worked example: a generated layer and a side panel
   map-aging/            worked example: commands that draw on an existing layer
 test/verify.mjs       82 end-to-end checks against the running program
+test/hex.mjs          25 more, for hex snapping and hex-native measurement
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
 ```
@@ -131,6 +132,25 @@ five-foot squares, snapping on by default, and a walls layer.
 drawn on the map *and* written into the export as data: tick *Also write a
 Universal VTT file* and you get a `.dd2vtt` next to the PNG, which Foundry,
 Roll20 and the rest import with line of sight and door positions already built.
+
+### Hex crawls
+
+*New map* also offers a hex crawl, sized in hexes rather than pixels, and hexes
+are first-class rather than merely drawable:
+
+- **Stamps land in the middle of a hex** and walls, paths and shapes land on the
+  corners, the same corner-or-centre distinction squares get. *Snap to half
+  cells* adds the edge midpoints. Alt still ignores the grid entirely.
+- **The measure tool counts hexes**, because a hex crawl counts in hexes and
+  three hexes north-east is three hexes however long the pixel line is. It
+  highlights the hexes it counted, so you can see the path it charged you for.
+  With a real-world unit set it reads both: *24 mi · 4 hexes*.
+- **Flat-top or pointy-top**, switchable in the Grid layer's panel. Everything
+  that touches the grid follows, including the coordinates extension.
+
+The hex layer's *Hex width* is measured corner to corner. The distance the scale
+counts is across the flats, which is shorter — the panel tells you both, because
+a map that quietly measures 15% long is worse than one with no scale at all.
 
 ### Presets, history and the palette
 
@@ -244,13 +264,21 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are four narrower scripts beside it: `battle.mjs` (grid snapping and the
-VTT export), `brushes.mjs` (the newer brush types), `ext.mjs` (the extension
-host) and `theme.mjs` / `pro.mjs` (the interface settings, presets and
-history).
+There are narrower scripts beside it: `hex.mjs` (25 checks on hex snapping,
+measurement and both orientations), `battle.mjs` (grid snapping and the VTT
+export), `brushes.mjs` (the newer brush types), `ext.mjs` (the extension host)
+and `theme.mjs` / `pro.mjs` (the interface settings, presets and history).
 
-Requires `npm install playwright` and a Chromium for it. Nothing in the program
-itself needs Node.
+```
+npm install playwright
+npm run browser            # playwright install chromium
+npm run verify -- http://127.0.0.1:7870
+```
+
+If Playwright cannot find a browser — a container that keeps them somewhere
+unusual — point `CG_CHROME` at a Chrome or Chromium binary. `CG_BASE` sets the
+server URL for every script, as does passing it as the first argument. Nothing
+in the program itself needs Node.
 
 ## Licence
 
