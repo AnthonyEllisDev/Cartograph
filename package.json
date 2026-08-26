@@ -1,0 +1,13 @@
+{
+  "name": "cartograph",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test harness for Cartograph. The program itself needs no Node.",
+  "scripts": {
+    "verify": "node test/verify.mjs",
+    "demo": "node test/demo.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

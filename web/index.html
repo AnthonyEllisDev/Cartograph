@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartograph</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231b1e24'/><path d='M6 24 L12 9 L18 20 L22 14 L26 24 Z' fill='%23d9a441'/></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="mark"></span>Cartograph</div>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-tab="map">Map</button>
+    <button class="tab" data-tab="assets">Assets</button>
+    <button class="tab" data-tab="projects">Projects</button>
+    <button class="tab" data-tab="extensions">Extensions</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <div class="topbar-project">
+    <input id="project-name" class="name-field" value="Untitled Map" spellcheck="false"
+           aria-label="Project name">
+    <span class="save-state" id="save-state">not saved yet</span>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn" id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button class="btn" id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <button class="btn btn-primary" id="btn-save" title="Save (Ctrl+S)">Save</button>
+    <button class="btn" id="btn-export" title="Export a PNG (Ctrl+E)">Export</button>
+  </div>
+</header>
+
+<main id="views">
+
+  <!-- ------------------------------------------------------------- MAP -->
+  <section class="view is-active" data-view="map">
+    <div class="workspace">
+
+      <aside class="rail rail-left">
+        <div class="toolbar" id="toolbar"></div>
+        <div class="rail-scroll">
+          <div id="tool-options"></div>
+          <div id="asset-picker"></div>
+        </div>
+      </aside>
+
+      <div class="stage" id="stage">
+        <canvas id="canvas"></canvas>
+        <div class="stage-hud">
+          <span id="hud-pos">0, 0</span>
+          <span id="hud-zoom">100%</span>
+          <span id="hud-size">—</span>
+          <span class="hud-hint" id="hud-hint">Space + drag to pan · scroll to zoom</span>
+        </div>
+      </div>
+
+      <aside class="rail rail-right">
+        <div class="rail-scroll">
+          <section class="panel" id="panel-layers">
+            <h3>Layers <button class="mini" id="btn-add-layer" title="New paint layer">+</button></h3>
+            <ul class="layer-list" id="layer-list"></ul>
+            <div class="layer-props" id="layer-props"></div>
+          </section>
+          <section class="panel" id="panel-map">
+            <h3>Map</h3>
+            <div id="map-props"></div>
+          </section>
+          <section class="panel" id="panel-history">
+            <h3>History</h3>
+            <ul class="hist-list" id="history-list"></ul>
+            <p class="muted small" id="history-foot"></p>
+          </section>
+          <div id="extension-panels"></div>
+        </div>
+      </aside>
+
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- ASSETS -->
+  <section class="view" data-view="assets">
+    <div class="pad">
+      <div class="page-head">
+        <h2>Asset packs</h2>
+        <div class="row">
+          <label class="btn" for="import-input">Import files…</label>
+          <input type="file" id="import-input" multiple accept=".png,.jpg,.jpeg,.webp,.svg" hidden>
+          <button class="btn" id="btn-rescan">Rescan folder</button>
+        </div>
+      </div>
+      <p class="muted">
+        Packs are ordinary folders under <code id="packs-path">assets/packs</code>. Drop a folder of
+        PNGs in and press rescan — anything inside a <code>terrain</code> folder becomes a brush
+        texture, anything else becomes a stamp. Files you import here land in the
+        <code>user</code> pack.
+      </p>
+      <div id="pack-list"></div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------- PROJECTS -->
+  <section class="view" data-view="projects">
+    <div class="pad">
+      <div class="page-head">
+        <h2>Projects</h2>
+        <div class="row">
+          <button class="btn btn-primary" id="btn-new-project">New map</button>
+          <button class="btn" id="btn-refresh-projects">Refresh</button>
+        </div>
+      </div>
+      <p class="muted">
+        Every map is a folder under <code id="projects-path">projects</code> containing a readable
+        <code>project.json</code>. Copy one to back it up; delete one to remove it.
+      </p>
+      <div class="project-grid" id="project-grid"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------ EXTENSIONS -->
+  <section class="view" data-view="extensions">
+    <div class="pad">
+      <div class="page-head">
+        <h2>Extensions</h2>
+        <div class="row">
+          <button class="btn" id="btn-open-extensions">Open the folder</button>
+          <button class="btn" id="btn-reload-extensions">Reload</button>
+        </div>
+      </div>
+      <p class="muted">
+        Every folder under <code>extensions/</code> that contains an
+        <code>extension.json</code> is loaded at startup and can add tools, layer types,
+        panels, commands and export formats. Three worked examples ship with the program;
+        <code>EXTENSIONS.md</code> documents the API they use. Extensions are ordinary
+        JavaScript running with the same reach as the editor — read one before you enable it.
+      </p>
+      <div id="extension-list"></div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------- SETTINGS -->
+  <section class="view" data-view="settings">
+    <div class="pad narrow">
+      <h2>Settings</h2>
+      <div id="settings-body"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-root" id="modal-root" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

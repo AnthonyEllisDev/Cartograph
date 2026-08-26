@@ -1,0 +1,14 @@
+# Written at runtime
+config.json
+
+# Your maps and exports are yours; they do not belong in the repository
+projects/
+exports/
+
+# Generated on first launch, and re-rollable with --regen-pack
+assets/packs/starter/
+assets/packs/user/
+
+# Test tooling
+node_modules/
+package-lock.json

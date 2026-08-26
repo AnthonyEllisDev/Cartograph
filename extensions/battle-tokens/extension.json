@@ -1,0 +1,9 @@
+{
+  "id": "battle-tokens",
+  "name": "Battle Tokens",
+  "version": "1.0.0",
+  "author": "Cartograph",
+  "description": "Adds a Token tool and a token layer: labelled discs sized in grid cells, for creatures and objects on a battle map. A worked example of registerTool and registerLayerKind.",
+  "main": "main.js",
+  "apiVersion": 1
+}

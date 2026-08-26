@@ -1,0 +1,9 @@
+{
+  "id": "map-aging",
+  "name": "Map Aging",
+  "version": "1.0.0",
+  "author": "Cartograph",
+  "description": "Commands that put wear on a finished map: foxing on the paper, a coffee ring, a burnt edge. A worked example of registerCommand, drawing straight onto a layer and pushing an undo entry.",
+  "main": "main.js",
+  "apiVersion": 1
+}

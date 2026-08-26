@@ -1,0 +1,9 @@
+{
+  "id": "hex-coordinates",
+  "name": "Grid Coordinates",
+  "version": "1.0.0",
+  "author": "Cartograph",
+  "description": "Labels every grid cell with a coordinate, the way a hex crawl or a dungeon key does. A worked example of registerLayerKind plus a panel of options in the side rail.",
+  "main": "main.js",
+  "apiVersion": 1
+}
