@@ -8,11 +8,11 @@
 
 import { imageNow, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, scheduleAutosave, setToolSetting, toolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, measureBetween } from './doc.js';
+import { LAYER_KINDS, gridLayer, gridStepPx, measureBetween } from './doc.js';
 import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
-import { modal, el, toast, uid } from './util.js';
+import { clamp, modal, el, toast, uid } from './util.js';
 
 const BLENDS = [
   ['source-over', 'Normal'], ['multiply', 'Multiply'], ['overlay', 'Overlay'],
@@ -95,6 +95,11 @@ function endPaint() {
 
   if (!op.points.length) { R.compositeAll(); R.requestDraw(); return; }
 
+  // A mouse, or dynamics turned off, gives every point the same width. Keeping
+  // the array would mean a different rendering path and a bigger file for no
+  // difference at all, so it goes.
+  if (op.widths && op.widths.every((w) => Math.abs(w - op.widths[0]) < 0.01)) delete op.widths;
+
   if (live.kind === 'mask') {
     // The coastline is derived from the mask, so both the mask and the drawn
     // layer have to be remembered — but only inside the rectangle the stroke
@@ -172,6 +177,56 @@ function endPaint() {
   emit('layers');
 }
 
+/* ------------------------------------------------------- brush dynamics */
+
+/* Width only, never opacity.
+ *
+ * Painting is mask-then-texture precisely so that overlapping parts of one
+ * stroke do not darken each other at any opacity below 1. Varying the opacity
+ * along a stroke would put that back, so the brush tapers and nothing else.
+ *
+ * The width is also never allowed above the size on the slider, which is what
+ * lets strokeBox keep using it: a box drawn for `size` always reaches, so a
+ * full rebuild lands where the live repaint did. */
+const dyn = { last: null, speed: 0 };
+
+function beginDynamics() { dyn.last = null; dyn.speed = 0; }
+
+function dynamicWidth(toolId, size, pt, ev) {
+  const mode = S(toolId, 'dynamics', 'pressure');
+  if (mode === 'off') return size;
+  const amount = S(toolId, 'dynAmount', 0.6);
+  let f = 1;
+  if (mode === 'pressure') {
+    // A mouse reports a flat 0.5 however hard it is pressed, so there is
+    // nothing to read from it. Only a pen has anything to say here.
+    if (!ev || ev.pointerType !== 'pen') return size;
+    f = clamp(ev.pressure, 0, 1);
+  } else {
+    const now = ev && ev.timeStamp != null ? ev.timeStamp : performance.now();
+    if (dyn.last) {
+      const dt = Math.max(1, now - dyn.last.t);
+      const v = Math.hypot(pt.x - dyn.last.x, pt.y - dyn.last.y) / dt;
+      // A running average: a raw per-event speed jitters enough to leave the
+      // stroke visibly corrugated.
+      dyn.speed = dyn.speed * 0.7 + v * 0.3;
+    }
+    dyn.last = { x: pt.x, y: pt.y, t: now };
+    f = clamp(1 - dyn.speed / 1.6, 0.12, 1);
+  }
+  return size * (1 - amount + amount * f);
+}
+
+/** The two option rows every dynamic brush shares. */
+function dynamicOptions(toolId) {
+  return [
+    { key: 'dynamics', type: 'select', label: 'Dynamics', value: S(toolId, 'dynamics', 'pressure'),
+      options: [['off', 'Off'], ['pressure', 'Pen pressure'], ['speed', 'Speed']] },
+    { key: 'dynAmount', type: 'range', label: 'Variation', min: 0, max: 1, step: 0.05,
+      value: S(toolId, 'dynAmount', 0.6), percent: true },
+  ];
+}
+
 function targetLayer(kinds) {
   const current = activeLayer();
   if (current && kinds.includes(current.kind) && !current.locked) return current;
@@ -202,9 +257,11 @@ define({
     { key: 'opacity', type: 'range', label: 'Opacity', min: 0.02, max: 1, step: 0.01, value: S('brush', 'opacity', 1), percent: true },
     { key: 'texScale', type: 'range', label: 'Texture scale', min: 0.25, max: 3, step: 0.05, value: S('brush', 'texScale', 1), suffix: '×' },
     { key: 'blend', type: 'select', label: 'Blend', options: BLENDS, value: S('brush', 'blend', 'source-over') },
+    ...dynamicOptions('brush'),
   ]),
   writesTo: ['raster'],
-  down(pt) {
+  down(pt, ev) {
+    beginDynamics();
     const layer = targetLayer(['raster']);
     if (!layer) return toast('The terrain brush needs a paint layer — add one with + in the Layers panel', 'bad');
     const tex = requireAsset('terrain');
@@ -213,11 +270,16 @@ define({
       t: 'stroke', tex, scale: S('brush', 'texScale', 1),
       size: S('brush', 'size', 90), hardness: S('brush', 'hardness', 0.55),
       opacity: S('brush', 'opacity', 1), blend: S('brush', 'blend', 'source-over'),
-      points: [pt],
+      points: [pt], widths: [dynamicWidth('brush', S('brush', 'size', 90), pt, ev)],
     }, 'paint');
     paintLive();
   },
-  move(pt) { if (live.active) { pushPoint(pt, S('brush', 'size', 90)); paintLive(); } },
+  move(pt, ev) {
+    if (!live.active) return;
+    const size = S('brush', 'size', 90);
+    pushPoint(pt, size, dynamicWidth('brush', size, pt, ev));
+    paintLive();
+  },
   up() { endPaint(); },
 });
 
@@ -231,18 +293,26 @@ define({
     { key: 'size', type: 'range', label: 'Size', min: 4, max: 600, step: 1, value: S('erase', 'size', 120), suffix: 'px' },
     { key: 'hardness', type: 'range', label: 'Hardness', min: 0, max: 1, step: 0.01, value: S('erase', 'hardness', 0.6), percent: true },
     { key: 'opacity', type: 'range', label: 'Strength', min: 0.05, max: 1, step: 0.01, value: S('erase', 'opacity', 1), percent: true },
+    ...dynamicOptions('erase'),
   ]),
   writesTo: ['raster', 'land'],
-  down(pt) {
+  down(pt, ev) {
+    beginDynamics();
     const layer = targetLayer(['raster', 'land']);
     if (!layer) return toast('Nothing to erase on this layer', 'bad');
     beginPaint(layer, {
       t: 'stroke', erase: true, size: S('erase', 'size', 120),
       hardness: S('erase', 'hardness', 0.6), opacity: S('erase', 'opacity', 1), points: [pt],
+      widths: [dynamicWidth('erase', S('erase', 'size', 120), pt, ev)],
     }, layer.kind === 'land' ? 'mask' : 'paint');
     paintLive();
   },
-  move(pt) { if (live.active) { pushPoint(pt, S('erase', 'size', 120)); paintLive(); } },
+  move(pt, ev) {
+    if (!live.active) return;
+    const size = S('erase', 'size', 120);
+    pushPoint(pt, size, dynamicWidth('erase', size, pt, ev));
+    paintLive();
+  },
   up() { endPaint(); },
 });
 
@@ -273,18 +343,26 @@ define({
     { key: 'size', type: 'range', label: 'Size', min: 10, max: 900, step: 1, value: S('land', 'size', 260), suffix: 'px' },
     { key: 'hardness', type: 'range', label: 'Edge', min: 0, max: 1, step: 0.01, value: S('land', 'hardness', 0.85), percent: true },
     { key: 'erase', type: 'toggle', label: 'Carve sea instead', value: S('land', 'erase', false) },
+    ...dynamicOptions('land'),
   ]),
-  down(pt) {
+  down(pt, ev) {
+    beginDynamics();
     const layer = app.doc.layers.find((l) => l.kind === 'land');
     if (!layer) return toast('This map has no landmass layer', 'bad');
     if (layer.locked) return toast('The landmass layer is locked', 'bad');
     beginPaint(layer, {
       t: 'stroke', size: S('land', 'size', 260), hardness: S('land', 'hardness', 0.85),
       opacity: 1, erase: !!S('land', 'erase', false), points: [pt],
+      widths: [dynamicWidth('land', S('land', 'size', 260), pt, ev)],
     }, 'mask');
     paintLive();
   },
-  move(pt) { if (live.active) { pushPoint(pt, S('land', 'size', 260)); paintLive(); } },
+  move(pt, ev) {
+    if (!live.active) return;
+    const size = S('land', 'size', 260);
+    pushPoint(pt, size, dynamicWidth('land', size, pt, ev));
+    paintLive();
+  },
   up() { endPaint(); },
 });
 
@@ -632,6 +710,183 @@ define({
   },
 });
 
+/* ------------------------------------------------------------------ lights */
+
+/* Radii are set in whatever the map measures in, because that is how every
+   rulebook describes a light source and how anyone running an encounter
+   thinks. The document stores pixels, like all other geometry. */
+const LIGHT_PRESETS = {
+  candle:   { label: 'Candle',        bright: 5,  dim: 10,  color: '#ffd9a0', intensity: 0.8 },
+  torch:    { label: 'Torch',         bright: 20, dim: 40,  color: '#ffb663', intensity: 1 },
+  lantern:  { label: 'Hooded lantern', bright: 30, dim: 60, color: '#ffd9a0', intensity: 1 },
+  spell:    { label: 'Light spell',   bright: 20, dim: 40,  color: '#e8f0ff', intensity: 1 },
+  fire:     { label: 'Campfire',      bright: 20, dim: 40,  color: '#ff8a3c', intensity: 1 },
+  daylight: { label: 'Daylight',      bright: 60, dim: 120, color: '#fff6e0', intensity: 1 },
+};
+
+/** Pixels per map unit — a foot, a mile, whatever the scale says. */
+export function unitPx(doc = app.doc) {
+  const scale = (doc && doc.scale) || {};
+  return gridStepPx(doc) / (scale.perCell || 1);
+}
+
+const unitName = () => ((app.doc && app.doc.scale && app.doc.scale.unit) || 'units');
+
+define({
+  id: 'light',
+  label: 'Light',
+  icon: 'light',
+  assetKind: null,
+  writesTo: ['lights'],
+  snaps: true,
+  snapTo: 'centre',
+  wantsHover: true,
+  hint: 'Click to drop a light. Drag to aim a shuttered one. Walls cast the shadows.',
+  options: () => {
+    const preset = S('light', 'preset', 'torch');
+    return [
+      { key: 'preset', type: 'select', label: 'Source', value: preset, rerender: true,
+        options: Object.entries(LIGHT_PRESETS).map(([id, k]) => [id, k.label]).concat([['custom', 'Custom']]) },
+      { key: 'bright', type: 'range', label: 'Bright', min: 1, max: 200, step: 1,
+        value: S('light', 'bright', 20), suffix: unitName(), rerender: true },
+      { key: 'dim', type: 'range', label: 'Dim', min: 1, max: 400, step: 1,
+        value: S('light', 'dim', 40), suffix: unitName(), rerender: true },
+      { key: 'color', type: 'color', label: 'Colour', value: S('light', 'color', '#ffb663'), rerender: true },
+      { key: 'intensity', type: 'range', label: 'Intensity', min: 0.1, max: 1, step: 0.02,
+        value: S('light', 'intensity', 1), percent: true },
+      { key: 'cone', type: 'range', label: 'Spread', min: 15, max: 360, step: 5,
+        value: S('light', 'cone', 360), suffix: '°' },
+    ];
+  },
+  onOption(key, value) {
+    setToolSetting('light', key, value);
+    if (key === 'preset') {
+      const k = LIGHT_PRESETS[value];
+      if (k) for (const f of ['bright', 'dim', 'color', 'intensity']) setToolSetting('light', f, k[f]);
+    } else if (['bright', 'dim', 'color'].includes(key)) {
+      // Editing a number by hand means this is no longer a torch. Saying so is
+      // kinder than leaving the menu claiming otherwise.
+      setToolSetting('light', 'preset', 'custom');
+    }
+  },
+  state: { placing: null, hover: null },
+  down(pt, ev, layer) {
+    const target = layer && layer.kind === 'lights' ? layer : targetLayer(['lights']);
+    if (!target) return toast('This map has no lighting layer — start a battle map, or add one', 'bad');
+    const px = unitPx();
+    this.state.placing = {
+      layer: target,
+      op: {
+        id: uid('o'), t: 'light',
+        x: pt.x, y: pt.y,
+        bright: Math.max(1, S('light', 'bright', 20) * px),
+        dim: Math.max(1, S('light', 'dim', 40) * px),
+        color: S('light', 'color', '#ffb663'),
+        intensity: S('light', 'intensity', 1),
+        cone: S('light', 'cone', 360),
+        angle: 0,
+      },
+    };
+    R.requestDraw();
+  },
+  move(pt) {
+    this.state.hover = pt;
+    const placing = this.state.placing;
+    if (placing) {
+      const dx = pt.x - placing.op.x, dy = pt.y - placing.op.y;
+      // Aiming only kicks in past a few pixels, so an ordinary click does not
+      // pick up a random facing from the hand wobbling on the mouse button.
+      if (Math.hypot(dx, dy) > 8) placing.op.angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    }
+    R.requestDraw();
+  },
+  up() {
+    const placing = this.state.placing;
+    if (!placing) return;
+    this.state.placing = null;
+    const { layer, op } = placing;
+    const before = layer.ops.slice();
+    const wasAmbient = layer.ambient;
+    const after = before.concat([op]);
+    // A light on a map with no darkness does nothing at all. Rather than leave
+    // someone hunting for the slider that makes their first light work, the
+    // first one turns the night on — and undo puts it back.
+    const apply = () => {
+      layer.ops = after.slice();
+      if (!wasAmbient) layer.ambient = 0.8;
+      layer.visible = true;
+      R.invalidate(layer);
+      emit('layers');
+    };
+    apply();
+    pushEntry({
+      label: 'Light',
+      bytes: 0,
+      undo() {
+        layer.ops = before.slice();
+        layer.ambient = wasAmbient;
+        R.invalidate(layer);
+        emit('layers');
+      },
+      redo: apply,
+    });
+    markDirty();
+    scheduleAutosave();
+  },
+  overlay(ctx) {
+    const layer = targetLayer(['lights']);
+    if (!layer) return;
+    const placing = this.state.placing;
+    ctx.save();
+    // Every light on the map, marked, because a light is otherwise only
+    // visible by the hole it makes and you cannot click what you cannot find.
+    for (const op of layer.ops) {
+      const s = R.mapToScreen(op.x, op.y);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = op.on === false ? 'rgba(120,130,150,.7)' : (op.color || '#ffb663');
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(10,12,16,.85)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    const preview = placing ? placing.op : null;
+    if (preview) drawLightPreview(ctx, preview);
+    ctx.restore();
+  },
+});
+
+/** The reach of the light being placed, so its size is chosen against the map
+ *  rather than against a number in a panel. */
+function drawLightPreview(ctx, op) {
+  const s = R.mapToScreen(op.x, op.y);
+  const zoom = R.view.zoom;
+  ctx.save();
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = op.color || '#ffb663';
+  for (const r of [op.bright, op.dim]) {
+    ctx.beginPath();
+    ctx.lineWidth = r === op.bright ? 1.6 : 1;
+    ctx.arc(s.x, s.y, r * zoom, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  if (op.cone < 360) {
+    const facing = (op.angle * Math.PI) / 180;
+    const half = ((op.cone * Math.PI) / 180) / 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.arc(s.x, s.y, op.dim * zoom, facing - half, facing + half);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(217,164,65,.14)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(217,164,65,.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 define({
   id: 'wall',
   snaps: true,
@@ -787,7 +1042,7 @@ define({
   label: 'Label',
   icon: 'text',
   assetKind: null,
-  hint: 'Click where the name goes.',
+  hint: 'Click where the name goes, or drag a curve for it to follow.',
   options: () => ([
     { key: 'style', type: 'select', label: 'Style', value: S('label', 'style', 'settlement'),
       options: [['title', 'Map title'], ['region', 'Region'], ['settlement', 'Settlement'], ['water', 'Water']] },
@@ -795,25 +1050,37 @@ define({
     { key: 'color', type: 'color', label: 'Colour', value: S('label', 'color', '#3a2c1e') },
     { key: 'halo', type: 'toggle', label: 'Halo behind text', value: S('label', 'halo', true) },
   ]),
-  async down(pt) {
+  state: { drag: null },
+  down(pt) {
     const layer = targetLayer(['labels']);
     if (!layer) return toast('This map has no labels layer', 'bad');
-    const input = el('input', { type: 'text', placeholder: 'Name', value: '' });
-    const body = el('div', {}, [el('div', { class: 'field' }, [el('label', { text: 'Text' }), input])]);
-    let text = null;
-    await modal({
-      title: 'Add a label', body,
-      buttons: [
-        { label: 'Cancel' },
-        { label: 'Place', class: 'btn-primary', onClick: () => { text = input.value.trim(); } },
-      ],
-    });
+    // Click or drag is decided on release: a click places a straight label and
+    // a drag places one along the curve, with no mode to remember.
+    this.state.drag = { layer, points: [pt] };
+    R.requestDraw();
+  },
+  move(pt) {
+    const drag = this.state.drag;
+    if (!drag) return;
+    const last = drag.points[drag.points.length - 1];
+    if (Math.hypot(pt.x - last.x, pt.y - last.y) >= 6) drag.points.push(pt);
+    R.requestDraw();
+  },
+  async up() {
+    const drag = this.state.drag;
+    if (!drag) return;
+    this.state.drag = null;
+    R.requestDraw();
+    const { layer, points } = drag;
+    const curved = pathLength(points) > 30;
+    const text = await askForText(curved);
     if (!text) return;
     const item = {
-      id: uid('t'), text, x: pt.x, y: pt.y,
+      id: uid('t'), text, x: points[0].x, y: points[0].y,
       style: S('label', 'style', 'settlement'), size: S('label', 'size', 24),
       color: S('label', 'color', '#3a2c1e'), halo: S('label', 'halo', true), rot: 0,
     };
+    if (curved) item.points = points.map((q) => ({ x: q.x, y: q.y }));
     const before = layer.ops.slice();
     layer.ops.push(item);
     R.invalidate(layer);
@@ -824,8 +1091,47 @@ define({
     });
     markDirty(); scheduleAutosave(); emit('layers');
   },
-  move() {}, up() {},
+  overlay(ctx) {
+    const drag = this.state.drag;
+    if (!drag || drag.points.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = '#d9a441';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    drag.points.forEach((q, i) => {
+      const s = R.mapToScreen(q.x, q.y);
+      if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  },
 });
+
+function pathLength(points) {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  }
+  return total;
+}
+
+async function askForText(curved) {
+  const input = el('input', { type: 'text', placeholder: 'Name', value: '' });
+  const body = el('div', {}, [
+    el('div', { class: 'field' }, [el('label', { text: 'Text' }), input]),
+    curved ? el('p', { class: 'muted', text: 'This one will follow the curve you drew.' }) : null,
+  ]);
+  let text = null;
+  await modal({
+    title: curved ? 'Add a label along the curve' : 'Add a label', body,
+    buttons: [
+      { label: 'Cancel' },
+      { label: 'Place', class: 'btn-primary', onClick: () => { text = input.value.trim(); } },
+    ],
+  });
+  return text;
+}
 
 define({
   id: 'select',
@@ -848,14 +1154,13 @@ define({
   move(pt) {
     const { grabbed, offset, layer } = this.state;
     if (!grabbed || !offset) return;
-    if (grabbed.points) {
-      const dx = pt.x - offset.x - grabbed.points[0].x;
-      const dy = pt.y - offset.y - grabbed.points[0].y;
-      for (const p of grabbed.points) { p.x += dx; p.y += dy; }
-    } else {
-      grabbed.x = pt.x - offset.x;
-      grabbed.y = pt.y - offset.y;
-    }
+    // One delta applied to everything the item has, because a curved label has
+    // both an anchor and a curve and moving one without the other tears it.
+    const anchor = grabbed.x != null ? grabbed : grabbed.points[0];
+    const dx = pt.x - offset.x - anchor.x;
+    const dy = pt.y - offset.y - anchor.y;
+    if (grabbed.x != null) { grabbed.x += dx; grabbed.y += dy; }
+    if (grabbed.points) for (const p of grabbed.points) { p.x += dx; p.y += dy; }
     R.invalidate(layer);
   },
   up() {
@@ -936,10 +1241,23 @@ function hitTest(pt) {
     } else if (layer.kind === 'labels') {
       for (let j = layer.ops.length - 1; j >= 0; j--) {
         const item = layer.ops[j];
+        const reach = (item.size || 24) * 0.8;
+        if (item.points && item.points.length > 1) {
+          // A label on a curve sits along the curve, not at its anchor.
+          if (item.points.some((q) => Math.hypot(q.x - pt.x, q.y - pt.y) < reach)) {
+            return { layer, item };
+          }
+          continue;
+        }
         const w = (item.text || '').length * (item.size || 24) * 0.62;
-        if (Math.abs(pt.x - item.x) < w / 2 && Math.abs(pt.y - item.y) < (item.size || 24) * 0.8) {
+        if (Math.abs(pt.x - item.x) < w / 2 && Math.abs(pt.y - item.y) < reach) {
           return { layer, item };
         }
+      }
+    } else if (layer.kind === 'lights') {
+      for (let j = layer.ops.length - 1; j >= 0; j--) {
+        const item = layer.ops[j];
+        if (Math.hypot(item.x - pt.x, item.y - pt.y) < 16) return { layer, item };
       }
     } else if (layer.kind === 'paths') {
       for (let j = layer.ops.length - 1; j >= 0; j--) {
@@ -955,11 +1273,14 @@ function hitTest(pt) {
 
 /* ------------------------------------------------------------------ helper */
 
-function pushPoint(pt, size) {
+function pushPoint(pt, size, width) {
   const pts = live.op.points;
   const last = pts[pts.length - 1];
   const min = Math.max(1.2, size * 0.06);
-  if (!last || Math.hypot(pt.x - last.x, pt.y - last.y) >= min) pts.push(pt);
+  if (!last || Math.hypot(pt.x - last.x, pt.y - last.y) >= min) {
+    pts.push(pt);
+    if (live.op.widths) live.op.widths.push(width != null ? width : size);
+  }
 }
 
 export function currentTool() { return TOOLS[app.tool] || TOOLS.brush; }

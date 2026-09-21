@@ -215,6 +215,14 @@ input[type=color] { width: 100%; height: 26px; padding: 2px; background: var(--p
 .layer.is-hidden { opacity: .45; }
 .layer .lname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .layer .lkind { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+.layer.in-group { margin-left: 14px; border-left: 2px solid var(--line-hi); }
+.layer.is-group { background: var(--panel-3); }
+.layer.is-group .lname { font-weight: 600; }
+.layer .fold {
+  flex: 0 0 12px; width: 12px; text-align: center; font-size: 10px;
+  color: var(--dim); cursor: pointer; user-select: none;
+}
+.layer .fold:hover { color: var(--text); }
 .layer-props { border-top: 1px solid var(--line); padding-top: 10px; }
 
 /* ----------------------------------------------------------------- packs */

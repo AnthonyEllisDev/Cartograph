@@ -202,9 +202,32 @@ api.registerExporter({
 | `api.ui` | `{ el, modal, toast, icon }` |
 | `api.util` | `{ clamp, rng, uid, hashString }` — `rng` is seeded, for repeatable noise |
 | `api.map` | `{ makeLayer, snapPoint, distanceLabel, measureBetween, gridStepPx, hex, LAYER_KINDS }` — see *Grids* below |
+| `api.onUnload(fn)` | run `fn` when the extension is turned off — see *Unloading* |
 | `api.markDirty()` | mark the document changed |
 | `api.scheduleAutosave()` | poke the autosave timer |
 | `api.invalidate(layer, box)` | rebuild a layer, optionally only inside a rectangle |
+
+### Unloading
+
+An extension can be turned off without reloading the page. Everything it
+registered is taken back out: its tools leave the rail, its panels leave the
+side rail, its commands leave the palette, and its layer kinds stop rendering.
+
+If it holds anything of its own — a timer, a listener on something outside the
+editor — clean it up either by returning a function from `setup`, or by calling
+`api.onUnload(fn)`:
+
+```js
+export default function setup(api) {
+  const id = setInterval(tick, 1000);
+  return () => clearInterval(id);
+}
+```
+
+**Layers keep their contents.** A document holding a layer of your kind does
+not lose it when your extension is turned off; the layer stops drawing, is
+marked `(off)` in the panel, keeps every op, and renders again the moment the
+extension is turned back on. A layer is somebody's work, not a menu entry.
 
 ### Grids
 

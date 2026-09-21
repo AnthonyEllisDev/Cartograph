@@ -1,11 +1,12 @@
-import { launch, base as baseUrl } from './browser.mjs';
+import { launch, base as baseUrl, ready, newMap } from './browser.mjs';
 const b = await launch();
 const p = await b.newPage({ viewport: { width: 1600, height: 950 } });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE ' + m.text()); });
 await p.goto(baseUrl('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
-await p.waitForTimeout(1200);
+await ready(p);
+await newMap(p, { name: 'Theme Workbench', kind: 'region' });
 
 const css = (name) => p.evaluate(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
 const ok = [], bad = [];
@@ -96,7 +97,7 @@ t('rail width applies', (await css('--rail-w')) === '400px', '--rail-w=' + await
 
 // ---- persistence
 await p.reload({ waitUntil: 'networkidle' });
-await p.waitForTimeout(1400);
+await ready(p);
 t('theme survives reload', (await css('--bg')) === vell, await css('--bg'));
 t('rail width survives reload', (await css('--rail-w')) === '400px');
 t('compact survives reload', await p.evaluate(() => document.body.classList.contains('tools-compact')));

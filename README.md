@@ -55,6 +55,8 @@ tools/                the art generators
   noise.py              seamless value noise
   genpack.py            bakes the starter pack
 web/                  the editor itself — plain ES modules, no build step
+  js/hex.js             hex geometry: the one definition of where hexes are
+  js/light.js           shadow casting for the lighting layer
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
@@ -65,7 +67,9 @@ extensions/           extensions; one folder each, loaded at startup
   hex-coordinates/      worked example: a generated layer and a side panel
   map-aging/            worked example: commands that draw on an existing layer
 test/verify.mjs       82 end-to-end checks against the running program
-test/hex.mjs          25 more, for hex snapping and hex-native measurement
+test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
+test/hex.mjs          27 more, for hex snapping and hex-native measurement
+docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
 ```
@@ -133,6 +137,26 @@ drawn on the map *and* written into the export as data: tick *Also write a
 Universal VTT file* and you get a `.dd2vtt` next to the PNG, which Foundry,
 Roll20 and the rest import with line of sight and door positions already built.
 
+### Lighting for battle maps
+
+A battle map comes with a **Lighting** layer. It is darkness with a hole cut in
+it for every light, and it starts switched off — the first light you drop turns
+the night on, and undo turns it back off.
+
+- **The Light tool** drops a source where you click, and dragging aims a
+  shuttered one. Sources are set in the map's own units, so a torch really is
+  20 feet bright and 40 dim, and the presets are the ones from the rulebook:
+  candle, torch, hooded lantern, light spell, campfire, daylight.
+- **Walls cast the shadows.** A window is a wall you can see through, so it
+  lights the room behind it; a closed door does not. Moving a wall moves its
+  shadow with it.
+- **The Lighting layer's panel** sets how dark the unlit map goes, the colour
+  of the night, how much colour the lights wash over what they light, and
+  whether walls cast shadows at all.
+- **The tabletop export carries the lights as data**, and writes the image
+  *without* the darkness. A virtual tabletop does its own lighting, and giving
+  it a map that is already lit washes the whole thing out.
+
 ### Hex crawls
 
 *New map* also offers a hex crawl, sized in hexes rather than pixels, and hexes
@@ -151,6 +175,22 @@ are first-class rather than merely drawable:
 The hex layer's *Hex width* is measured corner to corner. The distance the scale
 counts is across the flats, which is shorter — the panel tells you both, because
 a map that quietly measures 15% long is worse than one with no scale at all.
+
+### Working at scale
+
+**Layer groups** are folders. Add one from the **+** in the Layers panel and
+drag layers onto it; its visibility and opacity apply to everything inside, and
+folding it away gets a long stack back under control. Deleting a group frees
+its members rather than deleting them — it is a folder, not a container.
+
+**Brush dynamics** let a pen's pressure, or the speed of the stroke, drive the
+brush width. Width only, never opacity: painting here is mask-then-texture
+precisely so that overlapping parts of one stroke do not darken each other, and
+varying the opacity along a stroke would put that back. A mouse has no pressure
+to report, so on a mouse the pressure setting changes nothing.
+
+**Stamp shadow and tint** are set once on the Objects layer rather than on each
+symbol, because a map wants every tree lit from the same direction.
 
 ### Presets, history and the palette
 
@@ -264,10 +304,18 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it: `hex.mjs` (25 checks on hex snapping,
-measurement and both orientations), `battle.mjs` (grid snapping and the VTT
-export), `brushes.mjs` (the newer brush types), `ext.mjs` (the extension host)
-and `theme.mjs` / `pro.mjs` (the interface settings, presets and history).
+There are narrower scripts beside it, 210 assertions in all: `lighting.mjs`
+(darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
+snapping, measurement and both orientations), `labels.mjs` (text along a path),
+`brushes.mjs` (the newer brush types, brush dynamics, stamp shadow and tint),
+`ext.mjs` (the extension host, including unload), `pro.mjs` (presets, history
+and layer groups), `theme.mjs` (interface settings) and `battle.mjs` (grid
+snapping and the VTT export).
+
+Every suite makes its own map before it starts. The editor reopens the last map
+on launch, which is right for a person and wrong for a test — without it, two
+suites run back to back and the second inherits the first one's map, then fails
+somewhere with nothing to do with the cause.
 
 ```
 npm install playwright

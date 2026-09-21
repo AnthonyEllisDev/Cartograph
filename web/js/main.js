@@ -135,6 +135,9 @@ async function exportDialog() {
   sizeNote();
 
   const walls = app.doc.layers.find((l) => l.kind === 'walls');
+  const lit = app.doc.layers.find((l) => l.kind === 'lights' && l.visible && l.ambient > 0);
+  const hexGrid = app.doc.layers.find((l) => l.kind === 'grid' && l.type === 'hex');
+  const lights = el('input', { type: 'checkbox' }); lights.checked = true;
   const vtt = el('input', { type: 'checkbox' });
   vtt.checked = !!(walls && walls.ops.length);
 
@@ -145,20 +148,29 @@ async function exportDialog() {
       el('div', { class: 'field' }, [el('label', { text: 'Resolution' }), scale]),
       el('label', { class: 'check' }, [grid, el('span', { text: 'Include the grid' })]),
       el('label', { class: 'check' }, [paper, el('span', { text: 'Include the paper and border' })]),
+      lit ? el('label', { class: 'check' }, [lights, el('span', { text: 'Include the lighting' })]) : null,
       el('label', { class: 'check' }, [download, el('span', { text: 'Also download a copy' })]),
       el('label', { class: 'check' }, [vtt, el('span', {
         text: 'Also write a Universal VTT file' + (walls ? '' : ' (this map has no walls layer)') })]),
       note,
+      // The format has no field for a hex grid, so saying nothing would mean
+      // shipping a square-gridded scene and letting them find out.
+      hexGrid ? el('p', { class: 'muted', text:
+        'This is a hex map, and the Universal VTT format has no field for hex grids. '
+        + 'The walls and the image go across correctly and the cells line up — you just pick '
+        + 'the hex grid type once on the tabletop side after importing.' }) : null,
       el('p', { class: 'muted', text:
         'A copy is always written to the exports folder next to the program. The .dd2vtt file ' +
-        'carries the walls and doors as data, so a virtual tabletop imports the map with its ' +
-        'line of sight already built.' }),
+        'carries the walls, doors and light sources as data, so a virtual tabletop imports the ' +
+        'map with its line of sight already built. Its image is written without the darkness, ' +
+        'because a tabletop that lights an already-lit map washes it out.' }),
     ]),
     buttons: [{ label: 'Cancel' }, { label: 'Export', class: 'btn-primary', onClick: () => { go = true; } }],
   });
   if (!go) return;
 
-  const canvas = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked, paper: paper.checked });
+  const canvas = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked,
+                             paper: paper.checked, lights: lights.checked });
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   const name = (app.doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
   try {
@@ -169,8 +181,10 @@ async function exportDialog() {
   }
   if (vtt.checked) {
     try {
-      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked });
-      const payload = R.toUVTT(full.toDataURL('image/png'));
+      // The tabletop does its own lighting, so it gets the map unlit and the
+      // lights as data — otherwise the two stack and the map comes out washed.
+      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false });
+      const payload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false });
       const res = await api.exportImage(name + '.dd2vtt',
         new Blob([JSON.stringify(payload)], { type: 'application/json' }));
       toast('Tabletop file written to ' + res.path, 'good');

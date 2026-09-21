@@ -35,7 +35,7 @@ export function step(grid) {
   return metrics(grid).r * SQRT3;
 }
 
-/* ── axial <-> pixel ─────────────────────────────────────────────────────── */
+/* -- axial <-> pixel ------------------------------------------------------- */
 
 export function toPixel(grid, q, r) {
   const m = metrics(grid);
@@ -66,7 +66,7 @@ export function round(q, r) {
   return { q: rq, r: rr };
 }
 
-/* ── the pieces of one hex ───────────────────────────────────────────────── */
+/* -- the pieces of one hex ------------------------------------------------- */
 
 /** The six vertices, in the order the renderer draws them. */
 export function corners(grid, q, r) {
@@ -97,7 +97,7 @@ export function neighbours(q, r) {
   return NEIGHBOURS.map(([dq, dr]) => ({ q: q + dq, r: r + dr }));
 }
 
-/* ── distance and the line between two hexes ─────────────────────────────── */
+/* -- distance and the line between two hexes ------------------------------- */
 
 /** How many hexes you cross getting from a to b. This is the number a hex
  *  crawl actually cares about; the straight-line pixel distance is a different
@@ -123,7 +123,7 @@ export function line(a, b) {
   return out;
 }
 
-/* ── snapping ────────────────────────────────────────────────────────────── */
+/* -- snapping -------------------------------------------------------------- */
 
 function nearest(candidates, pt) {
   let best = null, bestD = Infinity;
@@ -169,7 +169,7 @@ export function snap(grid, pt, prefer = 'corner', mode = 'grid') {
   return nearest(around(grid, pt, { corner: true }), pt);
 }
 
-/* ── walking the whole map ───────────────────────────────────────────────── */
+/* -- walking the whole map ------------------------------------------------- */
 
 /** How far apart columns and rows sit. Not the same as `step()`: neighbouring
  *  columns are staggered, so a column is closer than a full hex away. Sizing a

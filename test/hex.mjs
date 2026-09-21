@@ -7,7 +7,7 @@
  * the editor snaps to have to be the same hexes. A grid you can see but cannot
  * land on is worse than no grid at all. */
 
-import { launch, base } from './browser.mjs';
+import { launch, base, ready } from './browser.mjs';
 
 const out = [];
 let fails = 0;
@@ -23,7 +23,7 @@ const errs = [];
 p.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
 p.on('console', (m) => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
 await p.goto(base('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
-await p.waitForTimeout(1200);
+await ready(p);
 
 /* helpers -------------------------------------------------------------- */
 
@@ -256,6 +256,24 @@ const roundTrip = await p.evaluate(async () => {
 });
 t('offset and axial coordinates round-trip', roundTrip.length === 0, roundTrip.slice(0, 4).join(' '));
 
+/* the tabletop export ----------------------------------------------------- */
+
+// Universal VTT has no hex grid: the tabletop is told the across-flats step
+// and the user picks hex once on the other side. What must be right here is
+// that the number is the step and not the corner-to-corner width, or every
+// wall lands 15% out.
+const uvtt = await p.evaluate(() => {
+  const c = window.__cg.R.flatten({ scale: 1, grid: true, paper: true });
+  const u = window.__cg.R.toUVTT(c.toDataURL('image/png'));
+  return { ppg: u.resolution.pixels_per_grid, size: u.resolution.map_size };
+});
+t('the tabletop export measures a hex across its flats',
+  uvtt.ppg === Math.round(wantStep), `${uvtt.ppg} px, want ${Math.round(wantStep)}`);
+t('and its scene covers the whole image',
+  Math.abs(uvtt.size.x * uvtt.ppg - doc.w) < uvtt.ppg
+  && Math.abs(uvtt.size.y * uvtt.ppg - doc.h) < uvtt.ppg,
+  `${uvtt.size.x} x ${uvtt.size.y} cells of ${uvtt.ppg}px vs ${doc.w} x ${doc.h}`);
+
 /* a picture, and the reload invariant ------------------------------------ */
 
 await p.evaluate(async () => {
@@ -289,7 +307,7 @@ const beforeReload = await fingerprint();
 await p.click('#btn-save');
 await p.waitForTimeout(1400);
 await p.reload({ waitUntil: 'networkidle' });
-await p.waitForTimeout(1500);
+await ready(p);
 const afterReload = await fingerprint();
 t('a hex map reloads pixel-identical', beforeReload === afterReload,
   beforeReload === afterReload ? '' : 'fingerprints differ');

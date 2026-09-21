@@ -2,7 +2,7 @@
 
 import { api } from './api.js';
 import { library, loadLibrary, forgetPatterns, warm } from './assets.js';
-import { extensions } from './extensions.js';
+import { extensions, loadExtensions, setExtensionEnabled, unloadExtension } from './extensions.js';
 import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
 import * as hex from './hex.js';
@@ -38,13 +38,18 @@ export async function renderPacks() {
     return;
   }
   for (const pack of library.packs) {
+    const empty = !pack.assets || !pack.assets.length;
     const card = el('section', { class: 'pack' });
+    // An empty folder has no licence and no count worth stating, and showing
+    // "licence not stated, 0 assets" makes a waiting folder look like a broken
+    // pack. Say what it is for instead.
     const head = el('div', { class: 'pack-head' }, [
       el('h4', { text: pack.name || pack.id }),
-      el('span', { class: 'tag' + (String(pack.license).startsWith('CC0') ? ' cc0' : ''),
-                   text: pack.license || 'licence not stated' }),
-      el('span', { class: 'tag', text: pack.count + ' assets' }),
-      pack.generated ? el('span', { class: 'tag', text: 'generated · seed ' + pack.seed }) : null,
+      empty ? el('span', { class: 'tag', text: 'empty' })
+            : el('span', { class: 'tag' + (String(pack.license).startsWith('CC0') ? ' cc0' : ''),
+                           text: pack.license || 'licence not stated' }),
+      empty ? null : el('span', { class: 'tag', text: pack.count + ' assets' }),
+      pack.generated && !empty ? el('span', { class: 'tag', text: 'generated · seed ' + pack.seed }) : null,
       el('span', { class: 'tag', text: 'assets/packs/' + pack.dir }),
     ]);
     card.appendChild(head);
@@ -59,8 +64,11 @@ export async function renderPacks() {
         el('span', { class: 'cap', text: asset.label }),
       ]));
     }
-    if (!pack.assets || !pack.assets.length) {
-      grid.appendChild(el('p', { class: 'empty', text: 'This folder has no images in it yet.' }));
+    if (empty) {
+      grid.appendChild(el('p', { class: 'empty', text:
+        'Nothing in here yet. Drop a folder of images in and press Rescan — anything under a '
+        + 'terrain sub-folder becomes a brush texture, and everything else becomes a stamp. '
+        + 'Files you import with the button above land here too.' }));
     }
     card.appendChild(grid);
     root.appendChild(card);
@@ -100,12 +108,14 @@ export function initAssetsTab() {
       }
     }
     forgetPatterns();
+    R.forgetSpriteFx();
     await renderPacks();
     toast(`Imported ${ok} file${ok === 1 ? '' : 's'}`, 'good');
   });
 
   $('#btn-rescan').addEventListener('click', async () => {
     forgetPatterns();
+    R.forgetSpriteFx();
     await renderPacks();
     toast('Packs rescanned', 'good');
   });
@@ -288,10 +298,12 @@ export function renderExtensions() {
     on.checked = !!ext.enabled;
     on.addEventListener('change', async () => {
       try {
-        await api.setExtensionEnabled(ext.id, on.checked);
-        toast(on.checked ? `${ext.name} will load next time the program starts`
-                         : `${ext.name} disabled`, 'good');
-        ext.enabled = on.checked;
+        await setExtensionEnabled(ext.id, on.checked);
+        const failed = on.checked && !extensions.loaded.has(ext.id);
+        toast(failed ? `${ext.name} failed to load: ${ext.error || 'see the card'}`
+                     : `${ext.name} ${on.checked ? 'loaded' : 'unloaded'}`,
+              failed ? 'bad' : 'good');
+        renderExtensions();
       } catch (err) { toast(err.message, 'bad'); on.checked = !on.checked; }
     });
     const loaded = extensions.loaded.get(ext.id);
@@ -324,7 +336,18 @@ function describeOwned(owned) {
 }
 
 export function initExtensionsTab() {
-  $('#btn-reload-extensions').addEventListener('click', () => window.location.reload());
+  // A real reload now: everything loaded is unloaded, the folder is read
+  // again, and whatever is enabled starts up. Editing an extension and seeing
+  // the change no longer costs a restart.
+  $('#btn-reload-extensions').addEventListener('click', async () => {
+    for (const id of [...extensions.loaded.keys()]) unloadExtension(id);
+    try {
+      await loadExtensions();
+      const n = extensions.loaded.size;
+      toast(`${n} extension${n === 1 ? '' : 's'} loaded`, 'good');
+    } catch (err) { toast('Reload failed: ' + err.message, 'bad'); }
+    renderExtensions();
+  });
   $('#btn-open-extensions').addEventListener('click', async () => {
     try { await api.openFolder('extensions'); } catch (err) { toast(err.message, 'bad'); }
   });

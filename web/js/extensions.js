@@ -37,7 +37,7 @@ export const extensions = {
 /* --------------------------------------------------------------- the API */
 
 function makeApi(manifest) {
-  const owned = { tools: [], panels: [], commands: [], exporters: [], layerKinds: [] };
+  const owned = { tools: [], panels: [], commands: [], exporters: [], layerKinds: [], teardown: [] };
 
   const register = {
     /** Add a tool to the rail. The spec is the same shape the built-in tools
@@ -121,9 +121,78 @@ function makeApi(manifest) {
     scheduleAutosave,
     invalidate: (layer, box) => R.invalidate(layer, box),
 
+    /** Run this when the extension is turned off — a timer to clear, a
+     *  listener to drop. Returning a function from setup() does the same. */
+    onUnload(fn) { if (typeof fn === 'function') owned.teardown.push(fn); },
+
     /** Everything this extension registered, so it can be unloaded. */
     _owned: owned,
   });
+}
+
+/* ---------------------------------------------------------------- unload */
+
+/** Take an extension back out of the running program.
+ *
+ * The registry half is easy, because `_owned` has been keeping the list all
+ * along. The awkward half is everything downstream that has already been
+ * handed one of those registrations: the selected tool, the rendered panels,
+ * and above all the layers in an open document whose kind the extension owns.
+ *
+ * Those layers are the user's work, so they stay. What goes is the renderer
+ * for them, and the kind is left behind as a marker saying where it went —
+ * the layer stops drawing, keeps its ops, and comes back intact when the
+ * extension does. Deleting it instead would be throwing away a map to tidy up
+ * a menu. */
+export function unloadExtension(id) {
+  const entry = extensions.loaded.get(id);
+  if (!entry) return false;
+  const owned = entry.api._owned;
+
+  for (const fn of owned.teardown) {
+    try { fn(); } catch (err) { console.error('[extension ' + id + ' teardown]', err); }
+  }
+
+  for (const toolId of owned.tools) { delete TOOLS[toolId]; delete ICONS[toolId]; }
+  // Leaving a deleted tool selected leaves the rail pointing at nothing.
+  if (owned.tools.includes(app.tool)) setTool('brush');
+
+  drop(extensions.panels, owned.panels);
+  drop(extensions.commands, owned.commands);
+  drop(extensions.exporters, owned.exporters);
+
+  const orphaned = [];
+  for (const kind of owned.layerKinds) {
+    extensions.layerKinds.delete(kind);
+    const inUse = app.doc && app.doc.layers.some((l) => l.kind === kind);
+    if (inUse) {
+      const was = LAYER_KINDS[kind] || {};
+      LAYER_KINDS[kind] = { label: (was.label || kind) + ' (off)', paint: false,
+                            icon: was.icon || 'paper', orphan: true };
+      for (const layer of app.doc.layers) if (layer.kind === kind) orphaned.push(layer);
+    } else {
+      delete LAYER_KINDS[kind];
+    }
+  }
+
+  extensions.loaded.delete(id);
+  // The renderer keeps a canvas per layer, so a layer that has lost its
+  // renderer still shows whatever it drew last unless it is rebuilt.
+  for (const layer of orphaned) R.rebuildLayer(layer);
+  if (orphaned.length) { R.compositeAll(); R.requestDraw(); }
+  emit('tool-registry');
+  emit('panels');
+  emit('layers');
+  emit('extensions');
+  return true;
+}
+
+function drop(list, mine) {
+  for (const item of mine) {
+    const i = list.indexOf(item);
+    if (i >= 0) list.splice(i, 1);
+  }
+  mine.length = 0;
 }
 
 /* ------------------------------------------------------------ the loader */
@@ -143,30 +212,41 @@ export async function loadExtensions() {
   }
   extensions.list = list;
 
-  for (const manifest of list) {
-    if (!manifest.enabled || manifest.error) continue;
-    if ((manifest.apiVersion || 1) > API_VERSION) {
-      manifest.error = `needs extension API ${manifest.apiVersion}; this build provides ${API_VERSION}`;
-      continue;
-    }
-    const href = `/extensions/${encodeURIComponent(manifest.dir)}/${manifest.main}`;
-    try {
-      const module = await import(/* @vite-ignore */ href);
-      const setup = module.default || module.register || module.activate;
-      if (typeof setup !== 'function') {
-        throw new Error('the module exports no default function to call');
-      }
-      const api = makeApi(manifest);
-      await setup(api);
-      extensions.loaded.set(manifest.id, { manifest, api });
-    } catch (err) {
-      // One broken extension must not take the editor with it.
-      manifest.error = String(err && err.message ? err.message : err);
-      console.error('[extension ' + manifest.id + ']', err);
-    }
-  }
+  for (const manifest of list) await loadOne(manifest);
   emit('extensions');
   return extensions;
+}
+
+/** Import and start one extension. Everything that can go wrong is caught and
+ *  written onto the manifest, because one broken extension must never take the
+ *  editor with it. */
+export async function loadOne(manifest) {
+  if (!manifest.enabled) return false;
+  manifest.error = manifest.error && manifest.error.startsWith('needs extension API') ? '' : manifest.error;
+  if (manifest.error) return false;
+  if ((manifest.apiVersion || 1) > API_VERSION) {
+    manifest.error = `needs extension API ${manifest.apiVersion}; this build provides ${API_VERSION}`;
+    return false;
+  }
+  // A cache-busting query so turning an extension off, editing it and turning
+  // it back on runs the file on disk rather than the one already imported.
+  const href = `/extensions/${encodeURIComponent(manifest.dir)}/${manifest.main}?v=${Date.now()}`;
+  try {
+    const module = await import(/* @vite-ignore */ href);
+    const setup = module.default || module.register || module.activate;
+    if (typeof setup !== 'function') {
+      throw new Error('the module exports no default function to call');
+    }
+    const api = makeApi(manifest);
+    const teardown = await setup(api);
+    if (typeof teardown === 'function') api._owned.teardown.push(teardown);
+    extensions.loaded.set(manifest.id, { manifest, api });
+    return true;
+  } catch (err) {
+    manifest.error = String(err && err.message ? err.message : err);
+    console.error('[extension ' + manifest.id + ']', err);
+    return false;
+  }
 }
 
 /** Renderer hook: layers whose kind came from an extension. */
@@ -181,6 +261,29 @@ export function renderExtensionLayer(layer, ctx) {
   return true;
 }
 
+/** Turn an extension on or off, there and then.
+ *
+ * Needing a page reload for this was the last thing in the program that made
+ * you restart it to change your mind. */
 export async function setExtensionEnabled(id, enabled) {
   await serverApi.setExtensionEnabled(id, enabled);
+  const manifest = extensions.list.find((m) => m.id === id);
+  if (!manifest) return false;
+  manifest.enabled = enabled;
+  if (!enabled) return unloadExtension(id);
+
+  const ok = await loadOne(manifest);
+  // A layer kind coming back means the layers holding it can draw again.
+  if (ok && app.doc) {
+    let redraw = false;
+    for (const layer of app.doc.layers) {
+      if (extensions.layerKinds.has(layer.kind)) { R.rebuildLayer(layer); redraw = true; }
+    }
+    if (redraw) { R.compositeAll(); R.requestDraw(); }
+  }
+  emit('tool-registry');
+  emit('panels');
+  emit('layers');
+  emit('extensions');
+  return ok;
 }

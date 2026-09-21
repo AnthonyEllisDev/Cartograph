@@ -65,14 +65,17 @@
             <ul class="layer-list" id="layer-list"></ul>
             <div class="layer-props" id="layer-props"></div>
           </section>
-          <section class="panel" id="panel-map">
-            <h3>Map</h3>
-            <div id="map-props"></div>
-          </section>
+          <!-- History above Map: History is read while you work and Map is set
+               once and forgotten, so on a short window the one you need is the
+               one you can reach. -->
           <section class="panel" id="panel-history">
             <h3>History</h3>
             <ul class="hist-list" id="history-list"></ul>
             <p class="muted small" id="history-foot"></p>
+          </section>
+          <section class="panel" id="panel-map">
+            <h3>Map</h3>
+            <div id="map-props"></div>
           </section>
           <div id="extension-panels"></div>
         </div>

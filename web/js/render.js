@@ -7,8 +7,9 @@
  */
 
 import { imageNow, pattern } from './assets.js';
-import { LAYER_KINDS, gridStepPx } from './doc.js';
+import { LAYER_KINDS, gridStepPx, layerAlpha, layerVisible } from './doc.js';
 import * as hex from './hex.js';
+import * as light from './light.js';
 import { clamp, makeCanvas, rng } from './util.js';
 
 export const view = {
@@ -139,7 +140,8 @@ export function zoomAt(sx, sy, factor) {
 
 /* -------------------------------------------------------------- brush paths */
 
-function strokePath(ctx, points, width, softness) {
+function strokePath(ctx, points, width, softness, widths) {
+  if (widths && widths.length === points.length) return taperedPath(ctx, points, widths, softness);
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -166,13 +168,54 @@ function strokePath(ctx, points, width, softness) {
   ctx.restore();
 }
 
+/** A stroke whose width changes along its length.
+ *
+ * It cannot be one stroked polyline, so it is stamped: overlapping discs whose
+ * radius follows the recorded width. They go down opaque into a buffer and the
+ * buffer is blurred once on the way in — blurring each disc as it is drawn
+ * instead makes their soft edges add up, and a soft brush comes out hard. */
+function taperedPath(ctx, points, widths, softness) {
+  const src = ctx.canvas;
+  const tmp = makeCanvas(src.width, src.height);
+  const t = tmp.getContext('2d');
+  t.setTransform(ctx.getTransform());
+  t.fillStyle = '#fff';
+  const dab = (x, y, w) => {
+    t.beginPath();
+    t.arc(x, y, Math.max(0.5, w / 2), 0, Math.PI * 2);
+    t.fill();
+  };
+  if (points.length === 1) {
+    dab(points[0].x, points[0].y, widths[0]);
+  } else {
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      const wa = widths[i - 1], wb = widths[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      // A fifth of the narrower radius keeps the run smooth at any width.
+      const step = Math.max(0.8, Math.min(wa, wb) * 0.2);
+      const n = Math.max(1, Math.ceil(len / step));
+      for (let k = 0; k <= n; k++) {
+        const u = k / n;
+        dab(a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, wa + (wb - wa) * u);
+      }
+    }
+  }
+  const widest = Math.max.apply(null, widths);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (softness > 0.01) ctx.filter = `blur(${(softness * widest * 0.25).toFixed(2)}px)`;
+  ctx.drawImage(tmp, 0, 0);
+  ctx.restore();
+}
+
 /** Every brush here is the same pipeline — draw a shape, pour a texture into
  *  it — and they differ only in the shape. This is that shape. */
 function drawBrushMask(ctx, op) {
   const soft = op.hardness != null ? 1 - op.hardness : 0.35;
   if (op.mode === 'dabs') return dabMask(ctx, op, soft);
   if (op.mode === 'shape') return shapeMask(ctx, op, soft);
-  return strokePath(ctx, op.points, op.size, soft);
+  return strokePath(ctx, op.points, op.size, soft, op.widths);
 }
 
 /** Separate dabs rather than a continuous line: broken, mottled coverage, the
@@ -267,6 +310,9 @@ export function shapeBox(op, pad = 30) {
   };
 }
 
+/** The reach of a stroke. Any box function must agree with this one, or a
+ *  full rebuild clips what the incremental repaint drew. A tapered stroke is
+ *  measured by its widest point, which is the only width that reaches. */
 export function strokeBox(points, width, softness, pad = 4) {
   const grow = width / 2 + softness * width * 0.5 + pad;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -380,15 +426,63 @@ export function scatterItems(op, rand = rng(op.seed || 1)) {
   return out;
 }
 
-export function drawSprite(ctx, img, item) {
+/* A silhouette of a sprite in one flat colour, which is all both the shadow
+   and the tint need. Cached, because a forest is hundreds of stamps drawn from
+   a handful of images, and rebuilding the silhouette for each one is the
+   difference between instant and noticeable. */
+const spriteFx = new Map();
+
+function silhouette(img, key, colour) {
+  const cached = spriteFx.get(key);
+  if (cached) return cached;
+  const c = makeCanvas(img.width, img.height);
+  const x = c.getContext('2d');
+  x.drawImage(img, 0, 0);
+  x.globalCompositeOperation = 'source-in';
+  x.fillStyle = colour;
+  x.fillRect(0, 0, c.width, c.height);
+  spriteFx.set(key, c);
+  if (spriteFx.size > 160) spriteFx.delete(spriteFx.keys().next().value);
+  return c;
+}
+
+/** Rescanning the asset folder can put different art behind the same id. */
+export function forgetSpriteFx() { spriteFx.clear(); }
+
+export function drawSprite(ctx, img, item, style) {
   const w = img.width * item.scale;
   const h = img.height * item.scale;
+  const alpha = item.opacity != null ? item.opacity : 1;
+  const shadow = style && style.shadow > 0 ? style.shadow : 0;
+  const tint = style && style.tintStrength > 0 && style.tint ? style.tintStrength : 0;
+
+  if (shadow && item.asset) {
+    const colour = style.shadowColor || '#241c10';
+    const ang = ((style.shadowAngle != null ? style.shadowAngle : 55) * Math.PI) / 180;
+    const dist = h * (style.shadowLength != null ? style.shadowLength : 0.16);
+    const blur = h * (style.shadowBlur != null ? style.shadowBlur : 0.05);
+    ctx.save();
+    ctx.globalAlpha = alpha * shadow;
+    if (blur > 0.3) ctx.filter = `blur(${blur.toFixed(2)}px)`;
+    ctx.translate(item.x + Math.cos(ang) * dist, item.y + Math.sin(ang) * dist);
+    if (item.rot) ctx.rotate(item.rot);
+    if (item.flip) ctx.scale(-1, 1);
+    ctx.drawImage(silhouette(img, item.asset + '|s|' + colour, colour), -w / 2, -h, w, h);
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.translate(item.x, item.y);
   if (item.rot) ctx.rotate(item.rot);
   if (item.flip) ctx.scale(-1, 1);
-  if (item.opacity != null) ctx.globalAlpha = item.opacity;
+  ctx.globalAlpha = alpha;
   ctx.drawImage(img, -w / 2, -h, w, h);      // anchored at the foot, like a map symbol
+  if (tint && item.asset) {
+    // A wash of colour over the symbol rather than a replacement of it: the
+    // linework has to stay readable, or a tinted forest is a green blob.
+    ctx.globalAlpha = alpha * tint;
+    ctx.drawImage(silhouette(img, item.asset + '|t|' + style.tint, style.tint), -w / 2, -h, w, h);
+  }
   ctx.restore();
 }
 
@@ -407,7 +501,9 @@ export function rebuildLayer(layer) {
     case 'objects': return renderObjects(layer, ctx);
     case 'paths':   return renderPaths(layer, ctx);
     case 'walls':   return renderWalls(layer, ctx);
+    case 'lights':  return renderLights(layer, ctx);
     case 'labels':  return renderLabels(layer, ctx);
+    case 'group':   return undefined;              // a folder draws nothing
     case 'grid':    return renderGrid(layer, ctx);
     case 'paper':   return renderPaper(layer, ctx);
     default:
@@ -725,7 +821,7 @@ function renderObjects(layer, ctx) {
   const items = layer.ops.slice().sort((a, b) => a.y - b.y);   // painter's order
   for (const item of items) {
     const img = imageNow(item.asset);
-    if (img) drawSprite(ctx, img, item);
+    if (img) drawSprite(ctx, img, item, layer);
   }
 }
 
@@ -898,6 +994,103 @@ function strokeRun(ctx, pts) {
   ctx.stroke();
 }
 
+/* ----------------------------------------------------------------- lighting */
+
+/** The segments a light can be stopped by.
+ *
+ * `blocks` on WALL_KINDS already knows which ones those are: a window is a
+ * wall you can see through, and it should light the room behind it. */
+export function wallSegments(doc) {
+  const layer = (doc || view.doc).layers.find((l) => l.kind === 'walls');
+  if (!layer || !layer.visible) return [];
+  const out = [];
+  for (const item of layer.ops) {
+    if (!(WALL_KINDS[item.kind] || WALL_KINDS.wall).blocks) continue;
+    const pts = item.points || [];
+    for (let i = 1; i < pts.length; i++) out.push({ a: pts[i - 1], b: pts[i] });
+  }
+  return out;
+}
+
+export function lightRadii(op) {
+  const bright = Math.max(1, op.bright || 120);
+  return { bright, dim: Math.max(bright, op.dim || bright * 2) };
+}
+
+/** Lighting is one layer of darkness that every light cuts a hole in.
+ *
+ * Doing it this way rather than additively is what keeps it composable with
+ * the rest of the stack: the result is an ordinary RGBA layer with an ordinary
+ * blend mode, so it exports, flattens and reorders like any other. */
+function renderLights(layer, ctx) {
+  const doc = view.doc;
+  const ambient = layer.ambient != null ? layer.ambient : 0;
+  const glow = layer.glow != null ? layer.glow : 0.15;
+  const segs = layer.shadows === false ? [] : wallSegments(doc);
+
+  if (ambient > 0) {
+    ctx.save();
+    ctx.globalAlpha = ambient;
+    ctx.fillStyle = layer.color || '#060912';
+    ctx.fillRect(0, 0, doc.width, doc.height);
+    ctx.restore();
+  }
+
+  // Pass one: erase the darkness inside each light's reach.
+  for (const op of layer.ops) {
+    if (op.on === false) continue;
+    const { bright, dim } = lightRadii(op);
+    const k = op.intensity != null ? op.intensity : 1;
+    if (k <= 0) continue;
+    ctx.save();
+    clipLight(ctx, op, dim, segs);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = falloff(ctx, op, bright, dim, '0,0,0', k);
+    ctx.fillRect(op.x - dim, op.y - dim, dim * 2, dim * 2);
+    ctx.restore();
+  }
+
+  // Pass two: the colour of the light itself. Without this every lamp is a
+  // grey hole, and a torch and a moonbeam look identical.
+  if (glow > 0) {
+    for (const op of layer.ops) {
+      if (op.on === false) continue;
+      const { bright, dim } = lightRadii(op);
+      const k = (op.intensity != null ? op.intensity : 1) * glow;
+      if (k <= 0) continue;
+      ctx.save();
+      clipLight(ctx, op, dim, segs);
+      ctx.fillStyle = falloff(ctx, op, bright, dim, rgbTriplet(op.color || '#ffd9a0'), k);
+      ctx.fillRect(op.x - dim, op.y - dim, dim * 2, dim * 2);
+      ctx.restore();
+    }
+  }
+}
+
+/** Full strength out to the bright radius, then down to nothing at the dim
+ *  one — the two-radius falloff every tabletop rulebook describes. */
+function falloff(ctx, op, bright, dim, triplet, alpha) {
+  const g = ctx.createRadialGradient(op.x, op.y, 0, op.x, op.y, dim);
+  const inner = Math.min(0.995, bright / dim);
+  g.addColorStop(0, `rgba(${triplet},${alpha})`);
+  g.addColorStop(inner, `rgba(${triplet},${alpha})`);
+  g.addColorStop(1, `rgba(${triplet},0)`);
+  return g;
+}
+
+function clipLight(ctx, op, radius, segs) {
+  light.litPath(ctx, op, radius, segs);
+  ctx.clip();
+  // A second clip intersects the first, so a shuttered lantern is the wedge of
+  // what it faces and the walls, not one or the other.
+  if (light.isCone(op)) { light.conePath(ctx, op, radius); ctx.clip(); }
+}
+
+function rgbTriplet(hex) {
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex || '');
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)].join(',') : '255,217,160';
+}
+
 export const LABEL_STYLES = {
   title:      { font: '600 %spx Georgia, "Times New Roman", serif', spacing: 0.14, size: 64 },
   region:     { font: 'italic 500 %spx Georgia, "Times New Roman", serif', spacing: 0.3, size: 38 },
@@ -909,24 +1102,105 @@ function renderLabels(layer, ctx) {
   for (const item of layer.ops) {
     const style = LABEL_STYLES[item.style] || LABEL_STYLES.settlement;
     const size = item.size || style.size;
+    const gap = style.spacing > 0.01 ? size * style.spacing : 0;
+    const text = item.text || '';
+    // A label with points follows them; one without sits on a straight
+    // baseline at x,y, exactly as it always has.
+    const curve = item.points && item.points.length > 1 ? readable(item.points) : null;
+    const halo = item.halo !== false;
+
     ctx.save();
-    ctx.translate(item.x, item.y);
-    if (item.rot) ctx.rotate(item.rot);
     ctx.font = style.font.replace('%s', size);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const text = (item.text || '').toUpperCase() === item.text && style.spacing > 0.1
-      ? item.text : item.text;
-    const spaced = style.spacing > 0.01 ? spaceOut(text, size * style.spacing) : text;
-    if (item.halo !== false) {
+    if (halo) {
       ctx.lineWidth = Math.max(2, size * 0.16);
       ctx.strokeStyle = item.haloColor || 'rgba(244,236,216,.85)';
       ctx.lineJoin = 'round';
-      drawSpaced(ctx, spaced, true);
     }
-    ctx.fillStyle = item.color || '#3a2c1e';
-    drawSpaced(ctx, spaced, false);
+    if (curve) {
+      if (halo) drawOnPath(ctx, text, gap, curve, size, true);
+      ctx.fillStyle = item.color || '#3a2c1e';
+      drawOnPath(ctx, text, gap, curve, size, false);
+    } else {
+      ctx.translate(item.x, item.y);
+      if (item.rot) ctx.rotate(item.rot);
+      const spaced = gap ? spaceOut(text, gap) : text;
+      if (halo) drawSpaced(ctx, spaced, true);
+      ctx.fillStyle = item.color || '#3a2c1e';
+      drawSpaced(ctx, spaced, false);
+    }
     ctx.restore();
+  }
+}
+
+/* ------------------------------------------------------- text along a path */
+
+/** A curve drawn right to left would set its text upside down. Nobody wants
+ *  that, and nobody wants to have to draw their curves in a particular
+ *  direction either, so it is turned round here. */
+function readable(points) {
+  const a = points[0], b = points[points.length - 1];
+  return b.x < a.x ? points.slice().reverse() : points;
+}
+
+/** Walk a polyline by distance travelled rather than by index, which is what
+ *  spaces letters evenly regardless of how the points happen to fall. */
+function pathWalker(points) {
+  const segs = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1e-6) continue;
+    segs.push({ a, b, len, at: total });
+    total += len;
+  }
+  const at = (d) => {
+    if (!segs.length) return null;
+    if (d <= 0) return { x: segs[0].a.x, y: segs[0].a.y };
+    for (const s of segs) {
+      if (d <= s.at + s.len) {
+        const t = (d - s.at) / s.len;
+        return { x: s.a.x + (s.b.x - s.a.x) * t, y: s.a.y + (s.b.y - s.a.y) * t };
+      }
+    }
+    const last = segs[segs.length - 1];
+    return { x: last.b.x, y: last.b.y };
+  };
+  return {
+    total,
+    at,
+    /** The tangent, measured across a span rather than at a point. Taking it
+     *  from one segment makes every letter jitter wherever a hand-drawn curve
+     *  has a kink in it. */
+    angleAt(d, span) {
+      const a = at(Math.max(0, d - span)), b = at(Math.min(total, d + span));
+      return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
+    },
+  };
+}
+
+function drawOnPath(ctx, text, gap, points, size, stroke) {
+  const walk = pathWalker(points);
+  if (!walk.total) return;
+  const chars = Array.from(text);
+  const widths = chars.map((ch) => ctx.measureText(ch).width);
+  const run = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, chars.length - 1);
+  // Centred on the curve, so a name sits in the middle of the coast it names
+  // rather than starting wherever the drag happened to begin.
+  let d = (walk.total - run) / 2;
+  const span = Math.max(4, size * 0.4);
+  for (let i = 0; i < chars.length; i++) {
+    const mid = d + widths[i] / 2;
+    const pos = walk.at(mid);
+    if (!pos) break;
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    ctx.rotate(walk.angleAt(mid, span));
+    if (stroke) ctx.strokeText(chars[i], 0, 0); else ctx.fillText(chars[i], 0, 0);
+    ctx.restore();
+    d += widths[i] + gap;
   }
 }
 
@@ -1023,8 +1297,9 @@ export function compositeAll(box) {
   ctx.clip();
   ctx.clearRect(x, y, w, h);
   for (const layer of view.doc.layers) {
-    if (!layer.visible) continue;
-    ctx.globalAlpha = layer.opacity != null ? layer.opacity : 1;
+    if (layer.kind === 'group') continue;            // a folder draws nothing
+    if (!layerVisible(view.doc, layer)) continue;
+    ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
     ctx.drawImage(canvasFor(layer), x, y, w, h, x, y, w, h);
     if (view.liveLayer === layer.id && view.live) {
@@ -1038,6 +1313,14 @@ export function compositeAll(box) {
 
 export function invalidate(layer, box) {
   if (layer) rebuildLayer(layer);
+  // Shadows are derived from the walls, so a wall that moves without the
+  // lighting following it leaves light spilling through a wall that is no
+  // longer there. Doing it here rather than at every call site is the only way
+  // that stays true.
+  if (layer && layer.kind === 'walls') {
+    const lit = view.doc && view.doc.layers.find((l) => l.kind === 'lights');
+    if (lit && lit.ops.length) rebuildLayer(lit);
+  }
   compositeAll(box);
   requestDraw();
 }
@@ -1157,17 +1440,19 @@ function roundRect(ctx, x, y, w, h, r) {
 
 /* --------------------------------------------------------------- exporting */
 
-export function flatten({ scale = 1, grid = true, paper = true } = {}) {
+export function flatten({ scale = 1, grid = true, paper = true, lights = true } = {}) {
   const w = Math.round(view.doc.width * scale);
   const h = Math.round(view.doc.height * scale);
   const out = makeCanvas(w, h);
   const ctx = out.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   for (const layer of view.doc.layers) {
-    if (!layer.visible) continue;
+    if (layer.kind === 'group') continue;
+    if (!layerVisible(view.doc, layer)) continue;
     if (layer.kind === 'grid' && !grid) continue;
     if (layer.kind === 'paper' && !paper) continue;
-    ctx.globalAlpha = layer.opacity != null ? layer.opacity : 1;
+    if (layer.kind === 'lights' && !lights) continue;
+    ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
     ctx.drawImage(canvasFor(layer), 0, 0, w, h);
   }
@@ -1187,11 +1472,11 @@ export function flatten({ scale = 1, grid = true, paper = true } = {}) {
  * Coordinates are in grid cells, not pixels, which is why the map needs a real
  * scale before this means anything.
  */
-export function toUVTT(dataUrl) {
+export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
   const doc = view.doc;
-  const grid = doc.layers.find((l) => l.kind === 'grid');
-  const cell = (grid && grid.size) || (doc.scale && doc.scale.cellPx) || 64;
+  const cell = gridStepPx(doc) || 64;
   const wallLayer = doc.layers.find((l) => l.kind === 'walls');
+  const lightLayer = doc.layers.find((l) => l.kind === 'lights');
   const toCell = (pt) => ({ x: +(pt.x / cell).toFixed(4), y: +(pt.y / cell).toFixed(4) });
 
   const sight = [];
@@ -1213,6 +1498,21 @@ export function toUVTT(dataUrl) {
     }
   }
 
+  // The format takes ranges in grid cells like everything else, and colours as
+  // eight hex digits with the alpha first.
+  const lights = [];
+  for (const op of (lightLayer && lightLayer.visible ? lightLayer.ops : [])) {
+    if (op.on === false) continue;
+    const { dim } = lightRadii(op);
+    lights.push({
+      position: toCell(op),
+      range: +(dim / cell).toFixed(4),
+      intensity: +(op.intensity != null ? op.intensity : 1).toFixed(3),
+      color: argb(op.color || '#ffd9a0'),
+      shadows: !lightLayer || lightLayer.shadows !== false,
+    });
+  }
+
   return {
     format: 0.3,
     resolution: {
@@ -1223,8 +1523,30 @@ export function toUVTT(dataUrl) {
     line_of_sight: sight,
     objects_line_of_sight: [],
     portals,
-    environment: { baked_lighting: true, ambient_light: 'ffffffff' },
-    lights: [],
+    // If the darkness is painted into the image AND the lights are sent as
+    // data, a tabletop lights the map twice and it comes out washed out. The
+    // caller decides which, and says so here.
+    environment: {
+      baked_lighting: bakedLighting,
+      ambient_light: ambientArgb(lightLayer),
+    },
+    lights,
     image: dataUrl.split(',')[1],
   };
+}
+
+function argb(hex) {
+  const m = /^#?([\da-f]{6})$/i.exec(hex || '');
+  return 'ff' + (m ? m[1].toLowerCase() : 'ffffff');
+}
+
+/** What an unlit part of the map should look like to the tabletop. With no
+ *  lighting layer that is plain white, which is what it has always been. */
+function ambientArgb(layer) {
+  const ambient = layer && layer.visible ? (layer.ambient || 0) : 0;
+  if (ambient <= 0) return 'ffffffff';
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(layer.color || '#060912');
+  const dark = m ? [1, 2, 3].map((i) => parseInt(m[i], 16)) : [6, 9, 18];
+  const mix = dark.map((c) => Math.round(255 + (c - 255) * ambient));
+  return 'ff' + mix.map((c) => c.toString(16).padStart(2, '0')).join('');
 }

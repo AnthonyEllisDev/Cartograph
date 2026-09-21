@@ -17,6 +17,8 @@ export const LAYER_KINDS = {
   objects: { label: 'Objects',  paint: false, icon: 'stamp' },
   labels:  { label: 'Labels',   paint: false, icon: 'text'  },
   walls:   { label: 'Walls',    paint: false, icon: 'wall'  },
+  lights:  { label: 'Lighting', paint: false, icon: 'light' },
+  group:   { label: 'Group',    paint: false, icon: 'group' },
   grid:    { label: 'Grid',     paint: false, icon: 'grid'  },
   paper:   { label: 'Paper',    paint: false, icon: 'paper' },
 };
@@ -41,8 +43,22 @@ export function makeLayer(kind, extra = {}) {
              shallow: true, shallowWidth: 34, shallowColor: '#7fb4cd', shallowSteps: 3 },
   });
   if (kind === 'raster') Object.assign(base, { texture: 'starter/forest', scale: 1 });
+  // Shadow and tint live on the layer, not on each stamp: a map wants every
+  // tree lit from the same direction, and setting that once is the difference
+  // between a control and a chore.
+  if (kind === 'objects') Object.assign(base, {
+    shadow: 0, shadowAngle: 55, shadowLength: 0.16, shadowBlur: 0.05,
+    shadowColor: '#241c10', tint: '#6f8a4a', tintStrength: 0,
+  });
   if (kind === 'walls') Object.assign(base, {
     color: '#20242c', thickness: 7, doorColor: '#a8763c',
+  });
+  // Darkness with holes in it: `ambient` is how dark the unlit map goes, and
+  // every light op cuts its own reach back out of it. A new one starts at 0 —
+  // an unlit map is a black rectangle, and nobody wants that by surprise, so
+  // the light tool raises it when the first light is placed.
+  if (kind === 'lights') Object.assign(base, {
+    ambient: 0, color: '#060912', shadows: true, glow: 0.15,
   });
   // `size` is corner-to-corner on a hex grid, which is what it has always been;
   // `orientation` is only read when type is 'hex', and defaults to the flat-top
@@ -51,6 +67,9 @@ export function makeLayer(kind, extra = {}) {
     type: 'none', size: 64, orientation: 'flat',
     color: '#3a2c1e', opacity: 0.25, offsetX: 0, offsetY: 0, lineWidth: 1,
   });
+  // A group draws nothing itself. It is a folder: its members carry its id and
+  // take their visibility and opacity through it.
+  if (kind === 'group') Object.assign(base, { name: 'Group', collapsed: false });
   if (kind === 'paper') Object.assign(base, {
     texture: 'starter/parchment', scale: 2, opacity: 0.42, blend: 'multiply',
     vignette: 0.35, edge: 0.4,
@@ -75,7 +94,7 @@ export const MAP_KINDS = {
     scale: { unit: 'ft', perCell: 5 },
     grid: { type: 'square', size: 70, opacity: 0.34, color: '#1c2028' },
     snap: 'grid',
-    layers: ['floor', 'terrain', 'objects', 'walls', 'labels', 'grid', 'paper'],
+    layers: ['floor', 'terrain', 'objects', 'walls', 'lights', 'labels', 'grid', 'paper'],
   },
   // A hex crawl is a region map that counts in hexes: the grid is the unit, so
   // the scale is one hex per cell and snapping is on from the start.
@@ -99,6 +118,7 @@ const LAYER_RECIPES = {
   paths: () => makeLayer('paths'),
   objects: () => makeLayer('objects'),
   walls: () => makeLayer('walls'),
+  lights: () => makeLayer('lights'),
   labels: () => makeLayer('labels'),
   grid: () => makeLayer('grid'),
   paper: () => makeLayer('paper'),
@@ -154,6 +174,39 @@ export function snapPoint(doc, pt, prefer = 'corner') {
     x: Math.round((pt.x - ox - bias) / step) * step + ox + bias,
     y: Math.round((pt.y - oy - bias) / step) * step + oy + bias,
   };
+}
+
+/* ---------------------------------------------------------------- groups */
+
+/* Membership is an id on the member, not a list on the group.
+ *
+ * Keeping doc.layers a flat array matters more than it looks: project.json is
+ * the document verbatim, and everything in the program from compositing to
+ * the VTT export walks that array. A tree would have meant rewriting all of
+ * it to gain nothing a member field does not already give. */
+
+export function groupOf(doc, layer) {
+  if (!layer || !layer.group) return null;
+  const g = doc.layers.find((l) => l.id === layer.group && l.kind === 'group');
+  return g || null;
+}
+
+export function membersOf(doc, group) {
+  return doc.layers.filter((l) => l.group === group.id);
+}
+
+/** Whether a layer is actually drawn, which its group can veto. */
+export function layerVisible(doc, layer) {
+  if (!layer.visible) return false;
+  const g = groupOf(doc, layer);
+  return !g || g.visible;
+}
+
+/** A layer's opacity with its group's folded in. */
+export function layerAlpha(doc, layer) {
+  const own = layer.opacity != null ? layer.opacity : 1;
+  const g = groupOf(doc, layer);
+  return g ? own * (g.opacity != null ? g.opacity : 1) : own;
 }
 
 export function gridLayer(doc) {

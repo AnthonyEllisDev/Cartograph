@@ -2,7 +2,7 @@
  * Start the server first:  python3 app.py --no-browser --port 7899
  * Then:                    node test/verify.mjs [http://127.0.0.1:7899] */
 
-import { launch, base } from './browser.mjs';
+import { launch, base, ready, newMap } from './browser.mjs';
 import fs from 'fs';
 import path from 'path';
 
@@ -134,9 +134,13 @@ let savedSlug = null;
   const page = await newPage();
   const h = helpers(page);
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1200);
+  await ready(page);
 
   t('the editor boots with no console errors', page.errs.length === 0, page.errs.slice(0, 3).join(' | '));
+  // A map of its own. The editor reopens the last one on launch, which is right
+  // for a person and wrong for a suite: painting onto whatever the previous
+  // suite left behind fails five checks that have nothing to do with the bug.
+  await newMap(page, { name: 'Verification Isle', kind: 'region' });
   t('it makes no requests off this machine', page.external.length === 0, page.external.slice(0, 3).join(' '));
 
   const tools = await page.$$eval('.tool', (ns) => ns.length);
@@ -306,7 +310,7 @@ let savedSlug = null;
   const page = await newPage();
   const h = helpers(page);
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1600);
+  await ready(page);
   const openedSlug = await page.evaluate(() => window.__cg.app.slug);
   t('the last map is reopened on launch', openedSlug === savedSlug, `${openedSlug} vs ${savedSlug}`);
   const fp = await h.fingerprint();
@@ -324,7 +328,7 @@ let savedSlug = null;
 {
   const page = await newPage();
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1000);
+  await ready(page);
   const tmp = path.join('/tmp', 'imported-texture.png');
   fs.copyFileSync(path.join(ROOT, 'assets', 'packs', 'starter', 'terrain', 'swamp.png'), tmp);
   await page.click('.tab[data-tab="assets"]');
@@ -352,7 +356,7 @@ let savedSlug = null;
 for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   const page = await newPage(w, h);
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1200);
+  await ready(page);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   const stage = await page.evaluate(() => {
     const r = document.getElementById('stage').getBoundingClientRect();
@@ -368,7 +372,7 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   const page = await newPage();
   const h = helpers(page);
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1200);
+  await ready(page);
   const frame = await page.evaluate(() => {
     // What a drag actually costs per frame: one more point, re-render and
     // re-composite only the rectangle that point touched.
@@ -448,11 +452,11 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   const page = await newPage();
   const h = helpers(page);
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1400);
+  await ready(page);
   // start from stock settings so an earlier run cannot colour this one
   await page.evaluate(() => localStorage.removeItem('cartograph.settings.v1'));
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(1400);
+  await ready(page);
 
   const css = (n) => page.evaluate((name) =>
     getComputedStyle(document.documentElement).getPropertyValue(name).trim(), n);
@@ -498,7 +502,7 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   await page.waitForTimeout(200);
 
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(1400);
+  await ready(page);
   t('the look survives a restart', await page.evaluate(() => document.body.classList.contains('is-light')));
 
   // back to the shipped look for the rest of the run
@@ -603,7 +607,7 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   t('a side panel folds away',
     await page.evaluate(() => document.getElementById('panel-map').classList.contains('is-closed')));
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(1400);
+  await ready(page);
   t('a folded panel stays folded across a restart',
     await page.evaluate(() => document.getElementById('panel-map').classList.contains('is-closed')));
   await page.click('#panel-map h3');
@@ -640,7 +644,7 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
 {
   const page = await newPage();
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1500);
+  await ready(page);
 
   const loaded = await page.evaluate(() => [...window.__cgx.extensions.loaded.keys()]);
   t('every bundled extension loaded', loaded.length === 3, loaded.join(', '));

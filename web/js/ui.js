@@ -5,7 +5,7 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, gridStepPx, makeLayer } from './doc.js';
+import { LAYER_KINDS, gridLayer, gridStepPx, groupOf, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
 import { history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
@@ -104,11 +104,20 @@ export function renderToolOptions() {
     const target = toolTarget(tool);
     const current = activeLayer();
     if (!target) {
+      // Offering only a paint layer here left the wall and light tools with a
+      // dead end on any map that happened not to have their layer.
+      const kind = tool.writesTo.includes('raster') ? 'raster' : tool.writesTo[0];
+      const label = (LAYER_KINDS[kind] || {}).label || 'layer';
       panel.appendChild(el('div', { class: 'target is-warn' }, [
         el('span', { text: 'No layer this tool can draw on.' }),
-        tool.writesTo.includes('raster')
-          ? el('button', { class: 'link', text: 'Add a paint layer', onclick: addPaintLayer })
-          : null,
+        el('button', {
+          class: 'link', text: 'Add a ' + label.toLowerCase() + ' layer',
+          onclick: () => {
+            if (kind === 'raster') addPaintLayer();
+            else insertLayer(makeLayer(kind));
+            renderToolOptions();
+          },
+        }),
       ]));
     } else if (current && current !== target) {
       panel.appendChild(el('div', { class: 'target is-warn' }, [
@@ -342,36 +351,106 @@ export function renderLayers() {
   const layers = app.doc ? app.doc.layers : [];
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i];
-    const row = el('li', {
-      class: 'layer' + (layer.id === app.activeLayerId ? ' is-active' : '') +
-             (layer.visible ? '' : ' is-hidden'),
-      draggable: 'true',
-      dataset: { id: layer.id },
-      onclick: () => selectLayer(layer),
-    });
-    row.appendChild(el('span', {
-      class: 'eye', html: icon(layer.visible ? 'eye' : 'eyeOff'), title: 'Show or hide',
-      onclick: (e) => {
-        e.stopPropagation();
-        layer.visible = !layer.visible;
-        R.compositeAll(); R.requestDraw(); markDirty(); renderLayers();
-      },
-    }));
-    row.appendChild(el('span', { class: 'lname', text: layer.name }));
-    row.appendChild(el('span', { class: 'lkind', text: LAYER_KINDS[layer.kind].label }));
-    row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', layer.id);
-      row.classList.add('is-dragging');
-    });
-    row.addEventListener('dragend', () => row.classList.remove('is-dragging'));
-    row.addEventListener('dragover', (e) => e.preventDefault());
-    row.addEventListener('drop', (e) => {
-      e.preventDefault();
-      moveLayer(e.dataTransfer.getData('text/plain'), layer.id);
-    });
-    list.appendChild(row);
+    // A collapsed group's members are folded away, which is the whole point of
+    // having one on a map big enough to need it.
+    const group = groupOf(app.doc, layer);
+    if (group && group.collapsed) continue;
+    list.appendChild(layerRow(layer, !!group));
   }
   renderLayerProps();
+}
+
+function layerRow(layer, inGroup) {
+  const isGroup = layer.kind === 'group';
+  const dimmed = !layerVisible(app.doc, layer);
+  const row = el('li', {
+    class: 'layer' + (layer.id === app.activeLayerId ? ' is-active' : '')
+           + (dimmed ? ' is-hidden' : '') + (inGroup ? ' in-group' : '')
+           + (isGroup ? ' is-group' : ''),
+    draggable: 'true',
+    dataset: { id: layer.id },
+    onclick: () => selectLayer(layer),
+  });
+  if (isGroup) {
+    const n = membersOf(app.doc, layer).length;
+    row.appendChild(el('span', {
+      class: 'fold', text: layer.collapsed ? '\u25b8' : '\u25be',
+      title: layer.collapsed ? 'Open the group' : 'Fold the group away',
+      onclick: (e) => { e.stopPropagation(); layer.collapsed = !layer.collapsed; markDirty(); renderLayers(); },
+    }));
+    row.title = n + (n === 1 ? ' layer' : ' layers') + ' in this group';
+  }
+  row.appendChild(el('span', {
+    class: 'eye', html: icon(layer.visible ? 'eye' : 'eyeOff'), title: 'Show or hide',
+    onclick: (e) => {
+      e.stopPropagation();
+      layer.visible = !layer.visible;
+      R.compositeAll(); R.requestDraw(); markDirty(); renderLayers();
+    },
+  }));
+  row.appendChild(el('span', { class: 'lname', text: layer.name }));
+  row.appendChild(el('span', { class: 'lkind', text: LAYER_KINDS[layer.kind].label }));
+  row.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', layer.id);
+    row.classList.add('is-dragging');
+  });
+  row.addEventListener('dragend', () => row.classList.remove('is-dragging'));
+  row.addEventListener('dragover', (e) => e.preventDefault());
+  row.addEventListener('drop', (e) => {
+    e.preventDefault();
+    moveLayer(e.dataTransfer.getData('text/plain'), layer.id);
+  });
+  return row;
+}
+
+/** Put a layer into a group, or take it out of whatever it is in.
+ *
+ * Joining also moves the layer to sit with the group's other members. The
+ * group layer marks the top of its run, so a contiguous run below it both
+ * reads as a folder in the panel and means something in the draw order — a
+ * group whose members are scattered through the stack is a lie about what is
+ * drawn on top of what. */
+export function setLayerGroup(layer, groupId) {
+  const was = layer.group || null;
+  const wasAt = app.doc.layers.indexOf(layer);
+  if (was === (groupId || null)) return;
+
+  const apply = (id, restoreTo) => {
+    if (id) layer.group = id; else delete layer.group;
+    if (restoreTo != null) {
+      const now = app.doc.layers.indexOf(layer);
+      if (now >= 0) app.doc.layers.splice(now, 1);
+      app.doc.layers.splice(Math.min(restoreTo, app.doc.layers.length), 0, layer);
+    } else if (id) {
+      const now = app.doc.layers.indexOf(layer);
+      if (now >= 0) app.doc.layers.splice(now, 1);
+      const at = app.doc.layers.findIndex((l) => l.id === id);
+      app.doc.layers.splice(at < 0 ? app.doc.layers.length : at, 0, layer);
+    }
+    R.compositeAll(); R.requestDraw(); emit('layers');
+  };
+  apply(groupId || null);
+  pushEntry({
+    label: groupId ? 'Group' : 'Ungroup',
+    bytes: 0,
+    undo() { apply(was, wasAt); },
+    redo() { apply(groupId || null); },
+  });
+  markDirty();
+}
+
+/** A new group, holding whatever is selected to start with. */
+export function addGroup() {
+  const group = makeLayer('group', { name: 'Group ' + (app.doc.layers.filter((l) => l.kind === 'group').length + 1) });
+  const current = activeLayer();
+  const at = current ? app.doc.layers.indexOf(current) + 1 : app.doc.layers.length;
+  app.doc.layers.splice(at, 0, group);
+  R.rebuildLayer(group);
+  if (current && current.kind !== 'group') current.group = group.id;
+  markDirty();
+  emit('layers');
+  setActiveLayer(group.id);
+  return group;
 }
 
 /** Selecting a layer also picks a tool that can edit it — but only when the
@@ -388,6 +467,15 @@ function selectLayer(layer) {
 
 function moveLayer(fromId, toId) {
   if (!fromId || fromId === toId) return;
+  const target = app.doc.layers.find((l) => l.id === toId);
+  const moving = app.doc.layers.find((l) => l.id === fromId);
+  // Dropping onto a group puts the layer in it; dropping onto an ordinary
+  // layer moves it there and gives it whatever group that layer is in, which
+  // is what makes a drag out of a group actually leave the group.
+  if (moving && target && moving.kind !== 'group') {
+    setLayerGroup(moving, target.kind === 'group' ? target.id : (target.group || null));
+    if (target.kind === 'group') { renderLayers(); return; }
+  }
   const from = app.doc.layers.findIndex((l) => l.id === fromId);
   const to = app.doc.layers.findIndex((l) => l.id === toId);
   if (from < 0 || to < 0) return;
@@ -441,6 +529,59 @@ function renderLayerProps() {
     root.appendChild(field({ type: 'color', label: 'Shallow', value: layer.coast.shallowColor },
       (v) => coast('shallowColor', v)));
   }
+  if (layer.kind === 'group') {
+    const members = membersOf(app.doc, layer);
+    root.appendChild(el('p', { class: 'empty', text: members.length
+      ? `Holding ${members.length} layer${members.length === 1 ? '' : 's'}. `
+        + 'Its visibility and opacity apply to all of them. Drag a layer onto this row to add it.'
+      : 'Empty. Drag a layer onto this row to put it in the group.' }));
+    if (members.length) {
+      root.appendChild(el('button', {
+        class: 'btn', text: 'Take them all out',
+        onclick: () => { for (const m of members) setLayerGroup(m, null); renderLayers(); },
+      }));
+    }
+  }
+  if (layer.kind === 'objects') {
+    const restamp = () => { R.invalidate(layer); markDirty(); };
+    root.appendChild(el('h3', { text: 'Drop shadow' }));
+    root.appendChild(field({ type: 'range', label: 'Strength', min: 0, max: 1, step: 0.02,
+      value: layer.shadow || 0, percent: true, commit: true }, (v) => { layer.shadow = v; restamp(); }));
+    root.appendChild(field({ type: 'range', label: 'Direction', min: 0, max: 359, step: 1,
+      value: layer.shadowAngle != null ? layer.shadowAngle : 55, suffix: '\u00b0', commit: true },
+      (v) => { layer.shadowAngle = v; restamp(); }));
+    root.appendChild(field({ type: 'range', label: 'Length', min: 0, max: 0.6, step: 0.01,
+      value: layer.shadowLength != null ? layer.shadowLength : 0.16, percent: true, commit: true },
+      (v) => { layer.shadowLength = v; restamp(); }));
+    root.appendChild(field({ type: 'range', label: 'Softness', min: 0, max: 0.3, step: 0.005,
+      value: layer.shadowBlur != null ? layer.shadowBlur : 0.05, percent: true, commit: true },
+      (v) => { layer.shadowBlur = v; restamp(); }));
+    root.appendChild(field({ type: 'color', label: 'Shadow', value: layer.shadowColor || '#241c10' },
+      (v) => { layer.shadowColor = v; restamp(); }));
+    root.appendChild(el('h3', { text: 'Tint' }));
+    root.appendChild(field({ type: 'range', label: 'Strength', min: 0, max: 1, step: 0.02,
+      value: layer.tintStrength || 0, percent: true, commit: true },
+      (v) => { layer.tintStrength = v; restamp(); }));
+    root.appendChild(field({ type: 'color', label: 'Colour', value: layer.tint || '#6f8a4a' },
+      (v) => { layer.tint = v; restamp(); }));
+  }
+  if (layer.kind === 'lights') {
+    const relight = () => { R.invalidate(layer); markDirty(); };
+    root.appendChild(field({ type: 'range', label: 'Darkness', min: 0, max: 1, step: 0.02,
+      value: layer.ambient != null ? layer.ambient : 0, percent: true, commit: true },
+      (v) => { layer.ambient = v; relight(); }));
+    root.appendChild(field({ type: 'color', label: 'Night', value: layer.color || '#060912' },
+      (v) => { layer.color = v; relight(); }));
+    root.appendChild(field({ type: 'range', label: 'Glow', min: 0, max: 0.8, step: 0.02,
+      value: layer.glow != null ? layer.glow : 0.15, percent: true, commit: true },
+      (v) => { layer.glow = v; relight(); }));
+    root.appendChild(field({ type: 'toggle', label: 'Walls cast shadows',
+      value: layer.shadows !== false }, (v) => { layer.shadows = v; relight(); }));
+    const n = layer.ops.length;
+    root.appendChild(el('p', { class: 'empty', text: n
+      ? `${n} light${n === 1 ? '' : 's'}. The Light tool adds them; Select moves and deletes them.`
+      : 'No lights yet. The Light tool drops them, and walls cast the shadows.' }));
+  }
   if (layer.kind === 'grid') {
     const isHex = layer.type === 'hex';
     // The grid is what a cell is. Change it and the scale, the measure tool and
@@ -481,8 +622,10 @@ function renderLayerProps() {
   }
 
   const acts = el('div', { class: 'row' });
-  acts.appendChild(el('button', { class: 'btn', text: 'Clear', onclick: () => clearLayer(layer) }));
-  if (layer.kind === 'raster') {
+  if (layer.kind !== 'group') {
+    acts.appendChild(el('button', { class: 'btn', text: 'Clear', onclick: () => clearLayer(layer) }));
+  }
+  if (layer.kind === 'raster' || layer.kind === 'group') {
     acts.appendChild(el('button', {
       class: 'btn btn-danger', text: 'Delete layer', onclick: () => deleteLayer(layer),
     }));
@@ -516,6 +659,10 @@ function clearLayer(layer) {
 function deleteLayer(layer) {
   const index = app.doc.layers.indexOf(layer);
   if (index < 0) return;
+  // A group is a folder, not a container: deleting it frees its members rather
+  // than deleting somebody's work along with their filing.
+  const freed = layer.kind === 'group' ? membersOf(app.doc, layer) : [];
+  for (const m of freed) delete m.group;
   app.doc.layers.splice(index, 1);
   if (app.activeLayerId === layer.id) {
     const next = app.doc.layers.find((l) => LAYER_KINDS[l.kind].paint) || app.doc.layers[0];
@@ -524,7 +671,11 @@ function deleteLayer(layer) {
   R.compositeAll(); R.requestDraw();
   pushEntry({
     label: 'Delete layer',
-    undo() { app.doc.layers.splice(index, 0, layer); R.setDocument(app.doc); emit('layers'); },
+    undo() {
+      app.doc.layers.splice(index, 0, layer);
+      for (const m of freed) m.group = layer.id;
+      R.setDocument(app.doc); emit('layers');
+    },
     redo() { app.doc.layers.splice(app.doc.layers.indexOf(layer), 1); R.compositeAll(); R.requestDraw(); emit('layers'); },
   });
   markDirty(); emit('layers');
@@ -551,10 +702,11 @@ export function insertLayer(layer) {
  * Once an extension has taught the program another kind of layer, it asks. */
 async function addLayerClicked() {
   const kinds = [...extensions.layerKinds.values()].filter((k) => typeof k.make === 'function');
-  if (!kinds.length) return addPaintLayer();
 
-  const choice = el('select', {}, [el('option', { value: 'raster', text: 'Paint layer' })]
-    .concat(kinds.map((k) => el('option', { value: k.id, text: k.label || k.id }))));
+  const choice = el('select', {}, [
+    el('option', { value: 'raster', text: 'Paint layer' }),
+    el('option', { value: 'group', text: 'Group — a folder for other layers' }),
+  ].concat(kinds.map((k) => el('option', { value: k.id, text: k.label || k.id }))));
   let go = false;
   await modal({
     title: 'New layer',
@@ -564,6 +716,7 @@ async function addLayerClicked() {
   });
   if (!go) return;
   if (choice.value === 'raster') return addPaintLayer();
+  if (choice.value === 'group') return addGroup();
   const kind = kinds.find((k) => k.id === choice.value);
   try {
     const layer = kind.make();

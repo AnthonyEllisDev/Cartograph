@@ -1,4 +1,4 @@
-import { launch, base } from './browser.mjs';
+import { launch, base, ready } from './browser.mjs';
 
 const b = await launch();
 const p = await b.newPage({ viewport: { width: 1600, height: 950 } });
@@ -6,7 +6,7 @@ const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE ' + m.text()); });
 await p.goto(base('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
-await p.waitForTimeout(1000);
+await ready(p);
 
 const M = (mx, my) => p.evaluate(([x, y]) => {
   const s = window.__cg.mapToScreen(x, y);

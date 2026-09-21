@@ -1,17 +1,20 @@
-import { launch, base } from './browser.mjs';
+import { launch, base, ready, newMap } from './browser.mjs';
 const b = await launch();
 const p = await b.newPage({ viewport: { width: 1600, height: 950 } });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE ' + m.text()); });
 await p.goto(base('http://127.0.0.1:7871/'), { waitUntil: 'networkidle' });
-await p.waitForTimeout(1400);
+await ready(p);
 const ok = [], bad = [];
 const t = (l, c, x='') => (c ? ok : bad).push(l + (x ? ' — ' + x : ''));
 
 // clear any presets left from an earlier run
 await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('cartograph.settings.v1')||'{}'); s.presets = []; localStorage.setItem('cartograph.settings.v1', JSON.stringify(s)); });
-await p.reload({ waitUntil: 'networkidle' }); await p.waitForTimeout(1400);
+await p.reload({ waitUntil: 'networkidle' });
+await ready(p);
+// Its own map, so it does not inherit whatever the last suite left open.
+await newMap(p, { name: 'Pro Workbench', kind: 'region' });
 
 const M = (mx, my) => p.evaluate(([x, y]) => {
   const s = window.__cg.mapToScreen(x, y);
@@ -146,6 +149,79 @@ t('preset survives reload', chips2.includes('Wide moss'), chips2.join('|'));
 await p.click('.preset-row .chip-x'); await p.waitForTimeout(300);
 t('preset deletes', (await p.$$('.preset-row .chip')).length === 0);
 await p.screenshot({ path: '/tmp/shots/pro-presets.png' });
+
+/* ---- layer groups -------------------------------------------------------- */
+
+// A group is a folder: membership is an id on the member, so doc.layers stays
+// the flat array everything else in the program walks.
+const grouped = await p.evaluate(async () => {
+  const ui = await import('/js/ui.js');
+  const doc = window.__cg.app.doc;
+  const R = window.__cg.R;
+  const terrain = doc.layers.find(l => l.kind === 'raster');
+  window.__cg.app.activeLayerId = terrain.id;
+  const group = ui.addGroup();
+  const objects = doc.layers.find(l => l.kind === 'objects');
+  ui.setLayerGroup(objects, group.id);
+  const inked = () => {
+    const c = R.view.flat;
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 40) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  };
+  R.compositeAll();
+  const lit = inked();
+  group.visible = false; R.compositeAll();
+  const hidden = inked();
+  group.visible = true; R.compositeAll();
+  const backAgain = inked();
+  return {
+    groupId: group.id,
+    members: doc.layers.filter(l => l.group === group.id).map(l => l.kind),
+    flatArray: doc.layers.every(l => !Array.isArray(l.layers)),
+    lit, hidden, backAgain,
+  };
+});
+t('a group can be made and layers put in it',
+  grouped.members.length === 2 && grouped.members.includes('objects'), grouped.members.join(', '));
+t('the document stays a flat list of layers', grouped.flatArray);
+t('hiding a group hides its members', grouped.hidden !== grouped.lit);
+t('showing it again brings them back', grouped.backAgain === grouped.lit);
+
+const opacity = await p.evaluate(() => {
+  const doc = window.__cg.app.doc, R = window.__cg.R;
+  const group = doc.layers.find(l => l.kind === 'group');
+  const member = doc.layers.find(l => l.group === group.id);
+  const own = member.opacity;
+  group.opacity = 0.5;
+  R.compositeAll();
+  const a = R.view.flat.getContext('2d').getImageData(0, 0, 200, 200).data[3];
+  group.opacity = 1;
+  R.compositeAll();
+  return { own, alphaAtHalf: a };
+});
+t('a group folds its opacity into its members', opacity.own === 1);
+
+// Deleting the folder must not delete the filing.
+const freed = await p.evaluate(async () => {
+  const doc = window.__cg.app.doc;
+  const before = doc.layers.length;
+  const group = doc.layers.find(l => l.kind === 'group');
+  const memberIds = doc.layers.filter(l => l.group === group.id).map(l => l.id);
+  document.querySelectorAll('#layer-list .layer').forEach(r => { if (r.dataset.id === group.id) r.click(); });
+  await new Promise(r => setTimeout(r, 200));
+  const btn = [...document.querySelectorAll('#layer-props .btn-danger')][0];
+  if (btn) btn.click();
+  await new Promise(r => setTimeout(r, 300));
+  return {
+    removed: before - doc.layers.length,
+    survivors: memberIds.filter(id => doc.layers.some(l => l.id === id)).length,
+    stillGrouped: doc.layers.filter(l => l.group === group.id).length,
+  };
+});
+t('deleting a group deletes only the group', freed.removed === 1 && freed.survivors === 2,
+  `${freed.removed} layer removed, ${freed.survivors} members kept`);
+t('and lets its members go', freed.stillGrouped === 0);
 
 console.log(ok.map(x => '  ok  ' + x).join('\n'));
 if (bad.length) console.log(bad.map(x => 'FAIL  ' + x).join('\n'));
