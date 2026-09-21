@@ -35,6 +35,13 @@ def index(root, disabled=()):
             out.append(entry)
             continue
 
+        # Same reasoning as read_pack: one manifest of the wrong shape must not
+        # empty the whole extensions list.
+        if not isinstance(manifest, dict):
+            entry["error"] = "extension.json: expected an object"
+            out.append(entry)
+            continue
+
         entry.update({
             "id": manifest.get("id") or name,
             "name": manifest.get("name") or name,
@@ -45,7 +52,13 @@ def index(root, disabled=()):
             "apiVersion": manifest.get("apiVersion", 1),
         })
         entry["enabled"] = entry["id"] not in disabled
-        if not os.path.isfile(os.path.join(folder, entry["main"])):
+        # An absolute "main" makes os.path.join throw the folder away, so the
+        # file it checked for was never the one the browser would ask for.
+        if not isinstance(entry["main"], str) or os.path.isabs(entry["main"]) \
+                or entry["main"] != os.path.normpath(entry["main"]).replace(os.sep, "/") \
+                or entry["main"].startswith(".."):
+            entry["error"] = "main %r must be a relative path inside the extension" % entry["main"]
+        elif not os.path.isfile(os.path.join(folder, entry["main"])):
             entry["error"] = "main file %r is missing" % entry["main"]
         out.append(entry)
     return out

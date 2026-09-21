@@ -194,7 +194,7 @@ api.registerExporter({
 | `api.layers()` | every layer in the open document |
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'library'`, `'dirty'`, `'saved'` |
-| `api.render` | the whole render module: `invalidate`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
+| `api.render` | the whole render module: `invalidate`, `relight`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
 | `api.tools` | `{ TOOLS, currentTool, setTool }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
@@ -206,6 +206,16 @@ api.registerExporter({
 | `api.markDirty()` | mark the document changed |
 | `api.scheduleAutosave()` | poke the autosave timer |
 | `api.invalidate(layer, box)` | rebuild a layer, optionally only inside a rectangle |
+| `api.render.relight(layer)` | rebuild the lighting if `layer` is something the shadows come from |
+| `api.render.forgetLayer(id)` | drop the offscreen canvases a layer you have removed was using |
+
+`api.invalidate` relights for you when the layer you pass is a walls layer, or a
+group holding one, because a wall that moves without its shadow leaves light
+spilling through a wall that is no longer there. When it does it re-composites
+the whole map and ignores your `box` — a shadow reaches as far as the light that
+casts it, which is nothing like the rectangle you just edited. If you change
+what a walls layer draws by some other route — hiding it, for instance — call
+`api.render.relight(layer)` yourself.
 
 ### Unloading
 

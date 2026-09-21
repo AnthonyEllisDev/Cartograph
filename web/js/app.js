@@ -18,6 +18,9 @@ export const app = {
   tool: 'brush',
   settings: {},
   dirty: false,
+  // Bumped by every edit. saveProject compares it across its awaits, because
+  // work done while a save is in flight is not in the payload that save wrote.
+  edits: 0,
   listeners: {},
 };
 
@@ -87,6 +90,7 @@ export function setActiveLayer(id) {
 }
 
 export function markDirty(flag = true) {
+  if (flag) app.edits += 1;
   if (app.dirty === flag) return;
   app.dirty = flag;
   emit('dirty', flag);
@@ -129,6 +133,12 @@ function thumbBlob() {
 export async function saveProject({ silent = false } = {}) {
   if (!app.doc) return null;
   app.doc.view = { x: R.view.x, y: R.view.y, zoom: R.view.zoom };
+  // The payload is a snapshot. Between here and the last await there are three
+  // round trips and a PNG encode, and anything painted in that time is in the
+  // document but not in the file -- so clearing the flag unconditionally told
+  // the user their work was saved when it was not, and autosave then skipped
+  // it because it looked clean.
+  const editsAtSnapshot = app.edits;
   const payload = serialise(app.doc);
 
   if (!app.slug) {
@@ -142,7 +152,7 @@ export async function saveProject({ silent = false } = {}) {
   const thumb = await thumbBlob();
   if (thumb) await api.writeThumb(app.slug, thumb);
 
-  markDirty(false);
+  if (app.edits === editsAtSnapshot) markDirty(false);
   emit('saved', app.slug);
   if (!silent) toast('Saved to projects/' + app.slug, 'good');
   return app.slug;

@@ -121,13 +121,14 @@ export function renderToolOptions() {
       ]));
     } else if (current && current !== target) {
       panel.appendChild(el('div', { class: 'target is-warn' }, [
-        el('span', { html: `Draws on <b>${target.name}</b>, not the selected <b>${current.name}</b>.` }),
+        el('span', {}, ['Draws on ', el('b', { text: target.name }), ', not the selected ',
+                        el('b', { text: current.name }), '.']),
         el('button', { class: 'link', text: 'Select ' + target.name,
                        onclick: () => setActiveLayer(target.id) }),
       ]));
     } else {
       panel.appendChild(el('div', { class: 'target' },
-        [el('span', { html: `Drawing on <b>${target.name}</b>` })]));
+        [el('span', {}, ['Drawing on ', el('b', { text: target.name })])]));
     }
   }
 
@@ -385,7 +386,9 @@ function layerRow(layer, inGroup) {
     onclick: (e) => {
       e.stopPropagation();
       layer.visible = !layer.visible;
-      R.compositeAll(); R.requestDraw(); markDirty(); renderLayers();
+      // Hiding the walls changes what casts a shadow: see render.relight.
+      R.relight(layer);
+      R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); renderLayers();
     },
   }));
   row.appendChild(el('span', { class: 'lname', text: layer.name }));
@@ -664,6 +667,7 @@ function deleteLayer(layer) {
   const freed = layer.kind === 'group' ? membersOf(app.doc, layer) : [];
   for (const m of freed) delete m.group;
   app.doc.layers.splice(index, 1);
+  R.forgetLayer(layer.id);
   if (app.activeLayerId === layer.id) {
     const next = app.doc.layers.find((l) => LAYER_KINDS[l.kind].paint) || app.doc.layers[0];
     app.activeLayerId = next ? next.id : null;
@@ -676,7 +680,11 @@ function deleteLayer(layer) {
       for (const m of freed) m.group = layer.id;
       R.setDocument(app.doc); emit('layers');
     },
-    redo() { app.doc.layers.splice(app.doc.layers.indexOf(layer), 1); R.compositeAll(); R.requestDraw(); emit('layers'); },
+    redo() {
+      app.doc.layers.splice(app.doc.layers.indexOf(layer), 1);
+      R.forgetLayer(layer.id);
+      R.compositeAll(); R.requestDraw(); emit('layers');
+    },
   });
   markDirty(); emit('layers');
 }

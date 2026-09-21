@@ -28,7 +28,13 @@ def slug(name, what="name"):
 def under(root, *parts):
     """Join parts onto root and prove the result is still inside root."""
     root = os.path.realpath(root)
-    target = os.path.realpath(os.path.join(root, *parts))
+    try:
+        target = os.path.realpath(os.path.join(root, *parts))
+    except ValueError:
+        # A NUL byte in a static path reaches realpath, which raises ValueError
+        # rather than anything the callers catch -- so the handler died without
+        # writing a single byte of response.
+        raise Unsafe("bad path: %r" % (os.path.join(*parts) if parts else "",))
     if target != root and not target.startswith(root + os.sep):
         raise Unsafe("path escapes %s: %r" % (root, os.path.join(*parts)))
     return target

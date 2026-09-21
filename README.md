@@ -36,6 +36,10 @@ python app.py --no-browser       do not open a browser
 python app.py --regen-pack --seed harbour    re-roll the generated art
 ```
 
+`--port` and `--verbose` apply to that run only; they are not written back into
+`config.json`. Neither is the free port picked when the one you pinned is busy.
+To change the port for good, edit `config.json`.
+
 ## What is in the folder
 
 ```
@@ -69,6 +73,8 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
+test/guards.mjs       16 more, for the server's two guards, over raw sockets
+test/regress.mjs      13 more, for bugs that have been in here once already
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -253,9 +259,12 @@ becomes a stamp.
 
 **It only listens to itself.** The server binds to `127.0.0.1`, never to the
 network. Any request carrying an `Origin` that is not this server is refused, so
-a page open in another tab cannot drive the file API. Every path a request names
-— project, pack, asset — is resolved and then checked to be inside the folder it
-belongs to before anything is opened.
+a page open in another tab cannot drive the file API. A refused request also
+closes the connection rather than answering and reading on: this is a keep-alive
+server, and a body left unread on the socket is parsed as the next request —
+one that carries no `Origin` and so passes the check the first one just failed.
+Every path a request names — project, pack, asset — is resolved and then checked
+to be inside the folder it belongs to before anything is opened.
 
 **The art is generated, not downloaded.** `tools/terrain.py` and
 `tools/stamps.py` write the whole starter pack from a seed, so there is nothing
@@ -304,13 +313,19 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 210 assertions in all: `lighting.mjs`
+There are narrower scripts beside it, 239 assertions in all: `lighting.mjs`
 (darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
 snapping, measurement and both orientations), `labels.mjs` (text along a path),
 `brushes.mjs` (the newer brush types, brush dynamics, stamp shadow and tint),
 `ext.mjs` (the extension host, including unload), `pro.mjs` (presets, history
-and layer groups), `theme.mjs` (interface settings) and `battle.mjs` (grid
-snapping and the VTT export).
+and layer groups), `theme.mjs` (interface settings), `battle.mjs` (grid snapping
+and the VTT export), `guards.mjs` and `regress.mjs`.
+
+`guards.mjs` is the odd one out: it needs no browser, because what it checks is
+what the server does with bytes a browser would never send in that order — a
+body left on a keep-alive socket after a request is refused, a `Content-Length`
+that is not a number, a NUL byte in a path. `regress.mjs` is a standing guard
+against the bugs listed in `docs/DAILY-LOG.md` coming back.
 
 Every suite makes its own map before it starts. The editor reopens the last map
 on launch, which is right for a person and wrong for a test — without it, two

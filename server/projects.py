@@ -112,5 +112,9 @@ def unique_slug(root, title):
     n = 1
     while os.path.exists(os.path.join(root, candidate)):
         n += 1
-        candidate = "%s %d" % (base, n)
+        # slugify already trimmed to the 64 characters slug() allows, so the
+        # counter has to come out of that budget rather than be added to it --
+        # otherwise saving a long-named map is refused by our own validator.
+        suffix = " %d" % n
+        candidate = base[:64 - len(suffix)].strip() + suffix
     return candidate

@@ -1,8 +1,9 @@
 /* Boot and top-bar wiring. */
 
 import { api } from './api.js';
-import { app, boot, emit, markDirty, newMap, on, saveProject } from './app.js';
+import { app, boot, emit, markDirty, newMap, on, saveProject, scheduleAutosave } from './app.js';
 import { canRedo, canUndo, history, redo, undo } from './history.js';
+import { layerVisible } from './doc.js';
 import * as R from './render.js';
 import { initInput } from './input.js';
 import { extensions, loadExtensions, renderExtensionLayer } from './extensions.js';
@@ -54,8 +55,12 @@ async function start() {
 function wireTopbar() {
   $('#btn-save').addEventListener('click', () => doSave());
   $('#btn-export').addEventListener('click', exportDialog);
-  $('#btn-undo').addEventListener('click', () => { undo(); refreshHistoryButtons(); markDirty(); });
-  $('#btn-redo').addEventListener('click', () => { redo(); refreshHistoryButtons(); markDirty(); });
+  // scheduleAutosave alongside markDirty, as every other edit does. Without it
+  // an undo after the last autosave had already fired left the document dirty
+  // for good: nothing ever rearmed the timer, so the file on disk kept the
+  // stroke that had been undone.
+  $('#btn-undo').addEventListener('click', () => { undo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); });
+  $('#btn-redo').addEventListener('click', () => { redo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); });
 
   const nameField = $('#project-name');
   nameField.addEventListener('change', () => {
@@ -90,8 +95,8 @@ function wireTopbar() {
       ev.preventDefault();
       if (ev.shiftKey) redo(); else undo();
       refreshHistoryButtons();
-      markDirty();
-    } else if (key === 'y') { ev.preventDefault(); redo(); refreshHistoryButtons(); markDirty(); }
+      markDirty(); scheduleAutosave();
+    } else if (key === 'y') { ev.preventDefault(); redo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); }
   });
 
   window.addEventListener('beforeunload', (ev) => {
@@ -135,7 +140,8 @@ async function exportDialog() {
   sizeNote();
 
   const walls = app.doc.layers.find((l) => l.kind === 'walls');
-  const lit = app.doc.layers.find((l) => l.kind === 'lights' && l.visible && l.ambient > 0);
+  const lit = app.doc.layers.find((l) => l.kind === 'lights'
+    && layerVisible(app.doc, l) && l.ambient > 0);
   const hexGrid = app.doc.layers.find((l) => l.kind === 'grid' && l.type === 'hex');
   const lights = el('input', { type: 'checkbox' }); lights.checked = true;
   const vtt = el('input', { type: 'checkbox' });

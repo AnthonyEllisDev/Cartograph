@@ -1,7 +1,7 @@
 /* The three non-editor tabs: Assets, Projects, Settings. */
 
 import { api } from './api.js';
-import { library, loadLibrary, forgetPatterns, warm } from './assets.js';
+import { library, loadLibrary, forgetImages, forgetPatterns, warm } from './assets.js';
 import { extensions, loadExtensions, setExtensionEnabled, unloadExtension } from './extensions.js';
 import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
@@ -115,6 +115,7 @@ export function initAssetsTab() {
 
   $('#btn-rescan').addEventListener('click', async () => {
     forgetPatterns();
+    forgetImages();
     R.forgetSpriteFx();
     await renderPacks();
     toast('Packs rescanned', 'good');

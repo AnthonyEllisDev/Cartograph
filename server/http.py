@@ -86,11 +86,34 @@ class Handler(BaseHTTPRequestHandler):
             return True                      # same-origin navigations send none
         return origin in self.ctx.origins
 
-    def _read_body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
-            return None
-        return self.rfile.read(length) if length else b""
+    def _refuse(self, status, error):
+        """Reject a request without reading its body, and hang up.
+
+        This is a keep-alive server, so a body left unread stays on the socket
+        and the parser reads it as the next request. An attacker who can make
+        one request fail can therefore hide a second one in the body it never
+        sent -- and that second one carries no Origin, so it passes the very
+        check the first one just failed. Closing the connection is what makes
+        the refusal actually refuse.
+        """
+        self.close_connection = True
+        self._send(status, "application/json",
+                   json.dumps({"ok": False, "error": error}).encode(),
+                   {"Connection": "close"})
+        return None
+
+    def _body_length(self):
+        """The declared body length, or -1 if the header is not a sane one."""
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            return 0
+        try:
+            length = int(raw)
+        except (TypeError, ValueError):
+            return -1
+        # A negative length reaches rfile.read(-1), which blocks until the peer
+        # closes and pins the thread for as long as it cares to wait.
+        return length if length >= 0 else -1
 
     # ------------------------------------------------------------------ verbs
 
@@ -110,6 +133,9 @@ class Handler(BaseHTTPRequestHandler):
         self._handle("DELETE")
 
     def do_OPTIONS(self):
+        # Same reasoning as _refuse: a body here would be left on the socket.
+        if self._body_length() != 0:
+            return self._refuse(400, "no body expected")
         self._send(204, "text/plain", b"", {"Allow": "GET,HEAD,POST,PUT,DELETE,OPTIONS"})
 
     # ---------------------------------------------------------------- routing
@@ -119,13 +145,21 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
 
         if path.startswith("/api/"):
-            if method != "GET" and not self._origin_ok():
-                return self._send(403, "application/json",
-                                  b'{"ok":false,"error":"cross-origin request refused"}')
-            body = self._read_body()
-            if body is None:
-                return self._send(413, "application/json",
-                                  b'{"ok":false,"error":"body too large"}')
+            # Every refusal below hangs up rather than replying and reading on:
+            # see _refuse. The length is settled first so that a malformed
+            # header cannot reach rfile.read at all.
+            if self.headers.get("Transfer-Encoding"):
+                return self._refuse(411, "a length is required")
+            length = self._body_length()
+            if length < 0:
+                return self._refuse(400, "bad Content-Length")
+            if length > MAX_BODY:
+                return self._refuse(413, "body too large")
+            # The check covers GET too. No GET handler has a side effect, but a
+            # guard with a hole in it is a guard nobody can reason about.
+            if not self._origin_ok():
+                return self._refuse(403, "cross-origin request refused")
+            body = self.rfile.read(length) if length else b""
             req = Request()
             req.ctx, req.method, req.path = self.ctx, method, path
             req.query = parse_qs(parsed.query)

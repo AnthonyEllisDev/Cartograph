@@ -71,13 +71,26 @@ def read_pack(pack_dir, pack_id):
                 manifest = json.load(fh)
         except (OSError, ValueError) as exc:
             return {"id": pack_id, "name": pack_id, "error": "pack.json: %s" % exc, "assets": []}
+        # Valid JSON is not the same as the right shape. A pack.json holding a
+        # bare list parses cleanly and then takes the whole /api/packs call
+        # down with an AttributeError, so every other pack on disk disappears
+        # because of one bad file.
+        if not isinstance(manifest, dict):
+            return {"id": pack_id, "name": pack_id,
+                    "error": "pack.json: expected an object", "assets": []}
         manifest.setdefault("id", pack_id)
         manifest.setdefault("name", pack_id)
         manifest.setdefault("assets", [])
+        if not isinstance(manifest["assets"], list):
+            manifest["assets"] = []
+            manifest["error"] = "pack.json: assets is not a list"
         # ids in a hand-written manifest may be bare; namespace them
         for a in manifest["assets"]:
+            if not isinstance(a, dict):
+                continue
             if "/" not in a.get("id", ""):
                 a["id"] = "%s/%s" % (manifest["id"], a.get("id") or a.get("file", "asset"))
+        manifest["assets"] = [a for a in manifest["assets"] if isinstance(a, dict)]
         return manifest
     return {"id": pack_id, "name": _title(pack_id), "license": "unknown",
             "assets": _walk_loose(pack_dir, pack_id)}

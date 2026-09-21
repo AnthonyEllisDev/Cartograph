@@ -53,10 +53,29 @@ def load_config():
     return config
 
 
-def save_config(config):
+ABSENT = object()
+
+
+def save_config(config, transient=None):
+    """Write config.json.
+
+    `transient` holds the settings this run changed for itself alone, mapped
+    back to what the file should keep saying. A --port or a --verbose is a
+    one-off, and so is the free port picked when the pinned one is busy; all
+    three used to be written straight back, so a single debugging session
+    became a permanent setting nobody remembered choosing. packSeed is the
+    exception and really does stick, because the pack baked on disk has to go
+    on matching it.
+    """
+    data = dict(config)
+    for key, value in (transient or {}).items():
+        if value is ABSENT:
+            data.pop(key, None)
+        else:
+            data[key] = value
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
-            json.dump(config, fh, indent=1)
+            json.dump(data, fh, indent=1)
     except OSError:
         pass
 
@@ -89,11 +108,14 @@ def main():
     args = ap.parse_args()
 
     config = load_config()
+    transient = {}
     if args.port is not None:
+        transient["port"] = config.get("port", ABSENT)
         config["port"] = args.port
     if args.seed:
         config["packSeed"] = args.seed
     if args.verbose:
+        transient["verbose"] = config.get("verbose", ABSENT)
         config["verbose"] = True
 
     print(BANNER)
@@ -104,15 +126,16 @@ def main():
     ensure_starter_pack(config, force=args.regen_pack or bool(args.seed))
 
     ctx = Context(ROOT, APP_NAME, VERSION, config)
-    ctx.save_config = lambda: save_config(config)
-    port = config.get("port", 7870)
+    ctx.save_config = lambda: save_config(config, transient)
+    wanted = config.get("port", 7870)
     try:
-        httpd, port = serve(ctx, args.host, port)
+        httpd, port = serve(ctx, args.host, wanted)
     except OSError as exc:
-        print("  ! port %s is busy (%s) — picking a free one" % (port, exc))
+        print("  ! port %s is busy (%s) — picking a free one" % (wanted, exc))
         httpd, port = serve(ctx, args.host, 0)
+        transient.setdefault("port", config.get("port", ABSENT))
     config["port"] = port
-    save_config(config)
+    save_config(config, transient)
 
     url = "http://%s:%d/" % ("127.0.0.1" if args.host == "0.0.0.0" else args.host, port)
     print("  Serving at %s" % url)

@@ -133,7 +133,12 @@ def route(req):
         if len(parts) == 1 and method == "PUT":
             doc = json.loads(req.body or b"{}")
             saved = projects.write(ctx.projects_dir, name, doc)
-            keep = [l["id"] for l in doc.get("layers", []) if l.get("raster")]
+            # Every layer still in the document keeps its blob. The old test
+            # was `l.get("raster")`, a property no layer has ever had -- raster
+            # is a layer *kind* -- so the list was always empty and the sweep
+            # deleted every imported-pixel layer on every save, autosave
+            # included.
+            keep = [l.get("id") for l in doc.get("layers", []) if l.get("id")]
             projects.sweep_blobs(ctx.projects_dir, name, keep)
             return _json({"ok": True, "project": saved})
 
@@ -169,13 +174,21 @@ def route(req):
                 ext = allowed
                 break
         os.makedirs(ctx.exports_dir, exist_ok=True)
+        # Claiming the name and opening it have to be one step. This server
+        # serves each request on its own thread, so two exports racing for
+        # "map.png" both saw it free and one of them lost its bytes.
         dest = os.path.join(ctx.exports_dir, stem + ext)
         n = 1
-        while os.path.exists(dest):
-            n += 1
-            dest = os.path.join(ctx.exports_dir, "%s-%d%s" % (stem, n, ext))
-        with open(dest, "wb") as fh:
-            fh.write(req.body)
+        while True:
+            try:
+                fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                n += 1
+                dest = os.path.join(ctx.exports_dir, "%s-%d%s" % (stem, n, ext))
+                continue
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(req.body)
+            break
         return _json({"ok": True, "path": dest, "bytes": len(req.body)})
 
     if path == "/api/shutdown" and method == "POST":

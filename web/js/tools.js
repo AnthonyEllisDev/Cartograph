@@ -8,7 +8,7 @@
 
 import { imageNow, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, scheduleAutosave, setToolSetting, toolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, gridStepPx, measureBetween } from './doc.js';
+import { LAYER_KINDS, gridLayer, gridStepPx, layerVisible, measureBetween } from './doc.js';
 import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
@@ -807,6 +807,7 @@ define({
     const { layer, op } = placing;
     const before = layer.ops.slice();
     const wasAmbient = layer.ambient;
+    const wasVisible = layer.visible;
     const after = before.concat([op]);
     // A light on a map with no darkness does nothing at all. Rather than leave
     // someone hunting for the slider that makes their first light work, the
@@ -825,6 +826,9 @@ define({
       undo() {
         layer.ops = before.slice();
         layer.ambient = wasAmbient;
+        // apply() turns the layer on; undo has to turn it back off, or undoing
+        // the first light leaves the map in darkness it was never put into.
+        layer.visible = wasVisible;
         R.invalidate(layer);
         emit('layers');
       },
@@ -928,14 +932,19 @@ define({
     const layer = targetLayer(['walls']);
     if (!layer) return;
     const item = { id: uid('w'), kind: S('wall', 'kind', 'wall'), points: pts };
-    layer.thickness = S('wall', 'thickness', 7);
     const before = layer.ops.slice();
+    // Thickness is a property of the whole layer, so drawing one wall restyles
+    // every wall already on it. The undo entry has to carry it, or undoing the
+    // new wall leaves the old ones at a thickness nothing can put back.
+    const thickBefore = layer.thickness;
+    const thickAfter = S('wall', 'thickness', 7);
+    layer.thickness = thickAfter;
     layer.ops.push(item);
     R.invalidate(layer);
     pushEntry({
       label: 'Wall',
-      undo() { layer.ops = before.slice(); R.invalidate(layer); },
-      redo() { layer.ops = before.concat([item]); R.invalidate(layer); },
+      undo() { layer.ops = before.slice(); layer.thickness = thickBefore; R.invalidate(layer); },
+      redo() { layer.ops = before.concat([item]); layer.thickness = thickAfter; R.invalidate(layer); },
     });
     markDirty(); scheduleAutosave(); emit('layers');
   },
@@ -1228,7 +1237,9 @@ define({
 function hitTest(pt) {
   for (let i = app.doc.layers.length - 1; i >= 0; i--) {
     const layer = app.doc.layers[i];
-    if (!layer.visible || layer.locked) continue;
+    // layerVisible: a stamp on a layer whose group is hidden must not be
+    // selectable, or you can drag and delete things you cannot see.
+    if (!layerVisible(app.doc, layer) || layer.locked) continue;
     if (layer.kind === 'objects') {
       for (let j = layer.ops.length - 1; j >= 0; j--) {
         const item = layer.ops[j];

@@ -98,3 +98,8 @@ export function pattern(ctx, id, scale = 1) {
 }
 
 export function forgetPatterns() { patterns.clear(); }
+
+/** Forget the decoded images too. Rescan cleared the pattern cache alone, and
+ *  patterns are rebuilt from these -- so replacing a file on disk under a name
+ *  the library already knew went on drawing the old picture until a reload. */
+export function forgetImages() { images.clear(); }

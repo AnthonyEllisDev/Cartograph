@@ -5,6 +5,140 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-21 (later) — a review day: the guards, and state that drifted
+
+No feature today. The code review turned up enough real defects, one of them
+serious, that shipping a feature on top would have made the diff unreviewable —
+and the first bug below is the kind you fix the day you find it.
+
+**The Origin guard could be walked straight past.** `_handle` refused a
+cross-origin request *before* reading its body, and this is a keep-alive server
+with `protocol_version = "HTTP/1.1"`. The body therefore stayed on the socket,
+and the next thing the parser read was the attacker's bytes — as a brand new
+request, with no `Origin` on it, which sailed through the check the first one
+had just failed. `fetch(url, {mode:'no-cors', headers:{'Content-Type':'text/plain'}, body: raw})`
+sends exactly that with no preflight, so any page the user had open could reach
+every mutating endpoint: delete a map, write into `exports/`, call
+`/api/open-folder`, shut the server down. Reproduced on the running program
+before and after. The 413 path and `do_OPTIONS` had the same hole, and
+`Transfer-Encoding: chunked` was not handled at all, so a chunked body was
+treated as empty and its bytes left behind too. Every refusal now hangs up
+instead of replying and reading on, chunked is refused with a 411, and the
+Origin check covers GET as well — no GET handler has a side effect, but a guard
+with a hole in it is a guard nobody can reason about.
+
+Two more things on that path answered with nothing at all: a `Content-Length`
+that was not a number raised out of `_read_body`, and a NUL byte in a static
+path reached `os.path.realpath`, which raises `ValueError` rather than anything
+the callers catch. A negative `Content-Length` was worse than either — it
+reached `rfile.read(-1)`, which blocks until the peer closes, so a handful of
+open sockets held a thread each indefinitely. All three answer properly now.
+
+**Every layer blob was deleted on every save.** The sweep kept
+`[l["id"] for l in layers if l.get("raster")]` — and no layer has ever had a
+`raster` property, because `raster` is a layer *kind*. The keep list was
+therefore always empty and `sweep_blobs` removed every PNG under
+`projects/<map>/layers/`. Nothing in the shipped editor calls `writeLayer`,
+which is the only reason this had not bitten yet; any extension importing
+pixels would have lost them at the next autosave, silently, fifteen seconds
+later. Every layer still in the document now keeps its blob, and a layer with
+no `id` no longer 500s a save that had already half-committed.
+
+**Shadows did not follow the walls by every route.** `invalidate()` was doing
+its job, but two routes went round it. Clicking the eye on the Walls layer, or
+*Hide Walls* in the palette, composited and nothing else — so the shadows of a
+wall nobody could see stayed exactly where they were until something unrelated
+forced a relight, at which point the map changed under you. And `wallSegments`
+read `layer.visible` directly instead of `layerVisible()`, so putting the walls
+in a group and hiding the group left them stopping light they were no longer
+drawing — that one survived a correct relight, because the source of truth
+itself was wrong. There is now a `relight(layer)` in render.js that both the
+eye and `invalidate` go through, and it covers a group holding a walls layer as
+well as the layer itself. It composites the whole map rather than the caller's
+box, because a shadow reaches as far as the light that casts it.
+
+`toUVTT`, `ambientArgb`, the export dialog and `hitTest` read `layer.visible`
+directly too. The first three meant the picture and the data in one export
+disagreed about whether the lighting existed; the last meant you could select,
+drag and delete stamps on a layer you had folded away and hidden.
+
+**The grid and the paper applied their own opacity twice.** Both baked
+`layer.opacity` into their offscreen canvas, and `compositeAll` then applied
+`layerAlpha` to the same canvas — so a battle grid set to 34% drew at 12%, and
+the Opacity slider moved one of the two factors while a reload rebuilt both.
+The map did not come back the way it was put away, which is invariant (a). The
+bake is gone; the opacity belongs to `compositeAll` alone. **This changes how
+existing maps look**: a battle grid comes out at the 34% the panel always
+claimed rather than 12%, and the parchment at 42% rather than 18%. Both
+screenshots are worth a look before/after — on the old rendering the grid on a
+battle map was very nearly invisible, which cannot have been the intent, so
+this reads as the bug having hidden the design rather than the fix changing it.
+
+**Undo left things behind.** Drawing a wall writes `thickness` onto the layer,
+which restyles every wall already on it, and the history entry restored only
+the op list — so drawing one wall at 20 and undoing it left the other five at
+20 with no step that could put them back. Placing the first light sets
+`layer.visible = true` and the undo restored ops and ambient but not that, so
+undoing a light on a deliberately-hidden lighting layer plunged the map into
+darkness it had never been in. Both entries now carry what they change.
+
+**Smaller things.** Deleting a layer left its offscreen canvases in
+`layerCanvases` forever — about 12.6 MB a time at the default map size — so
+there is a `forgetLayer(id)` now. `saveProject` cleared the dirty flag after
+three round trips and a PNG encode, discarding anything painted while the save
+was in flight and marking it clean, so autosave skipped it and `beforeunload`
+did not warn; it now compares an edit counter across its own awaits. Undo and
+redo marked the document dirty without rearming the autosave timer, so an undo
+after the last autosave had fired left the map unsaved for good. *Rescan*
+cleared the pattern cache but not the image cache the patterns are built from,
+so replacing a file on disk under a name the library already knew went on
+drawing the old picture until a page reload. Layer names were interpolated into
+`innerHTML` in the tool panel — names come out of `project.json`, so with the
+Origin hole above that was one-shot CSRF turning into script execution in the
+app's own origin. A malformed `pack.json` or `extension.json` that was valid
+JSON but the wrong shape (a bare list, say) took out the whole `/api/packs` or
+`/api/extensions` call, so one bad file emptied the library. Concurrent exports
+raced between `os.path.exists` and `open`, and one overwrote another — proved
+with six at once, which produced five files. `unique_slug` appended " 2" past
+the 64 characters `slug()` allows, so saving a long-named map was refused by
+our own validator. And `--port` and `--verbose`, and the free port picked when
+the pinned one was busy, were all written back into `config.json`, so a single
+debugging session became a permanent setting.
+
+**One thing deliberately not claimed as a fix.** `scratch()` did not reset the
+canvas transform, and `applySoften` left a `translate` on the mask canvas it
+borrowed from the pool, so by inspection two soften strokes of the same box
+size share a canvas with a stale transform on it. Both are now put right — the
+pool's contract is that you get a cleared canvas with an identity transform,
+and it is now true. But no arrangement of strokes could be found that rendered
+so much as one channel differently, on the unfixed build, with the fix, in
+either order, through `rebuildLayer` or by calling `applySoften` directly. So
+it is hardening with an unproven symptom, not a bug that was biting anybody.
+
+**Two things found and written up rather than changed.** Opening a project
+replaces `app.doc` outright without consulting `app.dirty`: `beforeunload`
+guards closing the tab, nothing guards double-clicking a card in the Projects
+tab, and ten minutes of painting goes with no dialog. The fix is a confirm, but
+which buttons it offers ("Save and open"?) is a design decision rather than a
+defect fix, so it is left for a day that can make it. Separately, if the map
+that was open is deleted from disk, the editor throws on boot and never comes
+up — seen while testing, not chased down.
+
+**Tests.** Two new suites. `test/guards.mjs` (16) drives the server over raw
+sockets with no browser at all, because everything it checks is about byte
+order on the wire; 10 of its 16 fail against the unfixed code. `test/regress.mjs`
+(13) is the browser half — the relight routes, the group veto, the VTT
+agreement, both undo entries and the opacity round trip; 6 of its 13 checks
+fail against the unfixed code. Both were run against a pristine clone of
+`origin/main` to prove they catch what they claim to, which is how the soften
+check above came to be dropped rather than kept as false comfort.
+
+**Tests:** 82 verify, 29 lighting, 27 hex, 24 pro, 16 ext, 16 theme, 16 guards,
+13 regress, 8 labels, 8 brushes — 239 assertions, all passing, plus `battle`
+and `demo`, over two full back-to-back rounds.
+
+---
+
 ## 2026-09-21 — the backlog, cleared
 
 Two sessions in one day. The first added hex support; the second emptied the

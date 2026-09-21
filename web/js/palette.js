@@ -7,7 +7,7 @@
  * the slowest way to use software.
  */
 
-import { app, emit, markDirty, saveProject } from './app.js';
+import { app, emit, markDirty, saveProject, scheduleAutosave } from './app.js';
 import { extensions } from './extensions.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
@@ -79,7 +79,9 @@ function collect() {
         id: 'layer-vis:' + layer.id, group: 'Layer', title: (layer.visible ? 'Hide ' : 'Show ') + layer.name,
         run: () => {
           layer.visible = !layer.visible;
-          R.compositeAll(); R.requestDraw(); markDirty(); emit('layers');
+          // Hiding the walls has to relight: see render.relight.
+          R.relight(layer);
+          R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); emit('layers');
         },
       });
     }

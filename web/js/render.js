@@ -38,10 +38,13 @@ function scratch(slot, w, h) {
     c = makeCanvas(w, h);
     scratchPool.set(key, c);
     if (scratchPool.size > 24) scratchPool.delete(scratchPool.keys().next().value);
-  } else {
-    c.getContext('2d').clearRect(0, 0, w, h);
   }
   const ctx = c.getContext('2d');
+  // Reset the transform before clearing, not after: a pooled canvas that came
+  // back with a translate on it cleared the wrong rectangle and left the
+  // previous user's pixels behind.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   ctx.filter = 'none';
@@ -537,8 +540,10 @@ export function applySoften(targetCtx, canvas, op, box) {
   bctx.filter = 'none';
   const mask = scratch('softenmask', bw, bh);
   const mctx = mask.getContext('2d');
+  mctx.save();
   mctx.translate(-box.x, -box.y);
   strokePath(mctx, op.points, op.size, 0.7);
+  mctx.restore();
   bctx.globalCompositeOperation = 'destination-in';
   bctx.drawImage(mask, 0, 0);
   targetCtx.drawImage(blurred, box.x, box.y);
@@ -1001,8 +1006,11 @@ function strokeRun(ctx, pts) {
  * `blocks` on WALL_KINDS already knows which ones those are: a window is a
  * wall you can see through, and it should light the room behind it. */
 export function wallSegments(doc) {
-  const layer = (doc || view.doc).layers.find((l) => l.kind === 'walls');
-  if (!layer || !layer.visible) return [];
+  const target = doc || view.doc;
+  const layer = target.layers.find((l) => l.kind === 'walls');
+  // layerVisible, never layer.visible: a group vetoes what its members draw,
+  // and a wall nobody can see must not go on casting a shadow either.
+  if (!layer || !layerVisible(target, layer)) return [];
   const out = [];
   for (const item of layer.ops) {
     if (!(WALL_KINDS[item.kind] || WALL_KINDS.wall).blocks) continue;
@@ -1230,7 +1238,10 @@ function renderGrid(layer, ctx) {
   const size = Math.max(4, layer.size || 64);
   ctx.save();
   ctx.strokeStyle = layer.color || '#3a2c1e';
-  ctx.globalAlpha = layer.opacity != null ? layer.opacity : 0.25;
+  // No globalAlpha here. compositeAll applies layerAlpha to this canvas, so
+  // baking the opacity in as well squared it -- a grid set to 34% drew at 12%,
+  // and the Opacity slider changed only one of the two factors, so the map
+  // came back looking different after a reload.
   ctx.lineWidth = layer.lineWidth || 1;
   const ox = layer.offsetX || 0, oy = layer.offsetY || 0;
   ctx.beginPath();
@@ -1257,7 +1268,7 @@ function renderPaper(layer, ctx) {
   const pat = layer.texture ? pattern(ctx, layer.texture, layer.scale || 1) : null;
   if (pat) {
     ctx.save();
-    ctx.globalAlpha = layer.opacity != null ? layer.opacity : 0.5;
+    // See renderGrid: the layer's opacity belongs to compositeAll alone.
     ctx.fillStyle = pat;
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
@@ -1313,16 +1324,38 @@ export function compositeAll(box) {
 
 export function invalidate(layer, box) {
   if (layer) rebuildLayer(layer);
-  // Shadows are derived from the walls, so a wall that moves without the
-  // lighting following it leaves light spilling through a wall that is no
-  // longer there. Doing it here rather than at every call site is the only way
-  // that stays true.
-  if (layer && layer.kind === 'walls') {
-    const lit = view.doc && view.doc.layers.find((l) => l.kind === 'lights');
-    if (lit && lit.ops.length) rebuildLayer(lit);
-  }
+  // A shadow reaches as far as the light that casts it, which is nothing like
+  // the box the caller just edited, so a relight has to composite the lot.
+  if (relight(layer)) box = undefined;
   compositeAll(box);
   requestDraw();
+}
+
+/** Rebuild the lighting if `layer` is something the shadows are derived from.
+ *
+ * Shadows come from the walls, so a wall that moves -- or is merely hidden --
+ * without the lighting following it leaves light spilling through a wall that
+ * is no longer there. Every route that can change that has to come through
+ * here; hiding the layer from the Layers panel is one, and used to not be.
+ */
+export function relight(layer) {
+  const doc = view.doc;
+  if (!doc || !layer) return false;
+  const touchesWalls = layer.kind === 'walls'
+    || (layer.kind === 'group' && doc.layers.some((l) => l.group === layer.id && l.kind === 'walls'));
+  if (!touchesWalls) return false;
+  let did = false;
+  for (const lit of doc.layers) {
+    if (lit.kind === 'lights' && lit.ops.length) { rebuildLayer(lit); did = true; }
+  }
+  return did;
+}
+
+/** Drop the offscreen canvases a layer owns. A deleted layer used to leave
+ *  every one of them in the map, which at a full canvas each is megabytes a
+ *  time on a session where somebody tries a few compositions. */
+export function forgetLayer(id) {
+  for (const key of [id, id + ':mask', id + ':shape', id + ':small']) layerCanvases.delete(key);
 }
 
 /* ------------------------------------------------------------------ display */
@@ -1501,7 +1534,7 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
   // The format takes ranges in grid cells like everything else, and colours as
   // eight hex digits with the alpha first.
   const lights = [];
-  for (const op of (lightLayer && lightLayer.visible ? lightLayer.ops : [])) {
+  for (const op of (lightLayer && layerVisible(doc, lightLayer) ? lightLayer.ops : [])) {
     if (op.on === false) continue;
     const { dim } = lightRadii(op);
     lights.push({
@@ -1528,7 +1561,7 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
     // caller decides which, and says so here.
     environment: {
       baked_lighting: bakedLighting,
-      ambient_light: ambientArgb(lightLayer),
+      ambient_light: ambientArgb(doc, lightLayer),
     },
     lights,
     image: dataUrl.split(',')[1],
@@ -1542,8 +1575,11 @@ function argb(hex) {
 
 /** What an unlit part of the map should look like to the tabletop. With no
  *  lighting layer that is plain white, which is what it has always been. */
-function ambientArgb(layer) {
-  const ambient = layer && layer.visible ? (layer.ambient || 0) : 0;
+function ambientArgb(doc, layer) {
+  // The picture half of this export goes through flatten, which honours a
+  // group's visibility. The data half has to agree with it, or the tabletop
+  // is handed lights for a layer the map was deliberately exported without.
+  const ambient = layer && layerVisible(doc, layer) ? (layer.ambient || 0) : 0;
   if (ambient <= 0) return 'ffffffff';
   const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(layer.color || '#060912');
   const dark = m ? [1, 2, 3].map((i) => parseInt(m[i], 16)) : [6, 9, 18];
