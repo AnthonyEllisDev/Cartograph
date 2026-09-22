@@ -285,6 +285,201 @@ await p.evaluate(() => window.__cg.R.fitView());
 await p.waitForTimeout(400);
 await p.screenshot({ path: '/tmp/cg_regress_region.png' });
 
+/* ========================================================================== *
+ * The 2026-09-22 review: routes that changed what casts a shadow without
+ * saying so, an eraser that showed nothing until you let go, and a history
+ * that ran out of room it was no longer using.
+ * ========================================================================== */
+
+await newMap(p, { name: 'Shuttered Vault', kind: 'battle', size: '30x20' });
+
+await tool('wall');
+await setOpt('Kind', 'wall');
+await setOpt('Thickness', '7');
+await clickAt(400, 200);
+await clickAt(400, 1100);
+await p.keyboard.press('Enter');
+await p.waitForTimeout(350);
+
+await tool('light');
+await setOpt('Source', 'torch');
+await p.waitForTimeout(200);
+await clickAt(250, 650);
+await p.waitForTimeout(500);
+
+const spot = [700, 650];                      // behind the wall, in the shadow
+const castingLit = await brightnessAt(...spot);
+
+/* ---- filing the walls into a hidden group has to relight ------------------ */
+
+// The eye on the Walls row goes through relight. Dragging the same layer into
+// a folder that is already hidden changes layerVisible by a different route,
+// and that route only composited -- so the shadows of a wall nobody could see
+// stayed put.
+await p.evaluate(async () => {
+  const ui = await import('/js/ui.js');
+  const doc = window.__cg.app.doc;
+  const group = ui.addGroup();
+  // addGroup takes the selected layer in with it; put it back so the folder is
+  // empty and the only thing that moves is the walls.
+  for (const l of doc.layers.filter((x) => x.group === group.id)) ui.setLayerGroup(l, null);
+  group.visible = false;
+  window.__cgGroupId = group.id;
+  ui.setLayerGroup(doc.layers.find((l) => l.kind === 'walls'), group.id);
+});
+await p.waitForTimeout(450);
+const inHiddenGroup = await brightnessAt(...spot);
+t('filing the walls into a hidden group lifts their shadows',
+  Math.abs(inHiddenGroup - castingLit) > 2,
+  `${castingLit.toFixed(1)} casting, ${inHiddenGroup.toFixed(1)} filed away`);
+
+await p.evaluate(async () => {
+  const ui = await import('/js/ui.js');
+  const doc = window.__cg.app.doc;
+  ui.setLayerGroup(doc.layers.find((l) => l.kind === 'walls'), null);
+});
+await p.waitForTimeout(450);
+const takenOut = await brightnessAt(...spot);
+t('and taking them out again puts them back',
+  Math.abs(takenOut - castingLit) < 1.5, `${takenOut.toFixed(1)} vs ${castingLit.toFixed(1)}`);
+
+/* ---- deleting the folder the walls were hidden in, likewise --------------- */
+
+// Back into the folder, and this time the folder is hidden by its own eye --
+// a route that has relit correctly since it was fixed. So the shadows really
+// are up before the delete, and the delete is the only thing under test.
+await p.evaluate(async () => {
+  const ui = await import('/js/ui.js');
+  const doc = window.__cg.app.doc;
+  // Open the folder again first, so that the eye below is what closes it.
+  doc.layers.find((l) => l.id === window.__cgGroupId).visible = true;
+  ui.setLayerGroup(doc.layers.find((l) => l.kind === 'walls'), window.__cgGroupId);
+});
+await p.waitForTimeout(400);
+await toggleEye('Group 1');
+const folded = await brightnessAt(...spot);
+t('hiding the folder by its eye lifts them too', Math.abs(folded - castingLit) > 2,
+  `${castingLit.toFixed(1)} casting, ${folded.toFixed(1)} folded away`);
+
+// Deleting a group frees its members rather than deleting them, so the walls
+// come back into view and start casting again. By the time deleteLayer could
+// ask relight whether the group held any, it has already let them go.
+await p.evaluate(() => {
+  const row = Array.from(document.querySelectorAll('#layer-list .lname'))
+    .find((n) => n.textContent === 'Group 1');
+  row.parentElement.click();
+});
+await p.waitForTimeout(300);
+await p.click('#layer-props .btn-danger');
+await p.waitForTimeout(600);
+
+const afterDelete = await brightnessAt(...spot);
+t('deleting the folder the walls were hidden in puts their shadows back',
+  Math.abs(afterDelete - castingLit) < 1.5,
+  `${afterDelete.toFixed(1)} vs ${castingLit.toFixed(1)} casting`);
+
+/* ---- the history has to repay what it throws away ------------------------- */
+
+const budget = await p.evaluate(async () => {
+  const h = await import('/js/history.js');
+  h.clearHistory();
+  // Paint, undo, paint again -- the undone entry is discarded on the next
+  // push. Its pixels used to go on counting against the 220 MB budget for the
+  // rest of the session, and once the leak passed it the stack emptied itself
+  // on every push: undo greyed out the moment it was used and stayed that way.
+  for (let i = 0; i < 40; i++) {
+    h.pushEntry({ label: 'x', bytes: 12 * 1024 * 1024, undo() {}, redo() {} });
+    h.undo();
+  }
+  // Then four ordinary strokes with no undo between them. All four should
+  // still be on the stack; with the leak the budget was already spent and
+  // every push evicted everything but the one just made.
+  for (let i = 0; i < 4; i++) h.pushEntry({ label: 'x', bytes: 12 * 1024 * 1024, undo() {}, redo() {} });
+  const state = { past: h.history.past.length, mb: Math.round(h.history.bytes / 1048576) };
+  h.clearHistory();
+  return state;
+});
+t('undoing and redrawing does not leak the history budget', budget.mb <= 60,
+  `${budget.mb} MB held for ${budget.past} step${budget.past === 1 ? '' : 's'}`);
+t('so undo still has every step behind it after a long session', budget.past === 4,
+  budget.past + ' of 4 steps kept');
+
+/* ========================================================================== *
+ * A region map: the eraser, and what the Select tool records.
+ * ========================================================================== */
+
+await newMap(p, { name: 'Scraped Coast', kind: 'region' });
+
+await tool('brush');
+await p.click('#asset-picker .asset >> nth=0');
+await p.waitForTimeout(400);
+await setOpt('Size', '220');
+await drag([[500, 600], [1400, 600]]);
+await p.waitForTimeout(300);
+
+/* ---- an erase has to show while the button is still down ----------------- */
+
+// The live canvas is drawn over the layer with source-over, which cannot
+// subtract -- so a destination-out stroke laid on it showed nothing at all and
+// the eraser appeared dead until pointer-up.
+// A strip of the composited map across the middle of the band. Alpha is no
+// use here -- the parchment underneath is opaque, so the pixel stays solid
+// whatever happens to the paint on top. The colour is what moves.
+const strip = () => p.evaluate(() =>
+  Array.from(window.__cg.R.view.flat.getContext('2d').getImageData(820, 590, 160, 20).data));
+const apart = (a, b) => {
+  let sum = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+  }
+  return Math.round(sum / (a.length / 4));
+};
+
+const inked = await strip();
+await tool('erase');
+await setOpt('Size', '260');
+{
+  const a = await M(700, 600), b = await M(1100, 600);
+  await p.mouse.move(a.x, a.y);
+  await p.mouse.down();
+  await p.mouse.move(b.x, b.y, { steps: 12 });
+  await p.waitForTimeout(280);
+  const during = await strip();
+  await p.mouse.up();
+  await p.waitForTimeout(400);
+  const after = await strip();
+  // The eraser really did take the paint off...
+  t('the eraser takes the paint off', apart(inked, after) > 12, apart(inked, after) + ' apart');
+  // ...and the map already looked like that before the button came up.
+  t('an erase shows on the map while the button is still down',
+    apart(during, after) < apart(inked, after) / 3,
+    `mid-drag ${apart(during, after)} from the result, un-erased ${apart(inked, after)}`);
+}
+
+const eraseLabel = await p.evaluate(() => {
+  const past = window.__cg.history.past;
+  return past.length ? past[past.length - 1].label : '(none)';
+});
+t('and it is called an erase in the History panel', eraseLabel === 'Erase', eraseLabel);
+
+/* ---- selecting is not moving ---------------------------------------------- */
+
+await tool('stamp');
+await p.click('#asset-picker .asset.is-stamp >> nth=0');
+await p.waitForTimeout(400);
+await clickAt(900, 900);
+await p.waitForTimeout(350);
+
+const stepsBefore = await p.evaluate(() => window.__cg.history.past.length);
+await tool('select');
+await clickAt(900, 900);
+await p.waitForTimeout(250);
+const stepsAfter = await p.evaluate(() => window.__cg.history.past.length);
+// A click that only selects used to push a Move entry that moved nothing, and
+// at 32 slots that pushes real steps off the bottom of the stack.
+t('clicking a stamp to select it records no history step', stepsAfter === stepsBefore,
+  `${stepsBefore} steps before, ${stepsAfter} after`);
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

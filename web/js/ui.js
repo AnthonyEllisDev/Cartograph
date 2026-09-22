@@ -54,7 +54,9 @@ export function field(spec, onChange) {
     input.addEventListener('change', () => onChange(input.value));
   } else if (spec.type === 'color') {
     input = el('input', { type: 'color', value: spec.value });
-    input.addEventListener('input', () => onChange(input.value));
+    // A colour input fires on every tick of a drag inside the picker, which is
+    // too often for anything that rebuilds a layer or the panel itself.
+    input.addEventListener(spec.commit ? 'change' : 'input', () => onChange(input.value));
   } else if (spec.type === 'number') {
     input = el('input', { type: 'number', min: spec.min, max: spec.max, step: spec.step, value: spec.value });
     input.addEventListener('change', () => onChange(parseFloat(input.value)));
@@ -430,6 +432,9 @@ export function setLayerGroup(layer, groupId) {
       const at = app.doc.layers.findIndex((l) => l.id === id);
       app.doc.layers.splice(at < 0 ? app.doc.layers.length : at, 0, layer);
     }
+    // Filing the walls inside a hidden group -- or taking them out of one --
+    // changes what casts a shadow: see render.relight.
+    R.relight(layer);
     R.compositeAll(); R.requestDraw(); emit('layers');
   };
   apply(groupId || null);
@@ -559,13 +564,16 @@ function renderLayerProps() {
     root.appendChild(field({ type: 'range', label: 'Softness', min: 0, max: 0.3, step: 0.005,
       value: layer.shadowBlur != null ? layer.shadowBlur : 0.05, percent: true, commit: true },
       (v) => { layer.shadowBlur = v; restamp(); }));
-    root.appendChild(field({ type: 'color', label: 'Shadow', value: layer.shadowColor || '#241c10' },
+    // Every slider around these two waits for the release, because restamp()
+    // re-renders every sprite on the layer. The colours were the two that
+    // could not, and ran it on every tick of a drag inside the picker.
+    root.appendChild(field({ type: 'color', label: 'Shadow', value: layer.shadowColor || '#241c10', commit: true },
       (v) => { layer.shadowColor = v; restamp(); }));
     root.appendChild(el('h3', { text: 'Tint' }));
     root.appendChild(field({ type: 'range', label: 'Strength', min: 0, max: 1, step: 0.02,
       value: layer.tintStrength || 0, percent: true, commit: true },
       (v) => { layer.tintStrength = v; restamp(); }));
-    root.appendChild(field({ type: 'color', label: 'Colour', value: layer.tint || '#6f8a4a' },
+    root.appendChild(field({ type: 'color', label: 'Colour', value: layer.tint || '#6f8a4a', commit: true },
       (v) => { layer.tint = v; restamp(); }));
   }
   if (layer.kind === 'lights') {
@@ -606,7 +614,7 @@ function renderLayerProps() {
         (v) => { layer.orientation = v; regrid(); }));
     }
     root.appendChild(field({ type: 'range', label: isHex ? 'Hex width' : 'Cell size',
-      min: 8, max: 320, step: 1, value: layer.size, suffix: 'px' },
+      min: 8, max: 320, step: 1, value: layer.size, suffix: 'px', commit: true },
       (v) => { layer.size = v; regrid(); }));
     root.appendChild(field({ type: 'color', label: 'Colour', value: layer.color },
       (v) => { layer.color = v; R.invalidate(layer); markDirty(); }));
@@ -619,9 +627,11 @@ function renderLayerProps() {
   }
   if (layer.kind === 'paper') {
     root.appendChild(field({ type: 'range', label: 'Vignette', min: 0, max: 1, step: 0.01,
-      value: layer.vignette, percent: true }, (v) => { layer.vignette = v; R.invalidate(layer); markDirty(); }));
+      value: layer.vignette, percent: true, commit: true },
+      (v) => { layer.vignette = v; R.invalidate(layer); markDirty(); }));
     root.appendChild(field({ type: 'range', label: 'Border', min: 0, max: 1, step: 0.01,
-      value: layer.edge, percent: true }, (v) => { layer.edge = v; R.invalidate(layer); markDirty(); }));
+      value: layer.edge, percent: true, commit: true },
+      (v) => { layer.edge = v; R.invalidate(layer); markDirty(); }));
   }
 
   const acts = el('div', { class: 'row' });
@@ -665,9 +675,13 @@ function deleteLayer(layer) {
   // A group is a folder, not a container: deleting it frees its members rather
   // than deleting somebody's work along with their filing.
   const freed = layer.kind === 'group' ? membersOf(app.doc, layer) : [];
+  // Asked before the members are freed, because afterwards nothing points at
+  // the group and relight can no longer tell it held the walls.
+  const touchedWalls = layer.kind === 'walls' || freed.some((m) => m.kind === 'walls');
   for (const m of freed) delete m.group;
   app.doc.layers.splice(index, 1);
   R.forgetLayer(layer.id);
+  if (touchedWalls) R.relightAll();
   if (app.activeLayerId === layer.id) {
     const next = app.doc.layers.find((l) => LAYER_KINDS[l.kind].paint) || app.doc.layers[0];
     app.activeLayerId = next ? next.id : null;
@@ -682,7 +696,9 @@ function deleteLayer(layer) {
     },
     redo() {
       app.doc.layers.splice(app.doc.layers.indexOf(layer), 1);
+      for (const m of freed) delete m.group;
       R.forgetLayer(layer.id);
+      if (touchedWalls) R.relightAll();
       R.compositeAll(); R.requestDraw(); emit('layers');
     },
   });

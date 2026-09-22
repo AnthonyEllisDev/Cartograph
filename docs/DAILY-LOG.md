@@ -5,6 +5,170 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-22 — the guard that was only half a guard
+
+A review day, and not by choice. The baseline was green — 239 assertions across
+ten suites, twice — so this should have been a feature day. It stopped being one
+about twenty minutes in, when the Origin guard turned out to be walkable past
+again by a route yesterday's fix never covered. Everything below is a bug that
+was in the program this morning; nothing was added.
+
+**The Origin guard, round two.** Yesterday the refusal machinery was built and
+the `/api/` path was routed through it: settle the body length first, hang up
+rather than answer, refuse chunked with a 411. All of that is still correct.
+But it was put *inside* the `if path.startswith("/api/")` branch, and eight
+lines below it sat the static path's `if method != "GET": return self._send(405,
+…)` — which answers, does not read the body, and does not close the connection.
+Same keep-alive socket, same desync, same result: the body is parsed as the next
+request, that one carries no `Origin`, and it sails through. Reproduced on the
+running program: one connection, a cross-origin `POST /not-api` whose body was a
+second request, and `projects/SMUGGLED/` appeared on disk. A CORS-simple `fetch`
+with `Content-Type: text/plain` sends exactly those bytes with no preflight, so
+any page the user had open could reach every mutating endpoint — the same full
+exposure as yesterday, through a different door.
+
+A plain `GET` with a body had it too, for the same reason: the static branch has
+no use for the bytes, but not reading them is what lets the next parse find a
+request in them. The lesson is that the guard cannot live in one arm of the
+routing split, because the socket does not know which arm was going to answer
+it. The length check and the refusal now run *before* the split, the 405 goes
+through `_refuse`, a static GET drains its body, and `do_OPTIONS` refuses
+chunked rather than leaving it behind. Two `Content-Length` headers that
+disagree are refused too — we would have read one of them and left the
+difference on the wire, which is the same bug wearing a hat.
+
+**One bad file, three empty libraries.** `read_pack` checks that the manifest is
+an object and that `assets` is a list, and then does `"/" not in a.get("id", "")`
+— so an asset whose `id` is a number reaches `"/" not in 123` and takes the
+whole `/api/packs` call down with a `TypeError`. Every good pack on disk
+disappears because of one bad file, which is precisely what the comment three
+lines above says it is guarding against. `extensions.index` had the same shape
+(`entry["id"] not in disabled` with an unhashable id) and so did
+`projects.list` — there the `try` covers the parse but not the use, so a
+`project.json` holding a bare list raises `AttributeError` out of the endpoint.
+That last one is the worst of the three: `main.js` reads the project list
+outside any `try`, so one hand-edited or half-written map stopped the editor
+booting at all. `os.path.getmtime` was outside the `try` as well, so a folder
+deleted between the `listdir` and the stat did the same.
+
+**Undo quietly died partway through a long session.** `history.bytes` accounts
+for the past *and* the future — `undo()` moves an entry across without repaying,
+because the entry is still holding its pixels. But `pushEntry` discards the redo
+stack with `history.future.length = 0` and never repaid those bytes. So every
+undo-then-draw-something-else leaked a snapshot's worth, permanently. Once the
+leak passed the 220 MB ceiling the eviction loop fired on *every* push, shifted
+the entry just made, hit `if (history.past.length <= 1) break`, and returned
+with the stack empty — and `bytes` could never come down again, because nothing
+it was counting was still in `past` to be subtracted. Simulated at forty
+paint-and-undo cycles: 216 MB held, nought steps kept. What that looks like from
+the chair is Undo greying out the instant you use it and staying that way, no
+matter how much you draw, until you reload the page.
+
+**The eraser showed nothing until you let go.** A stroke in progress goes on the
+live canvas, which `compositeAll` draws *over* the layer — and source-over
+cannot subtract, so a `destination-out` stroke had nothing to subtract from and
+the composite had nothing to show. Both halves were wrong, as it turns out:
+`paintLive` ran the destination-out against an empty live canvas, so the live
+canvas stayed blank; and even a correct one could not have been laid on top.
+Now the live canvas carries the stroke's *shape* and `compositeAll` uses it as a
+cutter — the layer's box is copied, the shape is cut out of the copy, and the
+copy is what gets drawn. Carving sea with the Landmass tool had the same dead
+preview and is fixed by the same change. Measured mid-drag, the preview is now
+pixel-identical to what the release produces. The remains of the old mask-based
+preview path (`view.liveMask`, allocated per document, cleared per stroke, read
+by nothing) went with it — about 12.6 MB and a full-canvas clear per stroke, for
+nothing.
+
+**Shadows, again, by two more routes.** `relight` is called from the eye in the
+Layers panel and from `invalidate`, and both are right. Filing the walls into a
+group is neither: `setLayerGroup` composited and stopped, so dragging the Walls
+layer into a folder that was already hidden left every shadow exactly where it
+was, over floor that now looks empty. Deleting a group is worse, because it
+*frees* its members rather than deleting them — so the walls come back into view
+and start casting again, and by the time `deleteLayer` could ask `relight`
+whether the group held any, nothing points at the group any more. That one needs
+the question asked before the mutation and the rebuild asked for after it, which
+is what `relightAll()` is now for. It is additive to the extension API; `relight`
+is unchanged.
+
+**Smaller things, all of them things you would meet.** Clicking a stamp with the
+Select tool pushed a `Move` entry that moved nothing — at 32 slots, clicking
+around pushed real steps off the bottom of the stack. Its undo used
+`Object.assign(grabbed, before)`, which puts the *snapshot's own* `points` array
+back on the item, so the next drag rewrote a snapshot the history was still
+holding; both sides deep-copy now. Every eraser stroke read "Paint" in the
+History panel, because `LABELS[op.t]` always won and the `op.erase` branch after
+it was unreachable. The Light tool's Bright and Dim sliders declared `rerender`
+without `commit`, and a rerender rebuilds the panel — so the first pixel of a
+drag destroyed the slider being dragged, and you had to click again for every
+step; the colour beside them had it worse, and `field()` honoured `commit` for
+ranges only, which it no longer does. The grid Cell size slider ran a full
+`invalidate` plus a whole-document composite plus a panel rebuild on every input
+event, which on a hex map at small sizes is tens of thousands of hexes a frame;
+it and the paper Vignette and Border sliders now wait for the release, like
+every slider around them already did.
+
+**Tests.** Nineteen new assertions — nine in `guards.mjs`, ten in `regress.mjs`
+— taking the total to 258. All of them were run against a pristine clone of
+`origin/main` to prove they catch what they claim: seven of the ten browser
+checks and eight of the nine socket checks fail there. The three that pass on
+both trees are kept deliberately and are not comfort — each is the precondition
+its neighbour is measured against ("the eraser takes the paint off" is what
+makes "and it showed while the button was down" mean anything), and each would
+fail if a fix over-corrected. Two draft checks were thrown away rather than
+kept: one asserted `past.length > 1` after a sequence that leaves exactly one
+entry by construction, and one measured alpha where the parchment underneath is
+opaque and the value cannot move. A check that cannot fail is worse than no
+check.
+
+**Found by reading and written up rather than changed.** The review turned up
+more than could honestly be fixed and tested in one day, and a fix nobody has
+reproduced is a guess. The full list is in section 13 of the hand-off doc, split
+into what was reproduced and what was only read. The ones worth naming here:
+*Rescan* clears the decoded images without re-warming them, so the open map goes
+on looking right until the next stroke rebuilds a layer and the terrain repaints
+as flat grey; deleting the map that is currently open leaves `app.dirty` false,
+so the editor says "saved" about a map that no longer exists anywhere; the
+Import dialog's **Group** field is collected, sent, echoed back and then thrown
+away, so it does nothing at all; `packs.import_asset` and `unique_slug` still do
+exists-then-open on a threaded server, which is the race `/api/export` was fixed
+for; `config.json` is a read-modify-write with no lock and a truncating write,
+so two extension toggles at once can lose one or corrupt the file; and a saved
+map holding a layer kind from an extension that is switched off throws on open,
+because `LAYER_KINDS[l.kind].paint` is dereferenced without a guard.
+
+**No feature today, deliberately.** Step one of the routine says that a second
+day's changes piled on an unreviewed first day make the diff unreviewable, and
+that reasoning does not stop applying just because both days are mine. The
+production diff is about 145 lines across seven files, one of them a remotely
+reachable hole that Anthony should be able to read, understand and land without
+a feature sitting on top of it. The research was done anyway, so tomorrow does
+not start from a blank page. Three candidates, each checked against the three
+tests:
+
+- **Region layer.** Shade a kingdom, name it, give it a colour and a border.
+  Azgaar, Inkarnate and Wonderdraft all have some form of it; Cartograph has no
+  `regions` layer at all, and the region-map half of the program has had the
+  least attention of the three. Pure canvas, a new layer kind and tool, labels
+  already exist. My pick.
+- **Map pins and notes.** A numbered pin carrying a title and a body, listed in
+  the side rail, exported as a readable key beside the image. Every VTT has it
+  and LegendKeeper sells on it. Notes are text in `project.json`, which is as
+  local-first as it gets.
+- **Print tiling.** Export a large map across several pages with overlap and
+  crop marks — the thing people actually do with a battle map. Canvas plus the
+  PNG encoder we already have.
+
+Elevation stays parked. It is still the honest gap, and it is still a piece of
+design rather than an addition: it interacts with the coastline, the lighting
+and the shelf all at once.
+
+**Tests:** 82 verify, 29 lighting, 27 hex, 24 pro, 25 guards, 23 regress, 16
+ext, 16 theme, 8 labels, 8 brushes — 258 assertions, all passing, plus `battle`,
+over two full back-to-back rounds.
+
+---
+
 ## 2026-09-21 (later) — a review day: the guards, and state that drifted
 
 No feature today. The code review turned up enough real defects, one of them

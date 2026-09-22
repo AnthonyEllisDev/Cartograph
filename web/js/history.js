@@ -24,6 +24,12 @@ function announce() {
 export function pushEntry(entry) {
   history.past.push(entry);
   history.bytes += entry.bytes || 0;
+  // The redo stack is about to be thrown away, so its pixels stop counting
+  // against the budget. Without this every undone-then-overwritten entry
+  // leaked its snapshot, and once the leak passed MAX_BYTES the loop below
+  // emptied the past on every push: undo quietly degraded to a single step
+  // and never recovered short of a reload.
+  for (const dropped of history.future) history.bytes -= dropped.bytes || 0;
   history.future.length = 0;
   while (history.past.length > MAX_ENTRIES || history.bytes > MAX_BYTES) {
     const dropped = history.past.shift();

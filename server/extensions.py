@@ -51,6 +51,11 @@ def index(root, disabled=()):
             "main": manifest.get("main", "main.js"),
             "apiVersion": manifest.get("apiVersion", 1),
         })
+        # A manifest id of the wrong type used to raise straight out of index()
+        # and empty the whole Extensions tab over one bad file.
+        if not isinstance(entry.get("id"), str):
+            entry["id"] = name
+            entry["error"] = entry.get("error") or "id must be text"
         entry["enabled"] = entry["id"] not in disabled
         # An absolute "main" makes os.path.join throw the folder away, so the
         # file it checked for was never the one the browser would ask for.

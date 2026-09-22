@@ -18,8 +18,7 @@ export const view = {
   doc: null,
   flat: null, flatCtx: null,
   live: null, liveCtx: null,          // the stroke in progress
-  liveMask: null, liveMaskCtx: null,
-  liveLayer: null, liveBox: null,
+  liveLayer: null, liveErase: false,
   cursor: null,                        // {x, y, r} in map space, for the brush ring
   onAfterDraw: null,
 };
@@ -88,8 +87,6 @@ export function setDocument(doc) {
   view.flatCtx = view.flat.getContext('2d');
   view.live = makeCanvas(doc.width, doc.height);
   view.liveCtx = view.live.getContext('2d');
-  view.liveMask = makeCanvas(doc.width, doc.height);
-  view.liveMaskCtx = view.liveMask.getContext('2d');
   for (const layer of doc.layers) rebuildLayer(layer);
   compositeAll();
 }
@@ -1312,9 +1309,24 @@ export function compositeAll(box) {
     if (!layerVisible(view.doc, layer)) continue;
     ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
-    ctx.drawImage(canvasFor(layer), x, y, w, h, x, y, w, h);
-    if (view.liveLayer === layer.id && view.live) {
-      ctx.drawImage(view.live, x, y, w, h, x, y, w, h);
+    const liveHere = view.liveLayer === layer.id && view.live;
+    if (liveHere && view.liveErase) {
+      // An erase cannot be laid over the layer it is erasing from: source-over
+      // does not subtract, so drawing the live canvas on top showed nothing
+      // and the eraser appeared to do nothing until the button came up. The
+      // box is copied, the stroke is cut out of the copy, and the copy is what
+      // gets drawn.
+      const cut = scratch('live-erase', w, h);
+      const cctx = cut.getContext('2d');
+      cctx.drawImage(canvasFor(layer), x, y, w, h, 0, 0, w, h);
+      cctx.save();
+      cctx.globalCompositeOperation = 'destination-out';
+      cctx.drawImage(view.live, x, y, w, h, 0, 0, w, h);
+      cctx.restore();
+      ctx.drawImage(cut, 0, 0, w, h, x, y, w, h);
+    } else {
+      ctx.drawImage(canvasFor(layer), x, y, w, h, x, y, w, h);
+      if (liveHere) ctx.drawImage(view.live, x, y, w, h, x, y, w, h);
     }
   }
   ctx.restore();
@@ -1343,7 +1355,20 @@ export function relight(layer) {
   if (!doc || !layer) return false;
   const touchesWalls = layer.kind === 'walls'
     || (layer.kind === 'group' && doc.layers.some((l) => l.group === layer.id && l.kind === 'walls'));
-  if (!touchesWalls) return false;
+  return touchesWalls ? relightAll() : false;
+}
+
+/** Rebuild every lighting layer, no questions asked.
+ *
+ * `relight` decides from the layer in front of it, which is no use to a caller
+ * that has already done the thing -- deleting a group frees its members first,
+ * so by the time it could ask, nothing points at the group any more. Such a
+ * caller works out whether the walls were involved before it mutates, and
+ * calls this afterwards.
+ */
+export function relightAll() {
+  const doc = view.doc;
+  if (!doc) return false;
   let did = false;
   for (const lit of doc.layers) {
     if (lit.kind === 'lights' && lit.ops.length) { rebuildLayer(lit); did = true; }

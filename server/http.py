@@ -104,6 +104,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body_length(self):
         """The declared body length, or -1 if the header is not a sane one."""
+        seen = self.headers.get_all("Content-Length") or []
+        # Two lengths that disagree are a desync in a bow: we would read one of
+        # them and leave the difference on the socket for the next parse.
+        if len(seen) > 1 and len(set(v.strip() for v in seen)) > 1:
+            return -1
         raw = self.headers.get("Content-Length")
         if raw is None:
             return 0
@@ -134,6 +139,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         # Same reasoning as _refuse: a body here would be left on the socket.
+        # A chunked one has no declared length at all, so it is refused first.
+        if self.headers.get("Transfer-Encoding"):
+            return self._refuse(411, "a length is required")
         if self._body_length() != 0:
             return self._refuse(400, "no body expected")
         self._send(204, "text/plain", b"", {"Allow": "GET,HEAD,POST,PUT,DELETE,OPTIONS"})
@@ -144,17 +152,23 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
 
+        # Every refusal below hangs up rather than replying and reading on: see
+        # _refuse. This runs before the routing split, not inside the /api/
+        # branch, because a body left on the socket is read as the next request
+        # whatever path it was addressed to -- the static branch answered a
+        # cross-origin POST with 405 and read on, and the smuggled second
+        # request carried no Origin and sailed through the guard the first one
+        # had just failed. The length is settled first so that a malformed
+        # header cannot reach rfile.read at all.
+        if self.headers.get("Transfer-Encoding"):
+            return self._refuse(411, "a length is required")
+        length = self._body_length()
+        if length < 0:
+            return self._refuse(400, "bad Content-Length")
+        if length > MAX_BODY:
+            return self._refuse(413, "body too large")
+
         if path.startswith("/api/"):
-            # Every refusal below hangs up rather than replying and reading on:
-            # see _refuse. The length is settled first so that a malformed
-            # header cannot reach rfile.read at all.
-            if self.headers.get("Transfer-Encoding"):
-                return self._refuse(411, "a length is required")
-            length = self._body_length()
-            if length < 0:
-                return self._refuse(400, "bad Content-Length")
-            if length > MAX_BODY:
-                return self._refuse(413, "body too large")
             # The check covers GET too. No GET handler has a side effect, but a
             # guard with a hole in it is a guard nobody can reason about.
             if not self._origin_ok():
@@ -180,8 +194,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(status, ctype, payload, {"Cache-Control": "no-store"})
 
         if method != "GET":
-            return self._send(405, "text/plain", b"method not allowed")
+            return self._refuse(405, "method not allowed")
 
+        # A static GET has no use for a body, but leaving one unread is the
+        # same desync as above, so it is drained rather than ignored.
+        if length:
+            self.rfile.read(length)
         return self._static(path)
 
     # ------------------------------------------------------------ static files

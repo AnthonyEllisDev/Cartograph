@@ -50,8 +50,10 @@ function beginPaint(layer, op, kind) {
   live.kind = kind;
   live.box = null;
   R.view.liveLayer = layer.id;
+  // compositeAll cannot lay a subtracting stroke over the layer it subtracts
+  // from, so it is told which kind this is.
+  R.view.liveErase = !!op.erase;
   R.view.liveCtx.clearRect(0, 0, R.view.live.width, R.view.live.height);
-  R.view.liveMaskCtx.clearRect(0, 0, R.view.liveMask.width, R.view.liveMask.height);
 }
 
 const LABELS = { stroke: 'Paint', shape: 'Fill', soften: 'Soften' };
@@ -66,7 +68,13 @@ function paintLive() {
   ctx.clearRect(box.x, box.y, box.x1 - box.x, box.y1 - box.y);
   // Only the rectangle this frame touched is re-composited. Compositing the
   // whole stroke every frame makes a long drag get slower the longer it gets.
-  if (live.kind === 'mask') {
+  if (op.erase) {
+    // The live canvas carries the stroke's *shape*, and compositeAll uses it
+    // as a cutter -- source-over cannot subtract, so an erase laid over the
+    // layer showed nothing. Running the destination-out here instead would
+    // erase from an empty canvas and leave nothing to cut with.
+    R.applyStroke(ctx, Object.assign({}, op, { erase: false, tex: null, color: '#000' }), box);
+  } else if (live.kind === 'mask') {
     // landmass preview: the texture poured into the shape, coastline deferred
     const preview = Object.assign({}, op, { tex: live.layer.texture, scale: live.layer.scale });
     R.applyStroke(ctx, preview, box);
@@ -91,6 +99,7 @@ function endPaint() {
   const { layer, op } = live;
   live.active = false;
   R.view.liveLayer = null;
+  R.view.liveErase = false;
   R.view.liveCtx.clearRect(0, 0, R.view.live.width, R.view.live.height);
 
   if (!op.points.length) { R.compositeAll(); R.requestDraw(); return; }
@@ -162,7 +171,7 @@ function endPaint() {
     R.compositeAll(box);
     R.requestDraw();
     pushEntry({
-      label: LABELS[op.t] || (op.erase ? 'Erase' : 'Paint'),
+      label: op.erase ? 'Erase' : (LABELS[op.t] || 'Paint'),
       bytes: snapBytes(before),
       undo() {
         restore(canvas, before);
@@ -747,11 +756,15 @@ define({
     return [
       { key: 'preset', type: 'select', label: 'Source', value: preset, rerender: true,
         options: Object.entries(LIGHT_PRESETS).map(([id, k]) => [id, k.label]).concat([['custom', 'Custom']]) },
+      // These three flip the Source menu to "Custom", and a rerender rebuilds
+      // the panel -- so they have to fire on release. Without `commit` the
+      // first pixel of a drag destroyed the slider being dragged.
       { key: 'bright', type: 'range', label: 'Bright', min: 1, max: 200, step: 1,
-        value: S('light', 'bright', 20), suffix: unitName(), rerender: true },
+        value: S('light', 'bright', 20), suffix: unitName(), rerender: true, commit: true },
       { key: 'dim', type: 'range', label: 'Dim', min: 1, max: 400, step: 1,
-        value: S('light', 'dim', 40), suffix: unitName(), rerender: true },
-      { key: 'color', type: 'color', label: 'Colour', value: S('light', 'color', '#ffb663'), rerender: true },
+        value: S('light', 'dim', 40), suffix: unitName(), rerender: true, commit: true },
+      { key: 'color', type: 'color', label: 'Colour', value: S('light', 'color', '#ffb663'),
+        rerender: true, commit: true },
       { key: 'intensity', type: 'range', label: 'Intensity', min: 0.1, max: 1, step: 0.02,
         value: S('light', 'intensity', 1), percent: true },
       { key: 'cone', type: 'range', label: 'Spread', min: 15, max: 360, step: 5,
@@ -1174,12 +1187,18 @@ define({
   },
   up() {
     const { grabbed, layer, before } = this.state;
-    if (grabbed && before) {
-      const after = JSON.parse(JSON.stringify(grabbed));
+    const after = grabbed && before ? JSON.parse(JSON.stringify(grabbed)) : null;
+    // Selecting is not moving. An entry per click filled the 32-slot stack
+    // with steps that undid nothing and pushed the real ones off the bottom.
+    if (after && JSON.stringify(before) !== JSON.stringify(after)) {
+      // Deep copies on the way back too: assigning the snapshot's own points
+      // array onto the item let the next drag rewrite a snapshot that the
+      // history was still holding.
+      const put = (snap) => { Object.assign(grabbed, JSON.parse(JSON.stringify(snap))); R.invalidate(layer); };
       pushEntry({
         label: 'Move',
-        undo() { Object.assign(grabbed, before); R.invalidate(layer); },
-        redo() { Object.assign(grabbed, after); R.invalidate(layer); },
+        undo() { put(before); },
+        redo() { put(after); },
       });
       markDirty(); scheduleAutosave();
     }

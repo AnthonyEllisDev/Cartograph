@@ -88,7 +88,14 @@ def read_pack(pack_dir, pack_id):
         for a in manifest["assets"]:
             if not isinstance(a, dict):
                 continue
-            if "/" not in a.get("id", ""):
+            ident = a.get("id")
+            if not isinstance(ident, str):
+                # A number or a list here used to reach `"/" not in <int>` and
+                # take the whole library down. Treat it as absent instead; the
+                # file name is a perfectly good name for the asset.
+                ident = ""
+                a.pop("id", None)
+            if "/" not in ident:
                 a["id"] = "%s/%s" % (manifest["id"], a.get("id") or a.get("file", "asset"))
         manifest["assets"] = [a for a in manifest["assets"] if isinstance(a, dict)]
         return manifest

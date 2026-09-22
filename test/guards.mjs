@@ -9,6 +9,9 @@
  */
 
 import net from 'node:net';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { base } from './browser.mjs';
 
 const BASE = base('http://127.0.0.1:7871/').replace(/\/$/, '');
@@ -172,6 +175,99 @@ try {
   // racing for the same name both saw it free and one lost its bytes.
   t('concurrent exports each get a name of their own', paths.size === n,
     `${paths.size} distinct paths from ${n} exports`);
+}
+
+/* the same desync, on the paths the /api/ guard never covered ---------------- */
+
+{
+  // The refusal machinery guarded /api/ and nothing else, and the 405 just
+  // below it answered and read on. A cross-origin POST to any other path
+  // therefore had its body parsed as a fresh request -- one carrying no
+  // Origin, so it passed the very check the first one had just failed. A
+  // CORS-simple fetch sends exactly this with no preflight.
+  const payload = '{"name":"GuardSmuggle","kind":"region"}';
+  const write = `POST /api/projects HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Content-Type: application/json${CRLF}` +
+    `Content-Length: ${Buffer.byteLength(payload)}${CRLF}${CRLF}${payload}`;
+  const text = await raw(
+    `POST /not-an-api-path HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Origin: https://evil.example.com${CRLF}Content-Type: text/plain${CRLF}` +
+    `Content-Length: ${write.length}${CRLF}${CRLF}${write}`);
+  const codes = statuses(text);
+  t('a cross-origin POST to a static path is refused', codes[0] === '405', codes.join(' then '));
+  t('and its body cannot be read back as a second request', codes.length === 1,
+    codes.length > 1 ? 'the smuggled request answered ' + codes[1] : 'one response only');
+  const { projects } = await fetch(`${BASE}/api/projects`).then((r) => r.json());
+  t('and nothing it asked for reached the disk',
+    !projects.some((pr) => pr.slug === 'GuardSmuggle'), projects.length + ' maps');
+}
+
+{
+  // A GET with a body is the same hole wearing a different verb: the static
+  // branch has no use for the bytes, but leaving them unread is what lets the
+  // next parse find a request in them.
+  const text = await raw(
+    `GET /index.html HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Content-Length: ${smuggled.length}${CRLF}${CRLF}${smuggled}`);
+  const codes = statuses(text);
+  t('a static GET carrying a body answers once', codes.length === 1, codes.join(' then '));
+}
+
+{
+  const chunked =
+    `OPTIONS /api/state HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Transfer-Encoding: chunked${CRLF}${CRLF}4${CRLF}oops${CRLF}0${CRLF}${CRLF}`;
+  const codes = statuses(await raw(chunked));
+  t('a chunked OPTIONS body is refused rather than left on the socket',
+    codes[0] === '411' && codes.length === 1, codes.join(' then '));
+}
+
+{
+  // Two lengths that disagree are a desync in a bow: we would read one of them
+  // and leave the difference behind for the next parse.
+  const codes = statuses(await raw(
+    `POST /api/projects HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Content-Length: 5${CRLF}Content-Length: 40${CRLF}${CRLF}hello`));
+  t('two disagreeing Content-Length headers are refused',
+    codes[0] === '400' && codes.length === 1, codes.join(' then '));
+}
+
+/* one bad file must not empty a whole library ------------------------------- */
+
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const made = [];
+  const put = (rel, text) => {
+    const full = join(root, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, text);
+    made.push(dirname(full));
+  };
+  try {
+    // Valid JSON of the wrong shape. Each of these used to raise out of its
+    // endpoint and take every good file on disk down with it.
+    put('assets/packs/guard-bad/pack.json',
+        '{"name":"Bad","assets":[{"id":123,"file":"nope.png"}]}');
+    put('extensions/guard-bad/extension.json', '{"id":["oops"],"name":"Bad","main":"main.js"}');
+    put('extensions/guard-bad/main.js', 'export default function () {}\n');
+    put('projects/guard-bad/project.json', '[1,2,3]');
+
+    const packs = await fetch(`${BASE}/api/packs`).then((r) => r.json());
+    t('a pack.json with an id of the wrong type does not empty the library',
+      packs.ok === true && (packs.packs || []).length > 1,
+      packs.ok ? (packs.packs || []).length + ' packs' : packs.error);
+
+    const exts = await fetch(`${BASE}/api/extensions`).then((r) => r.json());
+    t('an extension.json with an id of the wrong type does not empty the list',
+      exts.ok === true && (exts.extensions || []).length > 1,
+      exts.ok ? (exts.extensions || []).length + ' extensions' : exts.error);
+
+    const projects = await fetch(`${BASE}/api/projects`).then((r) => r.json());
+    t('a project.json of the wrong shape does not stop the map list',
+      projects.ok === true, projects.ok ? (projects.projects || []).length + ' maps' : projects.error);
+  } finally {
+    for (const dir of made) rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 for (const [status, name, note] of out) {

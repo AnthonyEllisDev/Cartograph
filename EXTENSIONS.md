@@ -194,7 +194,7 @@ api.registerExporter({
 | `api.layers()` | every layer in the open document |
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'library'`, `'dirty'`, `'saved'` |
-| `api.render` | the whole render module: `invalidate`, `relight`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
+| `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
 | `api.tools` | `{ TOOLS, currentTool, setTool }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
@@ -207,6 +207,7 @@ api.registerExporter({
 | `api.scheduleAutosave()` | poke the autosave timer |
 | `api.invalidate(layer, box)` | rebuild a layer, optionally only inside a rectangle |
 | `api.render.relight(layer)` | rebuild the lighting if `layer` is something the shadows come from |
+| `api.render.relightAll()` | rebuild the lighting unconditionally |
 | `api.render.forgetLayer(id)` | drop the offscreen canvases a layer you have removed was using |
 
 `api.invalidate` relights for you when the layer you pass is a walls layer, or a
@@ -216,6 +217,11 @@ the whole map and ignores your `box` — a shadow reaches as far as the light th
 casts it, which is nothing like the rectangle you just edited. If you change
 what a walls layer draws by some other route — hiding it, for instance — call
 `api.render.relight(layer)` yourself.
+
+`relight` decides from the layer you hand it, which is no use if you have
+already done the thing: take a walls layer out of a group and the group no
+longer knows it ever held one. For that case work out whether the walls were
+involved *before* you mutate, and call `api.render.relightAll()` afterwards.
 
 ### Unloading
 

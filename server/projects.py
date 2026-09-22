@@ -32,17 +32,22 @@ def list_projects(root):
         try:
             with open(meta, encoding="utf-8") as fh:
                 doc = json.load(fh)
+            # Valid JSON of the wrong shape parses cleanly and then raises on
+            # first use, and a folder can go between the listdir and the stat.
+            if not isinstance(doc, dict):
+                continue
+            layers = doc.get("layers")
+            out.append({
+                "slug": name,
+                "name": doc.get("name", name),
+                "width": doc.get("width"),
+                "height": doc.get("height"),
+                "layers": len(layers) if isinstance(layers, list) else 0,
+                "modified": os.path.getmtime(meta),
+                "thumb": os.path.isfile(os.path.join(folder, "thumb.png")),
+            })
         except (OSError, ValueError):
             continue
-        out.append({
-            "slug": name,
-            "name": doc.get("name", name),
-            "width": doc.get("width"),
-            "height": doc.get("height"),
-            "layers": len(doc.get("layers", [])),
-            "modified": os.path.getmtime(meta),
-            "thumb": os.path.isfile(os.path.join(folder, "thumb.png")),
-        })
     out.sort(key=lambda p: p["modified"], reverse=True)
     return out
 
