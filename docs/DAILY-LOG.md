@@ -5,6 +5,168 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-23 — regions, and two fixes that were not one-liners
+
+A feature day. Anthony's working copy matched `origin/main` byte for byte and
+the baseline was green twice over — 258 assertions across ten suites — so this
+was the first day since the backlog emptied that could add something.
+
+**The Region tool.** Click round the border of a territory, press Enter, give
+it a name: a tinted area, an outline and the name set across the middle of it.
+Kingdoms, duchies, the reach of a forest. Wonderdraft has regions, Azgaar has
+states and provinces, Inkarnate gets there with brushes; Cartograph had no
+`regions` layer at all, and the region-map half of the program has had the
+least attention of the three kinds. It is pure canvas, a new layer kind and a
+tool, so it costs the founding constraints nothing.
+
+Three things about it were decisions rather than defaults. The fill is a
+**tint** at 28% rather than paint, because a political boundary that hides the
+terrain under it is worse than useless on a map you are also meant to read;
+that is why the suite asserts the parchment still shows through rather than
+merely that something changed. The outline is a **closed spline**, the same
+quadratic-midpoint curve the paths use but wrapped, so a territory does not
+show the corner where you happened to start drawing it. And the name sits at
+the **area-weighted centroid**, not the mean of the vertices: the mean drags
+towards whichever stretch of border you clicked most finely and lands outside
+anything crescent-shaped. Borders are solid, dashed, dotted or off — an area
+with no agreed edge is a real thing to want to draw.
+
+A region map does **not** start with a regions layer. Picking the tool on a map
+without one gets the panel's existing offer to add it, which is how the wall and
+light tools already work, and it leaves every existing map and every existing
+suite's layer stack untouched.
+
+Regions come with the Select tool for free, because it moves anything with a
+`points` array — grab any point on a border and the whole outline follows. Hit
+testing is by border point and deliberately not by the filled area: a region
+covers half the map, and a fill you can grab is a trap over everything under it.
+
+**Two bugs found on the server that stopped the editor booting.** Neither is
+about shape, which is what last two days' guards were about, so neither was
+caught. `png.dimensions` did a bare `open()`, and `_walk_loose` calls it for
+every `.png` it finds — so a broken symlink, an unreadable file or a cloud
+placeholder in any pack folder raised `OSError` out of `/api/packs`, and
+`boot()` reads the library, so the whole editor came up as *"Cartograph could
+not reach its own server."* One unreadable file, wrong message, no editor.
+`index()` now reports a bad pack as broken and keeps the rest. Separately,
+`urlparse` raises `ValueError` on an absolute-form target with a malformed IPv6
+literal, and it ran as the first statement of `_handle`, before any of the body
+handling — so the handler died without writing a byte and printed a traceback
+for every one. That is the same shape as the NUL-byte hole `safe.under()`
+documents, one layer up. It goes through `_refuse` now, like every other early
+return in that function.
+
+**A save that landed and reported failure.** `api.py` built its blob keep-list
+with `doc.get("layers", [])`, which does not cover an explicit `"layers": null`,
+and `sweep_blobs` concatenated `id + ".png"` without checking the id was a
+string. Both raise *after* `projects.write` has already replaced
+`project.json`, so the map was on disk and the editor was told the save had
+failed — which means `markDirty(false)` is skipped and the document stays dirty
+for good. And `projects.read` had none of the shape checking `list_projects`
+has, so a hand-edited map went straight to `openDocument` and threw outside any
+`try`. That one is half of the known "a deleted or malformed last-open map stops
+the editor booting"; it is refused with a 404 now rather than handed over.
+
+**`slugify` threw away every long map name.** `SLUG_RE` caps the whole string
+at 64 characters and the match was tested against the *untrimmed* text, so
+anything longer failed and fell back — one long title saved to
+`projects/untitled`, the next to `projects/untitled 2`. `text[:64]` was dead
+code. It trims first now. It also did `(text or "").strip()` on whatever the
+request body held, so a name that was a number was a 500 out of the one helper
+that exists to be the safe front door for untrusted text.
+
+**Smaller things, all of them things you would meet.** A click with the Shape
+tool that never dragged pushed a "Fill" step that undid nothing — at 32 slots
+that quietly evicts real steps — and wrote a zero-area op into the map that was
+replayed on every rebuild afterwards. The Light tool's *first light turns the
+night on* was tested on the ambient value rather than on whether the layer held
+any lights, so pulling Darkness to nought to look at the art underneath snapped
+the map back to 80% night on the very next light placed. `toUVTT` exported a
+hidden walls layer's sight lines while the lights half of the same export
+checked visibility, so a tabletop got barriers for walls that were not in the
+picture. `path.finish()` had no null-layer guard, so locking the paths layer
+part way through a route threw and lost it. Four colour pickers — the coast Ink
+and Shallow, the lighting Night and the grid Colour — ran a full repaint or
+relight on every tick of a drag inside the picker; the objects panel had been
+fixed for exactly this and these were missed. The land mask ignored `op.widths`
+while its own preview honoured them, so a tapered coastline snapped to full
+brush width the instant you let go.
+
+**A map holding a layer kind nothing knows about now opens.** `LAYER_KINDS[
+l.kind].paint` was dereferenced unguarded in `openDocument`, `paintableLayers`,
+`layerRow` and `deleteLayer`. Open a map that uses a kind from an extension that
+is switched off or has been removed and it threw before anything was drawn —
+and the layer could not then be reached to delete it either, which is the state
+you are most likely to be in when you meet this. There is a `kindOf(layer)` in
+`doc.js` now that returns a usable stand-in.
+
+**Two fixes attempted and reverted, which is the more useful half of today.**
+Both looked like one-line corrections of a stated invariant and both turned out
+to be contract changes.
+
+*Invariant (c), live strokes.* `paintLive` computes its box from every point in
+the stroke, not the segment just drawn, so it grows monotonically and each frame
+of a drag allocates two canvases the size of the whole stroke and re-composites
+every layer over all of it — exactly the slowdown the comment three lines below
+it warns about. Taking the box from the last two points instead made the mid-drag
+erase preview stop being pixel-identical to the committed result: `applyStroke`
+draws the path into a canvas the size of the box it is handed, so a per-segment
+box clips the soft brush's blur at its own edge and leaves a faint seam at every
+segment boundary. The measured distance went from 0 to 57. Doing it properly
+means letting `applyStroke` draw into a padded canvas and blit only the middle.
+Put back, with the reasoning in the comment.
+
+*`opBox` under-measures a scatter stroke.* A dab is thrown up to `size*jitter/2`
+off the path and drawn at up to `0.4*size*(1+sizeJitter)` radius, against a box
+grown for a stroked line — about 94 px where the real reach is ~133, so the
+outermost dabs are sliced off along a straight edge. Growing the box **broke
+invariant (a) intermittently**: `brushes.mjs`'s "reloads pixel-identical" failed
+3 runs in 5 against 0 in 9 on a pristine clone. `opBox` sizes the canvas
+`applyStroke` allocates, so changing it changes how much geometry is available
+to the blur — and the incremental paint and the full rebuild stopped agreeing.
+The reach and the live paint box have to move together. Reverted; the clipping
+is real and is now a known issue rather than a guess.
+
+That second one is worth the next run's attention for the general lesson: in
+this renderer a box is not only a clip, it is the size of the canvas the blur
+runs in, so widening one on its own changes pixels.
+
+**Tests.** Forty new assertions and one new suite. `test/regions.mjs` (25) is
+the feature: the tool, the offer to add the layer, four clicks making one
+region, the tint reading as a tint, the name drawn at the centroid with its
+halo and taken off again by *Show names*, two points making nothing, Escape
+abandoning the outline, undo and redo, dragging a border point, and the round
+trip. Seven new checks in `guards.mjs` and eight in `regress.mjs` for the bugs
+above. All fifteen were run against a pristine clone of `origin/main`: **7 of 7
+new guard checks and 7 of 8 new regress checks fail there.** The one that passes
+on both trees is kept deliberately — "the first light turns the darkness on" is
+the precondition that makes "and a later one leaves it where it was put" mean
+anything, and it would fail if the fix over-corrected. One draft check was
+thrown away rather than kept: the dabs-box assertion, because its fix was
+reverted and a check for behaviour the program does not have is a lie about it.
+Three checks in the regions suite were rewritten rather than kept as first
+written — they were measuring the name's halo, comparing two different points,
+and counting the blue sea as dark ink.
+
+**Tests:** 82 verify, 29 lighting, 27 hex, 24 pro, 32 guards, 31 regress, 25
+regions, 16 ext, 16 theme, 8 labels, 8 brushes — 298 assertions, all passing,
+plus `battle`, over two full back-to-back rounds.
+
+**Not done, deliberately.** The extension API is untouched: `API_VERSION` is
+still 1, `regions` is a core layer kind, and `REGION_BORDERS`, `REGION_DEFAULTS`
+and `regionCentroid` came to extensions for free through `api.render`, so
+`EXTENSIONS.md` needed no change. Regions have no per-region editing panel — you
+set the colour, fill and border on the tool before you draw, and changing one
+afterwards means deleting it and drawing it again. That is the obvious next
+slice and it wants the Select tool to grow a properties panel, which is a piece
+of design rather than an addition. The asset-id collision across sub-folders
+(`terrain/rock.png` and `stamps/rock.png` both becoming `user/rock`) was left
+alone on purpose: the fix changes the ids of assets already on disk, so it would
+break saved maps that reference them, and it needs a migration rather than a
+patch.
+
+---
+
 ## 2026-09-22 — the guard that was only half a guard
 
 A review day, and not by choice. The baseline was green — 239 assertions across

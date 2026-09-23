@@ -149,8 +149,15 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- routing
 
     def _handle(self, method):
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path)
+        try:
+            parsed = urlparse(self.path)
+            path = unquote(parsed.path)
+        except ValueError:
+            # An absolute-form target with a malformed IPv6 literal raises out
+            # of urlparse, and the handler then died without writing a byte --
+            # the same shape as the NUL-byte hole safe.under() documents, one
+            # layer up. This is before the body logic, so refusing is correct.
+            return self._refuse(400, "bad request target")
 
         # Every refusal below hangs up rather than replying and reading on: see
         # _refuse. This runs before the routing split, not inside the /api/

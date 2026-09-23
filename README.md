@@ -118,8 +118,16 @@ default.
 Enter to finish, Esc to cancel, Backspace to drop the last point. Rivers widen
 as they run. Each kind remembers its own width and colour.
 
+**Region** shades a territory. Click round its border, press Enter to close it,
+and give it a name: you get a tinted area, an outline and the name set across
+the middle of it. Kingdoms, duchies, the reach of a forest, whose land is whose.
+The fill is deliberately a tint rather than paint, so the terrain underneath
+goes on reading through it, and the border can be solid, dashed or dotted — or
+turned off, for an area with no agreed edge. A region map does not start with a
+regions layer; pick the tool and the panel offers to add one.
+
 **Label** places text in four cartographic styles. **Select** moves anything you
-have placed; Delete removes it.
+have placed — including a region, by any point on its border; Delete removes it.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -316,13 +324,14 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 258 assertions in all: `lighting.mjs`
+There are narrower scripts beside it, 298 assertions in all: `lighting.mjs`
 (darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
 snapping, measurement and both orientations), `labels.mjs` (text along a path),
-`brushes.mjs` (the newer brush types, brush dynamics, stamp shadow and tint),
-`ext.mjs` (the extension host, including unload), `pro.mjs` (presets, history
-and layer groups), `theme.mjs` (interface settings), `battle.mjs` (grid snapping
-and the VTT export), `guards.mjs` and `regress.mjs`.
+`regions.mjs` (territories, their names and the round trip), `brushes.mjs` (the
+newer brush types, brush dynamics, stamp shadow and tint), `ext.mjs` (the
+extension host, including unload), `pro.mjs` (presets, history and layer
+groups), `theme.mjs` (interface settings), `battle.mjs` (grid snapping and the
+VTT export), `guards.mjs` and `regress.mjs`.
 
 `guards.mjs` is the odd one out: it needs no browser, because what it checks is
 what the server does with bytes a browser would never send in that order — a

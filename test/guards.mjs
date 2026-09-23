@@ -9,7 +9,7 @@
  */
 
 import net from 'node:net';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { base } from './browser.mjs';
@@ -268,6 +268,113 @@ try {
   } finally {
     for (const dir of made) rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/* a file that cannot be read is not a file of the wrong shape --------------- */
+
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'assets/packs/guard-unreadable');
+  try {
+    mkdirSync(dir, { recursive: true });
+    // os.walk lists a broken symlink among its files, and png.dimensions then
+    // opened it. The shape guards do not help: this raises OSError, not
+    // TypeError, and it took /api/packs down -- which the editor reads during
+    // boot, so one unreadable file in one folder stopped it coming up at all.
+    symlinkSync(join(dir, 'nowhere-at-all.png'), join(dir, 'broken.png'));
+
+    const packs = await fetch(`${BASE}/api/packs`).then((r) => r.json());
+    t('an unreadable file in a pack does not take the library down',
+      packs.ok === true && (packs.packs || []).length > 1,
+      packs.ok ? (packs.packs || []).length + ' packs' : packs.error);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/* a map of the wrong shape is refused rather than handed to the editor ------ */
+
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'projects/guard-shape');
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'project.json'), '{"name":"No Layers","width":800,"height":600}');
+    const r = await fetch(`${BASE}/api/projects/guard-shape`);
+    const body = await r.json();
+    // projects.read handed this straight through, so openDocument reached
+    // doc.layers.find outside any try and the editor came up half-started
+    // with nothing said about why.
+    t('a project.json with no layers is refused, not handed to the editor',
+      r.status === 404 && body.ok !== true, r.status + ' ' + (body.error || ''));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/* a save must not report failure for a save that landed --------------------- */
+
+{
+  const mk = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Guard Shapes' }),
+  }).then((r) => r.json());
+  const slug = mk.project && (mk.project.slug || mk.project.name);
+  // "layers": null defeats api.py's .get("layers", []) default, and a layer
+  // id that is not a string reached sweep_blobs' string concatenation. Both
+  // raised *after* projects.write had already replaced project.json, so the
+  // editor was told the save failed and left the document dirty for good.
+  const put = (doc) => fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(doc),
+  }).then((r) => r.status);
+
+  const nul = await put({ name: 'Guard Shapes', layers: null });
+  t('a save with a null layers list does not 500 after it has landed', nul === 200, nul);
+  const numeric = await put({ name: 'Guard Shapes', layers: [{ id: 7, kind: 'raster' }, 5] });
+  t('nor one holding a layer id that is not a string', numeric === 200, numeric);
+
+  await fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+}
+
+/* a long map name keeps its name -------------------------------------------- */
+
+{
+  const long = 'The Exceedingly Long And Overwrought Name Of A Map That Somebody Really Did Type';
+  const mk = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: long }),
+  }).then((r) => r.json());
+  const slug = mk.project && mk.project.slug;
+  // slugify capped the whole string at 64 and then tested the *untrimmed*
+  // text, so every title longer than that failed the match and fell back:
+  // one map saved to projects/untitled, the next to projects/untitled 2.
+  t('a map named past 64 characters keeps its name in the folder',
+    typeof slug === 'string' && slug.startsWith('The Exceedingly Long'), slug);
+  if (slug) await fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+
+  const bad = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 12345 }),
+  });
+  // slugify is the front door for untrusted text and did (text or "").strip().
+  t('and a name that is not a string is handled rather than 500ing', bad.status < 500, bad.status);
+  const madeIt = await bad.json().catch(() => ({}));
+  if (madeIt.project && madeIt.project.slug) {
+    await fetch(`${BASE}/api/projects/${encodeURIComponent(madeIt.project.slug)}`, { method: 'DELETE' });
+  }
+}
+
+/* a request target urlparse cannot read must still be answered -------------- */
+
+{
+  const text = await raw(`GET http://[abc HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}${CRLF}`);
+  const codes = statuses(text);
+  // urlparse raises ValueError on a malformed IPv6 literal, and it ran before
+  // any of the body handling -- so the handler died without writing a byte and
+  // printed a traceback for every one of them.
+  t('a malformed request target is answered rather than dropped',
+    codes.length === 1 && codes[0] === '400', codes.join(',') || 'no reply');
 }
 
 for (const [status, name, note] of out) {

@@ -9,6 +9,7 @@ export const ICONS = {
   land: P('<path d="M3 15c3-4 5 1 8-2s5 2 9-3"/><path d="M3 20c3-4 5 1 8-2s5 2 9-3"/><path d="M6 9l3-5 4 6"/>'),
   stamp: P('<path d="M12 3l3 6 6 .8-4.4 4.2 1.1 6L12 17.2 6.3 20l1.1-6L3 9.8 9 9z"/>'),
   path: P('<path d="M4 20c4 0 3-6 7-6s3-8 9-8"/>'),
+  region: P('<path d="M4 8l5-4 7 3 4-2v11l-5 4-7-3-4 2z"/><path d="M9 4v11"/><path d="M16 7v11"/>'),
   text: P('<path d="M5 6h14"/><path d="M12 6v13"/><path d="M8 19h8"/>'),
   select: P('<path d="M5 3l14 8-6 1.6L10.5 19z"/>'),
   pan: P('<path d="M12 3v9"/><path d="M8 8l4-4 4 4"/><path d="M3 12h9"/><path d="M8 8"/><path d="M12 21v-9"/><path d="M16 16l-4 4-4-4"/><path d="M21 12h-9"/>'),

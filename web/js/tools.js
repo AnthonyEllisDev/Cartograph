@@ -60,6 +60,15 @@ const LABELS = { stroke: 'Paint', shape: 'Fill', soften: 'Soften' };
 
 function paintLive() {
   const op = live.op;
+  // This box is the whole stroke so far, not the segment just drawn, and the
+  // comment below therefore describes an intention rather than the code. It
+  // was tried the other way on 2026-09-23 and put back: applyStroke draws the
+  // path into a canvas the size of the box it is given, so a per-segment box
+  // clips the soft brush's blur at its own edge and leaves a faint seam at
+  // every segment boundary -- measured mid-drag, the preview stopped being
+  // pixel-identical to the committed result. Fixing it properly means letting
+  // applyStroke draw into a padded canvas and blit only the middle, which is
+  // a change to its contract rather than a one-line swap. See DAILY-LOG.
   const box = live.kind === 'shape'
     ? R.opBox(op)
     : boxOf(op.points, op.size, 1 - (op.hardness || 0));
@@ -628,7 +637,17 @@ define({
     live.op.points[1] = b;
     paintLive();
   },
-  up() { endPaint(); },
+  up() {
+    // down() seeds both corners at the same point, so a click with no drag
+    // reaches endPaint with two points and a zero-area shape: it drew
+    // nothing, but it pushed a "Fill" step that undid nothing, evicted a
+    // real step off the 32-slot stack and marked the document dirty.
+    const p = live.active && live.op.points;
+    if (p && Math.abs(p[1].x - p[0].x) < 0.5 && Math.abs(p[1].y - p[0].y) < 0.5) {
+      live.op.points = [];
+    }
+    endPaint();
+  },
 });
 
 define({
@@ -674,7 +693,11 @@ define({
     const pts = this.state.points;
     this.state.points = [];
     if (pts.length < 2) { R.requestDraw(); return; }
+    // targetLayer skips a locked layer, so locking the paths layer part way
+    // through a route threw here rather than saying so. wall.finish has had
+    // this guard all along.
     const layer = targetLayer(['paths']);
+    if (!layer) { R.requestDraw(); return toast('This map has no paths layer', 'bad'); }
     const style = S('path', 'style', 'river');
     const preset = PATH_PRESETS[style];
     const item = {
@@ -740,6 +763,135 @@ export function unitPx(doc = app.doc) {
 }
 
 const unitName = () => ((app.doc && app.doc.scale && app.doc.scale.unit) || 'units');
+
+/* ----------------------------------------------------------- region tool */
+
+/* Territories: click the border out, name it, and it is shaded and outlined.
+ * It shares the path tool's click-to-place behaviour deliberately -- the two
+ * are the same gesture and having them differ would be gratuitous. */
+
+const REGION_PALETTE = [
+  ['#8a3b3b', 'Crimson'], ['#3f6b8a', 'Slate blue'], ['#5c7a44', 'Moss'],
+  ['#8a6a2f', 'Ochre'],   ['#6b4a7a', 'Heather'],    ['#3f7a72', 'Verdigris'],
+];
+
+define({
+  id: 'region',
+  label: 'Region',
+  icon: 'region',
+  assetKind: null,
+  snaps: true,
+  snapTo: 'corner',
+  wantsHover: true,
+  writesTo: ['regions'],
+  hint: 'Click round the border of a territory. Enter or double-click closes it, Esc cancels.',
+  options: () => ([
+    { key: 'color', type: 'select', label: 'Colour', value: S('region', 'color', R.REGION_DEFAULTS.color),
+      options: REGION_PALETTE },
+    { key: 'custom', type: 'color', label: 'Or pick one', value: S('region', 'custom', R.REGION_DEFAULTS.color) },
+    { key: 'opacity', type: 'range', label: 'Fill', min: 0, max: 0.8, step: 0.02,
+      value: S('region', 'opacity', R.REGION_DEFAULTS.opacity), percent: true },
+    { key: 'border', type: 'select', label: 'Border', value: S('region', 'border', R.REGION_DEFAULTS.border),
+      options: Object.keys(R.REGION_BORDERS).map((k) => [k, R.REGION_BORDERS[k].label]) },
+    { key: 'width', type: 'range', label: 'Border width', min: 1, max: 14, step: 0.5,
+      value: S('region', 'width', R.REGION_DEFAULTS.width), suffix: 'px' },
+  ]),
+  state: { points: [] },
+  down(pt, ev) {
+    const layer = targetLayer(['regions']);
+    if (!layer) return toast('This map has no regions layer', 'bad');
+    if (ev.detail >= 2) return this.finish();
+    this.state.points.push(pt);
+    R.requestDraw();
+  },
+  move(pt) { this.state.hover = pt; if (this.state.points.length) R.requestDraw(); },
+  up() {},
+  key(ev) {
+    if (ev.key === 'Enter') { this.finish(); return true; }
+    if (ev.key === 'Escape') { this.state.points = []; R.requestDraw(); return true; }
+    if (ev.key === 'Backspace' && this.state.points.length) { this.state.points.pop(); R.requestDraw(); return true; }
+    return false;
+  },
+  async finish() {
+    const pts = this.state.points;
+    this.state.points = [];
+    R.requestDraw();
+    // Two points enclose nothing, and a region with no area is a border with
+    // a name on it -- which is what the path tool's Border style is for.
+    if (pts.length < 3) return;
+    const layer = targetLayer(['regions']);
+    if (!layer) return toast('This map has no regions layer', 'bad');
+    const name = await askForRegionName();
+    if (name === null) return;                       // cancelled, not unnamed
+    const item = {
+      id: uid('rg'), name, points: pts,
+      color: S('region', 'custom', null) !== R.REGION_DEFAULTS.color
+        ? S('region', 'custom', R.REGION_DEFAULTS.color)
+        : S('region', 'color', R.REGION_DEFAULTS.color),
+      opacity: S('region', 'opacity', R.REGION_DEFAULTS.opacity),
+      border: S('region', 'border', R.REGION_DEFAULTS.border),
+      width: S('region', 'width', R.REGION_DEFAULTS.width),
+    };
+    const before = layer.ops.slice();
+    layer.ops.push(item);
+    R.invalidate(layer);
+    pushEntry({
+      label: 'Region',
+      bytes: 0,
+      undo() { layer.ops = before.slice(); R.invalidate(layer); },
+      redo() { layer.ops = before.concat([item]); R.invalidate(layer); },
+    });
+    markDirty(); scheduleAutosave(); emit('layers');
+  },
+  overlay(ctx) {
+    const pts = this.state.points;
+    if (!pts.length) return;
+    const all = this.state.hover ? pts.concat([this.state.hover]) : pts;
+    ctx.save();
+    // The outline is closed in the preview as well, because what is being
+    // drawn is an area: an open polyline would say the wrong thing about it.
+    ctx.beginPath();
+    all.forEach((p, i) => {
+      const s = R.mapToScreen(p.x, p.y);
+      if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+    });
+    if (all.length > 2) ctx.closePath();
+    ctx.fillStyle = 'rgba(217,164,65,.12)';
+    if (all.length > 2) ctx.fill();
+    ctx.strokeStyle = 'rgba(217,164,65,.95)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of pts) {
+      const s = R.mapToScreen(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#d9a441';
+      ctx.fill();
+    }
+    ctx.restore();
+  },
+});
+
+/** An unnamed region is a perfectly reasonable thing to want, so an empty box
+ *  is accepted and only Cancel abandons the outline. */
+async function askForRegionName() {
+  const input = el('input', { type: 'text', placeholder: 'Kingdom, duchy, wood...', value: '' });
+  let name = null;
+  await modal({
+    title: 'Name this region',
+    body: el('div', {}, [
+      el('div', { class: 'field' }, [el('label', { text: 'Name' }), input]),
+      el('p', { class: 'muted', text: 'Leave it empty for an area with no name on it.' }),
+    ]),
+    buttons: [
+      { label: 'Cancel' },
+      { label: 'Add region', class: 'btn-primary', onClick: () => { name = input.value.trim(); } },
+    ],
+  });
+  return name;
+}
 
 define({
   id: 'light',
@@ -820,6 +972,10 @@ define({
     const { layer, op } = placing;
     const before = layer.ops.slice();
     const wasAmbient = layer.ambient;
+    // Tested on the op list, not on the ambient value: someone who pulls
+    // Darkness to nought to look at the art underneath had the map snap back
+    // to night on the very next light they placed.
+    const isFirst = !before.length;
     const wasVisible = layer.visible;
     const after = before.concat([op]);
     // A light on a map with no darkness does nothing at all. Rather than leave
@@ -827,7 +983,7 @@ define({
     // first one turns the night on — and undo puts it back.
     const apply = () => {
       layer.ops = after.slice();
-      if (!wasAmbient) layer.ambient = 0.8;
+      if (isFirst && !wasAmbient) layer.ambient = 0.8;
       layer.visible = true;
       R.invalidate(layer);
       emit('layers');
@@ -1160,7 +1316,7 @@ define({
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Drag a stamp, path or label to move it. Delete removes it.',
+  hint: 'Drag a stamp, path, region or label to move it. Delete removes it.',
   options: () => ([]),
   state: { grabbed: null, offset: null, layer: null },
   down(pt) {
@@ -1294,6 +1450,15 @@ function hitTest(pt) {
         const item = layer.ops[j];
         for (const p of item.points) {
           if (Math.hypot(p.x - pt.x, p.y - pt.y) < Math.max(10, item.width)) return { layer, item };
+        }
+      }
+    } else if (layer.kind === 'regions') {
+      // By a vertex, not by the filled area: a region covers half the map and
+      // grabbing anything dropped on top of it would make the fill a trap.
+      for (let j = layer.ops.length - 1; j >= 0; j--) {
+        const item = layer.ops[j];
+        for (const p of (item.points || [])) {
+          if (Math.hypot(p.x - pt.x, p.y - pt.y) < Math.max(12, item.width || 3)) return { layer, item };
         }
       }
     }

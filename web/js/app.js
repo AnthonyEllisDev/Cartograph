@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { loadLibrary, warm } from './assets.js';
-import { newDocument, referencedAssets, serialise, findLayer, LAYER_KINDS } from './doc.js';
+import { newDocument, referencedAssets, serialise, findLayer, kindOf, LAYER_KINDS } from './doc.js';
 import { clearHistory } from './history.js';
 import * as R from './render.js';
 import { applyLook } from './theme.js';
@@ -101,7 +101,11 @@ export async function openDocument(doc, slug) {
   app.slug = slug || doc.slug || null;
   await warm(referencedAssets(doc));
   R.setDocument(doc);
-  const firstPaintable = doc.layers.find((l) => LAYER_KINDS[l.kind].paint && l.kind !== 'land');
+  // A map can hold a layer whose kind came from an extension that is now
+  // switched off or gone, and LAYER_KINDS then has no entry for it. Reading
+  // through that threw here, before anything was rendered, so the map could
+  // not be opened at all -- and the layer could not be reached to delete it.
+  const firstPaintable = doc.layers.find((l) => kindOf(l).paint && l.kind !== 'land');
   app.activeLayerId = (firstPaintable || doc.layers[0]).id;
   clearHistory();
   markDirty(false);

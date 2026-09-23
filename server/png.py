@@ -37,9 +37,18 @@ def encode(width, height, rgba, level=6):
 
 
 def dimensions(path):
-    """Read width and height out of a PNG's IHDR without decoding the image."""
-    with open(path, "rb") as fh:
-        head = fh.read(33)
+    """Read width and height out of a PNG's IHDR without decoding the image.
+
+    Returns None rather than raising for anything unreadable. The caller is
+    indexing a folder the user dropped art into, where a broken symlink, a
+    file with no read permission or a cloud placeholder is an ordinary thing
+    to meet -- and one of those must not be able to empty the whole library.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(33)
+    except OSError:
+        return None
     if len(head) < 24 or head[:8] != _SIG or head[12:16] != b"IHDR":
         return None
     return struct.unpack(">II", head[16:24])

@@ -41,8 +41,18 @@ def under(root, *parts):
 
 
 def slugify(text, fallback="untitled"):
-    """Turn a human title into something safe to use as a folder name."""
-    text = (text or "").strip()
-    text = re.sub(r"[^A-Za-z0-9 _-]+", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:64] if SLUG_RE.match(text or "") else fallback
+    """Turn a human title into something safe to use as a folder name.
+
+    The trim has to happen *before* the check, not after it. SLUG_RE caps the
+    whole string at 64 characters, so testing the untrimmed text meant every
+    title longer than that failed the match and fell back -- one long map name
+    saved to projects/untitled, the next to projects/untitled 2, and the
+    folder names carried none of what the user had typed.
+    """
+    if not isinstance(text, str):
+        # This is the front door for untrusted text, so it takes whatever the
+        # request body held rather than raising on a number or a list.
+        text = ""
+    text = re.sub(r"[^A-Za-z0-9 _-]+", "", text.strip())
+    text = re.sub(r"\s+", " ", text).strip()[:64].strip()
+    return text if SLUG_RE.match(text or "") else fallback

@@ -381,7 +381,10 @@ export function applyMaskStroke(maskCtx, op, box) {
   maskCtx.save();
   maskCtx.globalCompositeOperation = op.erase ? 'destination-out' : 'source-over';
   maskCtx.globalAlpha = op.opacity != null ? op.opacity : 1;
-  strokePath(maskCtx, op.points, op.size, op.hardness != null ? 1 - op.hardness : 0.2);
+  // op.widths, like drawBrushMask: without them the mask was always stroked
+  // at a uniform op.size, so a tapered coastline under the cursor snapped to
+  // full width the instant the button came up.
+  strokePath(maskCtx, op.points, op.size, op.hardness != null ? 1 - op.hardness : 0.2, op.widths);
   maskCtx.restore();
 }
 
@@ -500,6 +503,7 @@ export function rebuildLayer(layer) {
     case 'raster':  return renderRaster(layer, ctx);
     case 'objects': return renderObjects(layer, ctx);
     case 'paths':   return renderPaths(layer, ctx);
+    case 'regions': return renderRegions(layer, ctx);
     case 'walls':   return renderWalls(layer, ctx);
     case 'lights':  return renderLights(layer, ctx);
     case 'labels':  return renderLabels(layer, ctx);
@@ -530,12 +534,14 @@ export function opBox(op) {
 export function applySoften(targetCtx, canvas, op, box) {
   const bw = box.x1 - box.x, bh = box.y1 - box.y;
   if (bw <= 0 || bh <= 0) return;
-  const blurred = scratch('soften', bw, bh);
+  // The soften brush is a live drag tool, so this box grows with the stroke
+  // and would churn the scratch pool a frame at a time. See compositeAll.
+  const blurred = makeCanvas(bw, bh);
   const bctx = blurred.getContext('2d');
   bctx.filter = 'blur(' + Math.max(0.5, (op.strength || 0.5) * 10).toFixed(1) + 'px)';
   bctx.drawImage(canvas, box.x, box.y, bw, bh, 0, 0, bw, bh);
   bctx.filter = 'none';
-  const mask = scratch('softenmask', bw, bh);
+  const mask = makeCanvas(bw, bh);
   const mctx = mask.getContext('2d');
   mctx.save();
   mctx.translate(-box.x, -box.y);
@@ -831,6 +837,114 @@ export function pathGeometry(item) {
   const pts = item.points;
   if (pts.length < 2) return null;
   return pts;
+}
+
+/* --------------------------------------------------------------- regions */
+
+/* A region is a closed area with a name: a kingdom, a duchy, a wood, a
+ * territory. It is a tint over what is already there rather than paint of its
+ * own, which is why the fill is drawn at a low alpha and the border carries
+ * most of the reading. Every other map maker of this kind has some form of it
+ * and Cartograph had none. */
+
+export const REGION_BORDERS = {
+  solid:  { label: 'Solid',  dash: null },
+  dashed: { label: 'Dashed', dash: [14, 9] },
+  dotted: { label: 'Dotted', dash: [2, 7] },
+  none:   { label: 'None',   dash: null },
+};
+
+export const REGION_DEFAULTS = { color: '#8a3b3b', opacity: 0.28, width: 3, border: 'dashed' };
+
+/** Close the quadratic-midpoint spline renderPaths uses, so a territory's
+ *  outline curves through its own first point instead of showing the corner
+ *  where the drawing started. */
+function traceClosedSpline(ctx, pts) {
+  const n = pts.length;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  ctx.beginPath();
+  if (n < 3) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < n; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    return;
+  }
+  const start = mid(pts[n - 1], pts[0]);
+  ctx.moveTo(start.x, start.y);
+  for (let i = 0; i < n; i++) {
+    const m = mid(pts[i], pts[(i + 1) % n]);
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, m.x, m.y);
+  }
+  ctx.closePath();
+}
+
+/** The area-weighted centroid, which is where a person would write the name.
+ *  The mean of the vertices is not: it drags towards whichever stretch of
+ *  coast was clicked most finely, and lands outside anything crescent-shaped. */
+export function regionCentroid(pts) {
+  let a2 = 0, cx = 0, cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    const cross = p.x * q.y - q.x * p.y;
+    a2 += cross;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+  }
+  if (Math.abs(a2) < 1e-6) {
+    // A degenerate outline has no area to weight by; the mean is all there is.
+    return { x: pts.reduce((t, p) => t + p.x, 0) / pts.length,
+             y: pts.reduce((t, p) => t + p.y, 0) / pts.length };
+  }
+  return { x: cx / (3 * a2), y: cy / (3 * a2) };
+}
+
+function renderRegions(layer, ctx) {
+  const items = layer.ops.filter((it) => it.points && it.points.length >= 3);
+
+  for (const item of items) {
+    const colour = item.color || REGION_DEFAULTS.color;
+    ctx.save();
+    traceClosedSpline(ctx, item.points);
+    if (item.fill !== false) {
+      ctx.globalAlpha = item.opacity != null ? item.opacity : REGION_DEFAULTS.opacity;
+      ctx.fillStyle = colour;
+      ctx.fill();
+    }
+    const border = REGION_BORDERS[item.border] || REGION_BORDERS.dashed;
+    if (item.border !== 'none') {
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = item.width || REGION_DEFAULTS.width;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = colour;
+      if (border.dash) ctx.setLineDash(border.dash.map((d) => d * Math.max(1, ctx.lineWidth / 3)));
+      ctx.lineCap = item.border === 'dotted' ? 'round' : 'butt';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Names go on after every fill, or a neighbour drawn later sits over the
+  // name of the one drawn before it.
+  if (layer.showNames === false) return;
+  for (const item of items) {
+    if (!item.name) continue;
+    const at = item.at || regionCentroid(item.points);
+    const size = item.nameSize || layer.nameSize || 34;
+    const style = LABEL_STYLES.region;
+    ctx.save();
+    ctx.font = style.font.replace('%s', size);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.translate(at.x, at.y);
+    const spaced = spaceOut(item.name, size * style.spacing);
+    ctx.lineWidth = Math.max(2, size * 0.16);
+    ctx.strokeStyle = 'rgba(244,236,216,.85)';
+    ctx.lineJoin = 'round';
+    drawSpaced(ctx, spaced, true);
+    ctx.fillStyle = item.nameColor || '#3a2c1e';
+    drawSpaced(ctx, spaced, false);
+    ctx.restore();
+  }
 }
 
 function renderPaths(layer, ctx) {
@@ -1316,7 +1430,10 @@ export function compositeAll(box) {
       // and the eraser appeared to do nothing until the button came up. The
       // box is copied, the stroke is cut out of the copy, and the copy is what
       // gets drawn.
-      const cut = scratch('live-erase', w, h);
+      // makeCanvas, not scratch: this box is the live repaint box and its
+      // size changes every frame, so the pool would mint an entry per frame
+      // and evict the coastline's, which are what it exists for.
+      const cut = makeCanvas(w, h);
       const cctx = cut.getContext('2d');
       cctx.drawImage(canvasFor(layer), x, y, w, h, 0, 0, w, h);
       cctx.save();
@@ -1539,7 +1656,12 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
 
   const sight = [];
   const portals = [];
-  for (const item of (wallLayer ? wallLayer.ops : [])) {
+  // layerVisible, as the lights loop below and ambientArgb already do: the
+  // picture half of this export goes through flatten, which drops a hidden
+  // layer, so exporting sight lines for walls that are not in the image
+  // stops tokens dead at a barrier nobody can see.
+  const wallsShown = wallLayer && layerVisible(doc, wallLayer);
+  for (const item of (wallsShown ? wallLayer.ops : [])) {
     const kind = WALL_KINDS[item.kind] || WALL_KINDS.wall;
     const pts = item.points.map(toCell);
     if (kind.portal) {

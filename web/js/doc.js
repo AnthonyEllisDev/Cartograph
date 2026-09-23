@@ -14,6 +14,7 @@ export const LAYER_KINDS = {
   land:    { label: 'Landmass', paint: true,  icon: 'land'  },
   raster:  { label: 'Paint',    paint: true,  icon: 'brush' },
   paths:   { label: 'Paths',    paint: false, icon: 'path'  },
+  regions: { label: 'Regions',  paint: false, icon: 'region' },
   objects: { label: 'Objects',  paint: false, icon: 'stamp' },
   labels:  { label: 'Labels',   paint: false, icon: 'text'  },
   walls:   { label: 'Walls',    paint: false, icon: 'wall'  },
@@ -22,6 +23,18 @@ export const LAYER_KINDS = {
   grid:    { label: 'Grid',     paint: false, icon: 'grid'  },
   paper:   { label: 'Paper',    paint: false, icon: 'paper' },
 };
+
+/** The entry for a layer's kind, or a usable stand-in.
+ *
+ *  A saved map can name a kind this program does not currently know: one an
+ *  extension taught it and that is now switched off, or one from an
+ *  extension that has been removed from the folder altogether. Every
+ *  unguarded LAYER_KINDS[l.kind] was a throw on opening that map, which is
+ *  also the state in which the user most needs to reach the layer. */
+export function kindOf(layer) {
+  return LAYER_KINDS[layer && layer.kind] || { label: (layer && layer.kind) || 'layer',
+                                               paint: false, icon: 'group' };
+}
 
 export function makeLayer(kind, extra = {}) {
   const base = {
@@ -116,6 +129,7 @@ const LAYER_RECIPES = {
   terrain: () => makeLayer('raster', { name: 'Terrain', texture: 'starter/forest' }),
   floor: () => makeLayer('floor'),
   paths: () => makeLayer('paths'),
+  regions: () => makeLayer('regions', { showNames: true, nameSize: 34 }),
   objects: () => makeLayer('objects'),
   walls: () => makeLayer('walls'),
   lights: () => makeLayer('lights'),
@@ -286,7 +300,7 @@ export function drawOrder(doc) {
 }
 
 export function paintableLayers(doc) {
-  return doc.layers.filter((l) => LAYER_KINDS[l.kind].paint);
+  return doc.layers.filter((l) => kindOf(l).paint);
 }
 
 /** Asset ids referenced anywhere in the document, so they can be preloaded. */

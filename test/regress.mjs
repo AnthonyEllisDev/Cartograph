@@ -480,6 +480,115 @@ const stepsAfter = await p.evaluate(() => window.__cg.history.past.length);
 t('clicking a stamp to select it records no history step', stepsAfter === stepsBefore,
   `${stepsBefore} steps before, ${stepsAfter} after`);
 
+/* ---- a click that draws nothing is not a step ------------------------------ */
+
+{
+  await newMap(p, { name: 'Regress Shapes', kind: 'region' });
+  await tool('shape');
+  await p.click('#asset-picker .asset >> nth=0');
+  await p.waitForTimeout(400);
+  const before = await p.evaluate(() => window.__cg.history.past.length);
+  await clickAt(900, 700);
+  await p.waitForTimeout(350);
+  const after = await p.evaluate(() => window.__cg.history.past.length);
+  // down() seeds both corners at the same point, so a click with no drag
+  // reached endPaint with two points and a zero-area shape: nothing drawn, but
+  // a step pushed that undid nothing and evicted a real one off the 32 slots.
+  t('a shape click that drags nowhere records no history step', after === before,
+    `${before} steps before, ${after} after`);
+  const ops = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'raster');
+    return l ? l.ops.length : -1;
+  });
+  t('and writes no dead op into the map', ops === 0, ops + ' ops');
+}
+
+/* ---- the *first* light turns the night on, not every one ------------------- */
+
+{
+  await newMap(p, { name: 'Regress Lights', kind: 'battle' });
+  await tool('light');
+  await clickAt(700, 700);
+  await p.waitForTimeout(450);
+  const lit = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights');
+    return l ? l.ambient : null;
+  });
+  // The precondition its neighbour is measured against: the first light really
+  // does turn the darkness on, and this check is what makes the next one mean
+  // something. It passes either way and is kept deliberately.
+  t('the first light turns the darkness on', lit > 0, 'ambient ' + lit);
+
+  await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights');
+    l.ambient = 0;
+    window.__cg.R.invalidate(l);
+  });
+  await p.waitForTimeout(300);
+  await clickAt(1100, 800);
+  await p.waitForTimeout(450);
+  const still = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights');
+    return l.ambient;
+  });
+  // The test was on the ambient value rather than on whether the layer already
+  // held any lights, so pulling Darkness to nought to look at the art
+  // underneath snapped the map back to night on the very next light placed.
+  t('a later light leaves the darkness where it was put', still === 0, 'ambient ' + still);
+}
+
+/* ---- the two halves of a VTT export agree about the walls ------------------ */
+
+{
+  await newMap(p, { name: 'Regress Walls', kind: 'battle' });
+  await tool('wall');
+  {
+    const a = await M(400, 400), c = await M(1200, 400);
+    await p.mouse.click(a.x, a.y); await p.waitForTimeout(150);
+    await p.mouse.click(c.x, c.y); await p.waitForTimeout(150);
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(350);
+  }
+  const shown = await p.evaluate(() => window.__cg.R.toUVTT('data:,').line_of_sight.length);
+  t('a visible walls layer exports its sight lines', shown > 0, shown + ' lines');
+  await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'walls');
+    l.visible = false;
+    window.__cg.R.relight(l);
+  });
+  await p.waitForTimeout(300);
+  const hidden = await p.evaluate(() => window.__cg.R.toUVTT('data:,').line_of_sight.length);
+  // The picture half of the export goes through flatten, which drops a hidden
+  // layer; the walls half did not check, so a tabletop got barriers for walls
+  // that were not in the image and tokens stopped dead at nothing.
+  t('a hidden one exports none, so picture and data agree', hidden === 0, hidden + ' lines');
+}
+
+/* ---- a layer kind nothing knows about does not stop the map opening -------- */
+
+{
+  const opened = await p.evaluate(async () => {
+    const doc = JSON.parse(JSON.stringify(window.__cg.app.doc));
+    doc.layers.push({ id: 'l-gone', kind: 'from-an-extension-that-is-off',
+                      name: 'Orphan', visible: true, opacity: 1, ops: [] });
+    // LAYER_KINDS[l.kind].paint was read unguarded here, so a map holding a
+    // kind from an extension that is switched off or has been removed threw
+    // before anything was drawn -- and the layer could not then be reached to
+    // delete it either.
+    try {
+      await (await import('/js/app.js')).openDocument(doc, window.__cg.app.slug);
+      return 'ok';
+    } catch (err) { return 'threw: ' + err.message; }
+  });
+  t('a map holding an unknown layer kind still opens', opened === 'ok', opened);
+  const listed = await p.evaluate(() => {
+    try {
+      return document.querySelectorAll('#layer-list .layer').length;
+    } catch (err) { return -1; }
+  });
+  t('and the orphan layer is listed so it can be removed', listed > 1, listed + ' rows');
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

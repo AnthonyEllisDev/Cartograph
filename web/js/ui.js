@@ -5,7 +5,7 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, gridStepPx, groupOf, layerVisible, makeLayer, membersOf } from './doc.js';
+import { LAYER_KINDS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
 import { history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
@@ -394,7 +394,7 @@ function layerRow(layer, inGroup) {
     },
   }));
   row.appendChild(el('span', { class: 'lname', text: layer.name }));
-  row.appendChild(el('span', { class: 'lkind', text: LAYER_KINDS[layer.kind].label }));
+  row.appendChild(el('span', { class: 'lkind', text: kindOf(layer).label }));
   row.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', layer.id);
     row.classList.add('is-dragging');
@@ -526,7 +526,7 @@ function renderLayerProps() {
       (v) => coast('ink', v)));
     root.appendChild(field({ type: 'range', label: 'Line width', min: 0.5, max: 12, step: 0.5,
       value: layer.coast.inkWidth, suffix: 'px', commit: true }, (v) => coast('inkWidth', v)));
-    root.appendChild(field({ type: 'color', label: 'Ink', value: layer.coast.inkColor },
+    root.appendChild(field({ type: 'color', label: 'Ink', value: layer.coast.inkColor, commit: true },
       (v) => coast('inkColor', v)));
     root.appendChild(field({ type: 'toggle', label: 'Shallow water', value: layer.coast.shallow },
       (v) => coast('shallow', v)));
@@ -534,7 +534,7 @@ function renderLayerProps() {
       value: layer.coast.shallowWidth, suffix: 'px', commit: true }, (v) => coast('shallowWidth', v)));
     root.appendChild(field({ type: 'range', label: 'Depth bands', min: 1, max: 6, step: 1,
       value: layer.coast.shallowSteps || 3, commit: true }, (v) => coast('shallowSteps', v)));
-    root.appendChild(field({ type: 'color', label: 'Shallow', value: layer.coast.shallowColor },
+    root.appendChild(field({ type: 'color', label: 'Shallow', value: layer.coast.shallowColor, commit: true },
       (v) => coast('shallowColor', v)));
   }
   if (layer.kind === 'group') {
@@ -576,12 +576,25 @@ function renderLayerProps() {
     root.appendChild(field({ type: 'color', label: 'Colour', value: layer.tint || '#6f8a4a', commit: true },
       (v) => { layer.tint = v; restamp(); }));
   }
+  if (layer.kind === 'regions') {
+    const redraw = () => { R.invalidate(layer); markDirty(); };
+    const named = layer.ops.filter((o) => o.name).length;
+    root.appendChild(field({ type: 'toggle', label: 'Show names', value: layer.showNames !== false },
+      (v) => { layer.showNames = v; redraw(); }));
+    root.appendChild(field({ type: 'range', label: 'Name size', min: 12, max: 90, step: 1,
+      value: layer.nameSize || 34, suffix: 'px', commit: true },
+      (v) => { layer.nameSize = v; redraw(); }));
+    root.appendChild(el('p', { class: 'empty', text: layer.ops.length
+      ? `${layer.ops.length} region${layer.ops.length === 1 ? '' : 's'}, ${named} named. `
+        + 'Drag a border point with the Select tool to move one, Delete to remove it.'
+      : 'Empty. Draw a territory with the Region tool, then name it.' }));
+  }
   if (layer.kind === 'lights') {
     const relight = () => { R.invalidate(layer); markDirty(); };
     root.appendChild(field({ type: 'range', label: 'Darkness', min: 0, max: 1, step: 0.02,
       value: layer.ambient != null ? layer.ambient : 0, percent: true, commit: true },
       (v) => { layer.ambient = v; relight(); }));
-    root.appendChild(field({ type: 'color', label: 'Night', value: layer.color || '#060912' },
+    root.appendChild(field({ type: 'color', label: 'Night', value: layer.color || '#060912', commit: true },
       (v) => { layer.color = v; relight(); }));
     root.appendChild(field({ type: 'range', label: 'Glow', min: 0, max: 0.8, step: 0.02,
       value: layer.glow != null ? layer.glow : 0.15, percent: true, commit: true },
@@ -616,7 +629,7 @@ function renderLayerProps() {
     root.appendChild(field({ type: 'range', label: isHex ? 'Hex width' : 'Cell size',
       min: 8, max: 320, step: 1, value: layer.size, suffix: 'px', commit: true },
       (v) => { layer.size = v; regrid(); }));
-    root.appendChild(field({ type: 'color', label: 'Colour', value: layer.color },
+    root.appendChild(field({ type: 'color', label: 'Colour', value: layer.color, commit: true },
       (v) => { layer.color = v; R.invalidate(layer); markDirty(); }));
     if (isHex) {
       root.appendChild(el('p', { class: 'empty', text:
@@ -683,7 +696,7 @@ function deleteLayer(layer) {
   R.forgetLayer(layer.id);
   if (touchedWalls) R.relightAll();
   if (app.activeLayerId === layer.id) {
-    const next = app.doc.layers.find((l) => LAYER_KINDS[l.kind].paint) || app.doc.layers[0];
+    const next = app.doc.layers.find((l) => kindOf(l).paint) || app.doc.layers[0];
     app.activeLayerId = next ? next.id : null;
   }
   R.compositeAll(); R.requestDraw();

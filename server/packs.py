@@ -112,7 +112,14 @@ def index(packs_root):
         pack_dir = os.path.join(packs_root, name)
         if not os.path.isdir(pack_dir) or name.startswith("."):
             continue
-        pack = read_pack(pack_dir, name)
+        # One bad pack reports itself as broken; it does not take the other
+        # packs with it. The library is read during boot, so an exception here
+        # stops the editor coming up at all.
+        try:
+            pack = read_pack(pack_dir, name)
+        except Exception as err:
+            pack = {"id": name, "name": _title(name), "license": "unknown",
+                    "assets": [], "error": str(err)}
         pack["dir"] = name
         pack["count"] = len(pack.get("assets", []))
         out.append(pack)

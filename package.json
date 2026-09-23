@@ -7,6 +7,7 @@
     "browser": "playwright install chromium",
     "verify": "node test/verify.mjs",
     "hex": "node test/hex.mjs",
+    "regions": "node test/regions.mjs",
     "battle": "node test/battle.mjs",
     "brushes": "node test/brushes.mjs",
     "ext": "node test/ext.mjs",

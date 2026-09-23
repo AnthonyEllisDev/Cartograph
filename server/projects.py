@@ -9,6 +9,7 @@ half-broken save — none of which is true of a single binary blob.
 import json
 import os
 import shutil
+import tempfile
 import time
 
 from server.safe import Unsafe, slug, slugify, under
@@ -54,7 +55,19 @@ def list_projects(root):
 
 def read(root, name):
     with open(_meta_path(root, slug(name, "project")), encoding="utf-8") as fh:
-        return json.load(fh)
+        doc = json.load(fh)
+    # list_projects already refuses valid JSON of the wrong shape; read did
+    # not, so a hand-edited map reached openDocument and threw outside any try
+    # -- the editor came up half-initialised with nothing said about why. A
+    # ValueError here is what the caller's 404 path already catches.
+    if not isinstance(doc, dict):
+        raise ValueError("project.json is not an object")
+    if not isinstance(doc.get("layers"), list) or not doc["layers"]:
+        raise ValueError("project.json has no layers")
+    doc["layers"] = [l for l in doc["layers"] if isinstance(l, dict) and l.get("id")]
+    if not doc["layers"]:
+        raise ValueError("project.json has no usable layers")
+    return doc
 
 
 def write(root, name, doc):
@@ -67,10 +80,20 @@ def write(root, name, doc):
     doc.setdefault("created", doc["modified"])
     # Write beside the target and rename, so a crash mid-save cannot leave a
     # project.json that is half a file.
-    tmp = os.path.join(folder, "project.json.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, separators=(",", ":"))
-    os.replace(tmp, os.path.join(folder, "project.json"))
+    # The temp name is unique per write, not per project: this server answers
+    # each request on its own thread, and a manual save landing during an
+    # in-flight autosave had both of them writing the one "project.json.tmp".
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".project-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, separators=(",", ":"))
+        os.replace(tmp, os.path.join(folder, "project.json"))
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return doc
 
 

@@ -138,7 +138,13 @@ def route(req):
             # is a layer *kind* -- so the list was always empty and the sweep
             # deleted every imported-pixel layer on every save, autosave
             # included.
-            keep = [l.get("id") for l in doc.get("layers", []) if l.get("id")]
+            # ...and the shapes are checked, not assumed: the save at the
+            # line above has already landed on disk, so anything raising here
+            # reports a failure for a save that succeeded and leaves the
+            # document dirty for good. "layers": null defeats the .get default.
+            layers = doc.get("layers")
+            keep = [l["id"] for l in (layers if isinstance(layers, list) else [])
+                    if isinstance(l, dict) and isinstance(l.get("id"), str)]
             projects.sweep_blobs(ctx.projects_dir, name, keep)
             return _json({"ok": True, "project": saved})
 
