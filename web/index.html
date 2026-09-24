@@ -60,6 +60,14 @@
 
       <aside class="rail rail-right">
         <div class="rail-scroll">
+          <!-- First in the rail, and only there at all while the Select tool
+               is holding something: it is what you are working on at that
+               moment, and the Layers panel below is long enough to push
+               anything under it off the bottom of a short window. -->
+          <section class="panel" id="panel-selection" hidden>
+            <h3>Selected</h3>
+            <div id="selection-props"></div>
+          </section>
           <section class="panel" id="panel-layers">
             <h3>Layers <button class="mini" id="btn-add-layer" title="New paint layer">+</button></h3>
             <ul class="layer-list" id="layer-list"></ul>

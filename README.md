@@ -126,8 +126,13 @@ goes on reading through it, and the border can be solid, dashed or dotted — or
 turned off, for an area with no agreed edge. A region map does not start with a
 regions layer; pick the tool and the panel offers to add one.
 
-**Label** places text in four cartographic styles. **Select** moves anything you
-have placed — including a region, by any point on its border; Delete removes it.
+**Label** places text in four cartographic styles. **Select** picks up anything
+you have placed — a stamp, a path, a region by any point on its border, a wall,
+a light or a label. Drag it to move it, Delete to remove it, and change what it
+is in the **Selected** panel at the top of the right rail: a region's colour,
+fill and border, a road's width, a label's wording and size, a door turned into
+a window, a lamp's reach in feet. Nothing here has to be decided before it is
+drawn any more, and every change is one step in the history like any other.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -324,7 +329,8 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 298 assertions in all: `lighting.mjs`
+There are narrower scripts beside it, 342 assertions in all: `props.mjs`
+(changing a thing after it has been drawn), `lighting.mjs`
 (darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
 snapping, measurement and both orientations), `labels.mjs` (text along a path),
 `regions.mjs` (territories, their names and the round trip), `brushes.mjs` (the

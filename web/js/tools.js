@@ -58,8 +58,23 @@ function beginPaint(layer, op, kind) {
 
 const LABELS = { stroke: 'Paint', shape: 'Fill', soften: 'Soften' };
 
+/* A uniform widths array is dropped at endPaint, and strokePath picks a
+ * different rasteriser depending on whether it is there: with widths it stamps
+ * discs along the straight chords between points, without them it strokes the
+ * corner-cutting spline. A mouse gives every point the same width, so that is
+ * the ordinary case -- and it meant the stroke under the cursor was angular
+ * and the committed one was smooth, changing shape the instant the button came
+ * up. Dropping it here too costs the preview nothing and makes the two agree.
+ */
+function livePaintOp(op) {
+  if (!op.widths || !op.widths.every((w) => Math.abs(w - op.widths[0]) < 0.01)) return op;
+  const flat = Object.assign({}, op);
+  delete flat.widths;
+  return flat;
+}
+
 function paintLive() {
-  const op = live.op;
+  const op = livePaintOp(live.op);
   // This box is the whole stroke so far, not the segment just drawn, and the
   // comment below therefore describes an intention rather than the code. It
   // was tried the other way on 2026-09-23 and put back: applyStroke draws the
@@ -89,7 +104,7 @@ function paintLive() {
     R.applyStroke(ctx, preview, box);
   } else if (live.kind === 'scatter') {
     ctx.clearRect(0, 0, R.view.live.width, R.view.live.height);
-    R.applyScatter(ctx, op);
+    R.applyScatter(ctx, op, live.layer);
   } else if (live.kind === 'soften') {
     ctx.clearRect(box.x, box.y, box.x1 - box.x, box.y1 - box.y);
     R.applySoften(ctx, R.canvasFor(live.layer), op, box);
@@ -408,7 +423,11 @@ define({
     const asset = requireAsset('stamp');
     if (!asset) return toast('Pick a stamp first', 'bad');
     const assets = S('stamp', 'useVariants', true) ? variantsOf(asset) : [asset];
-    warm(assets).then(() => R.requestDraw());
+    // invalidate, not requestDraw: renderObjects skips an asset imageNow has
+    // not decoded, and the objects layer is built once at release -- so a
+    // variant whose decode landed after pointerup was in project.json and
+    // missing from the map until something else rebuilt that layer.
+    warm(assets).then(() => { if (app.doc.layers.includes(layer)) R.invalidate(layer); });
     beginPaint(layer, {
       t: 'scatter', assets, points: [pt],
       size: 40 * S('stamp', 'scale', 1),
@@ -1316,7 +1335,7 @@ define({
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Drag a stamp, path, region or label to move it. Delete removes it.',
+  hint: 'Click a stamp, path, region, wall, light or label to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it.',
   options: () => ([]),
   state: { grabbed: null, offset: null, layer: null },
   down(pt) {
@@ -1327,6 +1346,7 @@ define({
       this.state.offset = { x: pt.x - (hit.item.x ?? hit.item.points[0].x), y: pt.y - (hit.item.y ?? hit.item.points[0].y) };
       this.state.before = JSON.parse(JSON.stringify(hit.item));
     }
+    emit('selection');
     R.requestDraw();
   },
   move(pt) {
@@ -1367,6 +1387,7 @@ define({
     layer.ops = layer.ops.filter((o) => o !== grabbed);
     const after = layer.ops.slice();
     this.state.grabbed = null;
+    emit('selection');
     R.invalidate(layer);
     pushEntry({
       label: 'Delete',
@@ -1452,6 +1473,15 @@ function hitTest(pt) {
           if (Math.hypot(p.x - pt.x, p.y - pt.y) < Math.max(10, item.width)) return { layer, item };
         }
       }
+    } else if (layer.kind === 'walls') {
+      for (let j = layer.ops.length - 1; j >= 0; j--) {
+        const item = layer.ops[j];
+        for (const p of (item.points || [])) {
+          if (Math.hypot(p.x - pt.x, p.y - pt.y) < Math.max(10, (layer.thickness || 7) + 4)) {
+            return { layer, item };
+          }
+        }
+      }
     } else if (layer.kind === 'regions') {
       // By a vertex, not by the filled area: a region covers half the map and
       // grabbing anything dropped on top of it would make the fill a trap.
@@ -1476,6 +1506,28 @@ function pushPoint(pt, size, width) {
     pts.push(pt);
     if (live.op.widths) live.op.widths.push(width != null ? width : size);
   }
+}
+
+/** What the Select tool is holding, or null.
+ *
+ * Checked against the document every time rather than trusted: the layer can
+ * be deleted, the item can be undone away, and a panel bound to something that
+ * is no longer on the map would edit a ghost. Only the Select tool has a
+ * selection, so picking up any other tool puts the panel away.
+ */
+export function selectedObject() {
+  if (app.tool !== 'select') return null;
+  const { grabbed, layer } = TOOLS.select.state;
+  if (!grabbed || !layer) return null;
+  if (!app.doc || !app.doc.layers.includes(layer)) return null;
+  if (!layer.ops || !layer.ops.includes(grabbed)) return null;
+  return { layer, item: grabbed };
+}
+
+export function clearSelection() {
+  TOOLS.select.state.grabbed = null;
+  TOOLS.select.state.layer = null;
+  emit('selection');
 }
 
 export function currentTool() { return TOOLS[app.tool] || TOOLS.brush; }

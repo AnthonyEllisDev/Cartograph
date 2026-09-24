@@ -9,7 +9,7 @@ import { initInput } from './input.js';
 import { extensions, loadExtensions, renderExtensionLayer } from './extensions.js';
 import { initPalette } from './palette.js';
 import { initTabs, newMapDialog, openProject, showTab } from './tabs.js';
-import { initUI, renderHistory, renderToolOptions } from './ui.js';
+import { initUI, renderHistory, renderSelection, renderToolOptions } from './ui.js';
 import { $, el, modal, toast } from './util.js';
 
 async function start() {
@@ -66,10 +66,12 @@ function wireTopbar() {
   nameField.addEventListener('change', () => {
     if (!app.doc) return;
     app.doc.name = nameField.value.trim() || 'Untitled Map';
-    markDirty();
+    markDirty(); scheduleAutosave();
   });
 
-  history.onChange = refreshHistoryButtons;
+  // Any history move can put the selected thing back, take it away, or change
+  // what its fields say, so the properties panel is rebuilt with the buttons.
+  history.onChange = () => { refreshHistoryButtons(); renderSelection(); };
 
   on('dirty', (dirty) => {
     const state = $('#save-state');

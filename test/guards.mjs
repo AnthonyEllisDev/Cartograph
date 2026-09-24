@@ -377,6 +377,43 @@ try {
     codes.length === 1 && codes[0] === '400', codes.join(',') || 'no reply');
 }
 
+/* a body of the wrong shape must not leave anything behind ------------------ */
+
+{
+  const name = 'GuardStray';
+  const r = await fetch(`${BASE}/api/projects/${name}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: 'null',
+  });
+  // projects.write made the folder and then reached doc["format"], which is
+  // where a body that is not an object raised -- so the failing request still
+  // created projects/<name>/layers/ on the way to its 500. Invisible in the
+  // Projects tab, and enough to make unique_slug avoid that name for good.
+  t('a document that is not an object is refused, not 500ed', r.status === 400, r.status);
+  // A stray projects/<name>/layers/ is invisible in the Projects tab -- there
+  // is no project.json in it -- so the way to see it is to ask for that name:
+  // unique_slug walks away from a folder that is already there.
+  const made = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then((x) => x.json());
+  const slug = made.project && made.project.slug;
+  t('and the name it was refused under is still free', slug === name, slug);
+  if (slug) await fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  await fetch(`${BASE}/api/projects/${name}`, { method: 'DELETE' });
+}
+
+/* an argument that cannot be a key ------------------------------------------ */
+
+{
+  const r = await fetch(`${BASE}/api/open-folder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ which: ['packs'] }),
+  });
+  // A list reached the dict lookup and raised "unhashable type" as a 500,
+  // where the "unknown folder" 400 four lines below it is the answer.
+  t('a folder name that is not a string is a 400, not a 500', r.status === 400, r.status);
+}
+
 for (const [status, name, note] of out) {
   console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 }

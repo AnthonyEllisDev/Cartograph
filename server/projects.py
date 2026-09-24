@@ -72,6 +72,12 @@ def read(root, name):
 
 def write(root, name, doc):
     name = slug(name, "project")
+    # Checked before the folder is made, not after: the shape check used to be
+    # the `doc["format"]` line below, so a body that was not an object left an
+    # empty projects/<name>/layers/ behind on its way to a 500 -- invisible in
+    # the Projects tab and enough to make unique_slug avoid that name forever.
+    if not isinstance(doc, dict):
+        raise ValueError("document must be an object")
     folder = under(root, name)
     os.makedirs(os.path.join(folder, "layers"), exist_ok=True)
     doc["format"] = FORMAT
@@ -105,11 +111,23 @@ def write_blob(root, name, kind, blob_id, data):
     else:
         blob_id = slug(blob_id, "layer")
         path = under(root, name, "layers", blob_id + ".png")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-    os.replace(tmp, path)
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    # Unique per write, for the reason `write` above gives: a fixed "<name>.tmp"
+    # is one name per blob, so two threads storing the same layer truncated
+    # each other's temp file and whichever lost the rename got an error for a
+    # write that had in fact succeeded.
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".blob-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return os.path.relpath(path, root).replace(os.sep, "/")
 
 
@@ -120,9 +138,21 @@ def sweep_blobs(root, name, keep_ids):
         return 0
     removed = 0
     keep = {i + ".png" for i in keep_ids}
-    for fn in os.listdir(folder):
+    # The sweep runs after project.json has already been replaced, so nothing
+    # in here may raise: an autosave landing on top of a manual save has both
+    # threads removing the same stale blob, and the loser's FileNotFoundError
+    # told the editor a save had failed that was on disk and complete. Windows
+    # has the same shape when a file is still open elsewhere.
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for fn in names:
         if fn.endswith(".png") and fn not in keep:
-            os.remove(os.path.join(folder, fn))
+            try:
+                os.remove(os.path.join(folder, fn))
+            except OSError:
+                continue
             removed += 1
     return removed
 
@@ -131,7 +161,13 @@ def delete(root, name):
     folder = under(root, slug(name, "project"))
     if not os.path.isdir(folder):
         raise Unsafe("no such project")
-    shutil.rmtree(folder)
+    # isdir-then-rmtree is two steps on a threaded server. A second delete of
+    # the same map that gets past the check while the first is still running
+    # should read as "already gone", not as a server error.
+    try:
+        shutil.rmtree(folder)
+    except FileNotFoundError:
+        raise Unsafe("no such project")
 
 
 def unique_slug(root, title):

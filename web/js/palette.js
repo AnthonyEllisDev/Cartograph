@@ -25,11 +25,17 @@ const BUILT_IN = [
   { id: 'save', group: 'File', title: 'Save the map', keys: 'Ctrl+S', run: () => saveProject() },
   { id: 'fit', group: 'View', title: 'Fit the map in the window', keys: '0', run: () => R.fitView() },
   { id: 'zoom-100', group: 'View', title: 'Zoom to 100%', run: () => { R.view.zoom = 1; R.requestDraw(); } },
-  { id: 'undo', group: 'Edit', title: 'Undo', keys: 'Ctrl+Z', run: () => { undo(); markDirty(); } },
-  { id: 'redo', group: 'Edit', title: 'Redo', keys: 'Ctrl+Shift+Z', run: () => { redo(); markDirty(); } },
+  // markDirty and scheduleAutosave travel together. The toolbar buttons were
+  // fixed for this and these duplicates were not: an undo after the last
+  // autosave had fired marked the document dirty and rearmed nothing, so the
+  // step that was undone stayed in project.json for good.
+  { id: 'undo', group: 'Edit', title: 'Undo', keys: 'Ctrl+Z',
+    run: () => { undo(); markDirty(); scheduleAutosave(); } },
+  { id: 'redo', group: 'Edit', title: 'Redo', keys: 'Ctrl+Shift+Z',
+    run: () => { redo(); markDirty(); scheduleAutosave(); } },
   { id: 'revert-all', group: 'Edit', title: 'Go back to the start of this session',
     detail: 'Undoes everything still in the history',
-    run: () => { jumpTo(0); markDirty(); R.requestDraw(); } },
+    run: () => { jumpTo(0); markDirty(); scheduleAutosave(); R.requestDraw(); } },
   { id: 'scale-bar', group: 'View', title: 'Show or hide the scale bar',
     run: () => {
       app.settings.showScaleBar = !(app.settings.showScaleBar !== false);

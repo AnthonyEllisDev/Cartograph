@@ -7,12 +7,12 @@ import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
 import { LAYER_KINDS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
-import { history, jumpTo, pushEntry, timeline } from './history.js';
+import { clearHistory, history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
 import { extensions } from './extensions.js';
 import { icon } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, setTool, toolForLayer, toolTarget } from './tools.js';
+import { TOOLS, currentTool, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { $, el, modal, toast } from './util.js';
 
 /* ------------------------------------------------------------------ fields */
@@ -266,7 +266,9 @@ export function renderHistory() {
 }
 
 function afterJump() {
-  markDirty();
+  // Pairs with markDirty everywhere else: winding the timeline back after the
+  // last autosave had fired left the map dirty with no timer to write it.
+  markDirty(); scheduleAutosave();
   renderHistory();
   renderLayers();
   R.requestDraw();
@@ -379,7 +381,7 @@ function layerRow(layer, inGroup) {
     row.appendChild(el('span', {
       class: 'fold', text: layer.collapsed ? '\u25b8' : '\u25be',
       title: layer.collapsed ? 'Open the group' : 'Fold the group away',
-      onclick: (e) => { e.stopPropagation(); layer.collapsed = !layer.collapsed; markDirty(); renderLayers(); },
+      onclick: (e) => { e.stopPropagation(); layer.collapsed = !layer.collapsed; markDirty(); scheduleAutosave(); renderLayers(); },
     }));
     row.title = n + (n === 1 ? ' layer' : ' layers') + ' in this group';
   }
@@ -444,7 +446,7 @@ export function setLayerGroup(layer, groupId) {
     undo() { apply(was, wasAt); },
     redo() { apply(groupId || null); },
   });
-  markDirty();
+  markDirty(); scheduleAutosave();
 }
 
 /** A new group, holding whatever is selected to start with. */
@@ -455,7 +457,7 @@ export function addGroup() {
   app.doc.layers.splice(at, 0, group);
   R.rebuildLayer(group);
   if (current && current.kind !== 'group') current.group = group.id;
-  markDirty();
+  markDirty(); scheduleAutosave();
   emit('layers');
   setActiveLayer(group.id);
   return group;
@@ -489,7 +491,7 @@ function moveLayer(fromId, toId) {
   if (from < 0 || to < 0) return;
   const [moved] = app.doc.layers.splice(from, 1);
   app.doc.layers.splice(to, 0, moved);
-  R.compositeAll(); R.requestDraw(); markDirty(); renderLayers();
+  R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); renderLayers();
 }
 
 function renderLayerProps() {
@@ -499,19 +501,19 @@ function renderLayerProps() {
   if (!layer) return;
 
   root.appendChild(field({ type: 'text', label: 'Name', value: layer.name }, (v) => {
-    layer.name = v || layer.name; markDirty(); renderLayers();
+    layer.name = v || layer.name; markDirty(); scheduleAutosave(); renderLayers();
   }));
   root.appendChild(field({ type: 'range', label: 'Opacity', min: 0, max: 1, step: 0.01,
     value: layer.opacity, percent: true }, (v) => {
-    layer.opacity = v; R.compositeAll(); R.requestDraw(); markDirty();
+    layer.opacity = v; R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave();
   }));
   root.appendChild(field({ type: 'select', label: 'Blend', value: layer.blend,
     options: [['source-over', 'Normal'], ['multiply', 'Multiply'], ['overlay', 'Overlay'],
               ['screen', 'Screen'], ['soft-light', 'Soft light']] }, (v) => {
-    layer.blend = v; R.compositeAll(); R.requestDraw(); markDirty();
+    layer.blend = v; R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave();
   }));
   root.appendChild(field({ type: 'toggle', label: 'Locked', value: layer.locked }, (v) => {
-    layer.locked = v; markDirty();
+    layer.locked = v; markDirty(); scheduleAutosave();
   }));
 
   if (layer.kind === 'water' || layer.kind === 'floor' || layer.kind === 'land' || layer.kind === 'paper') {
@@ -520,7 +522,7 @@ function renderLayerProps() {
   if (layer.kind === 'land' && layer.coast) {
     // None of these change the shape anyone painted, so none of them replay the
     // strokes — see render.repaintLand.
-    const coast = (key, value) => { layer.coast[key] = value; R.repaintLand(layer); markDirty(); };
+    const coast = (key, value) => { layer.coast[key] = value; R.repaintLand(layer); markDirty(); scheduleAutosave(); };
     root.appendChild(el('h3', { text: 'Coastline' }));
     root.appendChild(field({ type: 'toggle', label: 'Ink outline', value: layer.coast.ink },
       (v) => coast('ink', v)));
@@ -551,7 +553,7 @@ function renderLayerProps() {
     }
   }
   if (layer.kind === 'objects') {
-    const restamp = () => { R.invalidate(layer); markDirty(); };
+    const restamp = () => { R.invalidate(layer); markDirty(); scheduleAutosave(); };
     root.appendChild(el('h3', { text: 'Drop shadow' }));
     root.appendChild(field({ type: 'range', label: 'Strength', min: 0, max: 1, step: 0.02,
       value: layer.shadow || 0, percent: true, commit: true }, (v) => { layer.shadow = v; restamp(); }));
@@ -577,7 +579,7 @@ function renderLayerProps() {
       (v) => { layer.tint = v; restamp(); }));
   }
   if (layer.kind === 'regions') {
-    const redraw = () => { R.invalidate(layer); markDirty(); };
+    const redraw = () => { R.invalidate(layer); markDirty(); scheduleAutosave(); };
     const named = layer.ops.filter((o) => o.name).length;
     root.appendChild(field({ type: 'toggle', label: 'Show names', value: layer.showNames !== false },
       (v) => { layer.showNames = v; redraw(); }));
@@ -590,7 +592,7 @@ function renderLayerProps() {
       : 'Empty. Draw a territory with the Region tool, then name it.' }));
   }
   if (layer.kind === 'lights') {
-    const relight = () => { R.invalidate(layer); markDirty(); };
+    const relight = () => { R.invalidate(layer); markDirty(); scheduleAutosave(); };
     root.appendChild(field({ type: 'range', label: 'Darkness', min: 0, max: 1, step: 0.02,
       value: layer.ambient != null ? layer.ambient : 0, percent: true, commit: true },
       (v) => { layer.ambient = v; relight(); }));
@@ -614,7 +616,7 @@ function renderLayerProps() {
     const regrid = () => {
       R.invalidate(layer);
       if (app.doc.scale) app.doc.scale.cellPx = gridStepPx(app.doc);
-      markDirty();
+      markDirty(); scheduleAutosave();
       renderMapProps();
     };
     root.appendChild(field({ type: 'select', label: 'Grid', value: layer.type,
@@ -630,7 +632,7 @@ function renderLayerProps() {
       min: 8, max: 320, step: 1, value: layer.size, suffix: 'px', commit: true },
       (v) => { layer.size = v; regrid(); }));
     root.appendChild(field({ type: 'color', label: 'Colour', value: layer.color, commit: true },
-      (v) => { layer.color = v; R.invalidate(layer); markDirty(); }));
+      (v) => { layer.color = v; R.invalidate(layer); markDirty(); scheduleAutosave(); }));
     if (isHex) {
       root.appendChild(el('p', { class: 'empty', text:
         'Hex width is corner to corner. One hex measures '
@@ -641,10 +643,10 @@ function renderLayerProps() {
   if (layer.kind === 'paper') {
     root.appendChild(field({ type: 'range', label: 'Vignette', min: 0, max: 1, step: 0.01,
       value: layer.vignette, percent: true, commit: true },
-      (v) => { layer.vignette = v; R.invalidate(layer); markDirty(); }));
+      (v) => { layer.vignette = v; R.invalidate(layer); markDirty(); scheduleAutosave(); }));
     root.appendChild(field({ type: 'range', label: 'Border', min: 0, max: 1, step: 0.01,
       value: layer.edge, percent: true, commit: true },
-      (v) => { layer.edge = v; R.invalidate(layer); markDirty(); }));
+      (v) => { layer.edge = v; R.invalidate(layer); markDirty(); scheduleAutosave(); }));
   }
 
   const acts = el('div', { class: 'row' });
@@ -665,7 +667,7 @@ function textureField(layer, label) {
     layer.texture = v;
     await warm([v]);
     if (layer.kind === 'land') R.repaintLand(layer); else R.invalidate(layer);
-    markDirty();
+    markDirty(); scheduleAutosave();
   });
 }
 
@@ -705,7 +707,15 @@ function deleteLayer(layer) {
     undo() {
       app.doc.layers.splice(index, 0, layer);
       for (const m of freed) m.group = layer.id;
-      R.setDocument(app.doc); emit('layers');
+      // Not setDocument: that empties layerCanvases and mints new ones, and
+      // every painting entry below this in the stack is a closure holding the
+      // canvas it snapshotted. Undoing past a layer delete used to restore
+      // pixels into an orphan while still taking the op out of the document,
+      // so the stroke stayed on screen and left the file. This layer is the
+      // only one whose canvas was dropped, so this layer is the only one that
+      // needs rebuilding; invalidate relights if it was the walls.
+      R.invalidate(layer);
+      emit('layers');
     },
     redo() {
       app.doc.layers.splice(app.doc.layers.indexOf(layer), 1);
@@ -715,7 +725,7 @@ function deleteLayer(layer) {
       R.compositeAll(); R.requestDraw(); emit('layers');
     },
   });
-  markDirty(); emit('layers');
+  markDirty(); scheduleAutosave(); emit('layers');
 }
 
 export function addPaintLayer() {
@@ -731,7 +741,7 @@ export function insertLayer(layer) {
   R.rebuildLayer(layer);
   R.compositeAll(); R.requestDraw();
   setActiveLayer(layer.id);
-  markDirty();
+  markDirty(); scheduleAutosave();
   return layer;
 }
 
@@ -791,14 +801,14 @@ export function renderMapProps() {
   root.appendChild(el('h3', { text: 'Scale' }));
   const scaleRow = el('div', { class: 'pair' });
   scaleRow.appendChild(field({ type: 'number', label: 'One cell is', min: 0.01, max: 10000, step: 0.5,
-    value: scale.perCell }, (v) => { scale.perCell = v; markDirty(); R.requestDraw(); }));
+    value: scale.perCell }, (v) => { scale.perCell = v; markDirty(); scheduleAutosave(); R.requestDraw(); }));
   scaleRow.appendChild(field({ type: 'select', label: 'Unit', value: scale.unit,
     options: [['ft', 'feet'], ['m', 'metres'], ['mi', 'miles'], ['km', 'kilometres'], ['hex', 'hexes']] },
-    (v) => { scale.unit = v; markDirty(); R.requestDraw(); }));
+    (v) => { scale.unit = v; markDirty(); scheduleAutosave(); R.requestDraw(); }));
   root.appendChild(scaleRow);
   root.appendChild(field({ type: 'select', label: 'Snap to grid', value: app.doc.snap || 'off',
     options: [['off', 'Off'], ['grid', 'To the grid'], ['half', 'To half cells']] },
-    (v) => { app.doc.snap = v; markDirty(); }));
+    (v) => { app.doc.snap = v; markDirty(); scheduleAutosave(); }));
   root.appendChild(el('p', { class: 'empty', text: grid && grid.type === 'hex'
     ? 'Walls, paths and shapes snap to hex corners, stamps to hex centres. '
       + 'Half cells add the edge midpoints. Hold Alt to ignore it.'
@@ -830,8 +840,15 @@ async function resizeDialog() {
   if (nw === app.doc.width && nh === app.doc.height) return;
   app.doc.width = nw; app.doc.height = nh;
   R.setDocument(app.doc);
+  // Every undo entry holding pixels is a closure over the canvas it
+  // snapshotted, and setDocument has just replaced all of them. Restoring into
+  // an orphaned canvas takes the op out of the document while leaving the
+  // paint on screen, which loses work silently at the next save -- so the
+  // stack goes, as it does when a map is opened.
+  clearHistory();
+  renderHistory();
   R.fitView();
-  markDirty();
+  markDirty(); scheduleAutosave();
   renderMapProps();
   toast(`Canvas is now ${nw} × ${nh}`);
 }
@@ -856,6 +873,152 @@ export function renderExtensionPanels() {
     }
     root.appendChild(panel);
   }
+}
+
+/* ------------------------------------------------------- selected object */
+
+/* Everything on this map that was drawn as data can be changed after it was
+ * drawn.
+ *
+ * Until now a region's colour, a road's width, a label's wording and a door's
+ * kind were all fixed at the moment the tool committed them: the only way to
+ * change one was to delete it and draw it again. The ops have carried the
+ * fields all along -- this is the panel that lets anyone reach them.
+ *
+ * One table, not six hand-written panels. Every field goes through the same
+ * editObject below, so the two mistakes this invites -- a colour input firing
+ * on every tick of a drag inside the picker, and an undo entry that hands the
+ * item back the snapshot's own arrays -- are one fix each rather than six.
+ */
+const OBJECT_NOUNS = {
+  objects: 'stamp', labels: 'label', paths: 'path',
+  regions: 'region', walls: 'wall', lights: 'light',
+};
+
+const OBJECT_FIELDS = {
+  objects: (item) => [
+    { key: 'scale', type: 'range', label: 'Size', min: 0.1, max: 4, step: 0.05,
+      value: item.scale != null ? item.scale : 1, suffix: '×', commit: true },
+    { key: 'rot', type: 'range', label: 'Tilt', min: -0.8, max: 0.8, step: 0.01,
+      value: item.rot || 0, commit: true },
+    { key: 'opacity', type: 'range', label: 'Opacity', min: 0.05, max: 1, step: 0.01,
+      value: item.opacity != null ? item.opacity : 1, percent: true, commit: true },
+    { key: 'flip', type: 'toggle', label: 'Mirrored', value: !!item.flip },
+  ],
+  labels: (item) => [
+    { key: 'text', type: 'text', label: 'Text', value: item.text || '' },
+    { key: 'style', type: 'select', label: 'Style', value: item.style || 'settlement',
+      options: [['title', 'Title'], ['region', 'Region'],
+                ['settlement', 'Settlement'], ['water', 'Water']] },
+    { key: 'size', type: 'range', label: 'Size', min: 8, max: 120, step: 1,
+      value: item.size || 24, suffix: 'px', commit: true },
+    { key: 'color', type: 'color', label: 'Colour', value: item.color || '#3a2c1e', commit: true },
+    { key: 'halo', type: 'toggle', label: 'Halo behind it', value: item.halo !== false },
+  ],
+  paths: (item) => [
+    { key: 'style', type: 'select', label: 'Kind', value: item.style || 'river',
+      options: Object.entries(R.PATH_STYLES).map(([id, k]) => [id, k.label]) },
+    { key: 'width', type: 'range', label: 'Width', min: 1, max: 60, step: 0.5,
+      value: item.width || 10, suffix: 'px', commit: true },
+    { key: 'color', type: 'color', label: 'Colour', value: item.color || '#4d7fa0', commit: true },
+  ],
+  regions: (item) => [
+    { key: 'name', type: 'text', label: 'Name', value: item.name || '' },
+    { key: 'color', type: 'color', label: 'Colour',
+      value: item.color || R.REGION_DEFAULTS.color, commit: true },
+    { key: 'opacity', type: 'range', label: 'Fill', min: 0, max: 0.8, step: 0.01,
+      value: item.opacity != null ? item.opacity : R.REGION_DEFAULTS.opacity,
+      percent: true, commit: true },
+    { key: 'border', type: 'select', label: 'Border',
+      value: item.border || R.REGION_DEFAULTS.border,
+      options: Object.entries(R.REGION_BORDERS).map(([id, k]) => [id, k.label]) },
+    { key: 'width', type: 'range', label: 'Border width', min: 1, max: 12, step: 0.5,
+      value: item.width || R.REGION_DEFAULTS.width, suffix: 'px', commit: true },
+  ],
+  walls: (item) => [
+    { key: 'kind', type: 'select', label: 'Kind', value: item.kind || 'wall',
+      options: Object.entries(R.WALL_KINDS).map(([id, k]) => [id, k.label]) },
+  ],
+  lights: (item) => {
+    // Stored in pixels and shown in whatever the map measures in, the way the
+    // Light tool's own sliders read. The conversion is the one unitPx makes,
+    // so a light edited here is worth the same as one placed there.
+    const px = Math.max(0.0001, unitPx());
+    return [
+      { key: 'on', type: 'toggle', label: 'Lit', value: item.on !== false },
+      { key: 'bright', type: 'range', label: 'Bright', min: 1, max: 200, step: 1,
+        value: Math.round((item.bright || 0) / px), suffix: unitLabel(), commit: true,
+        scale: px },
+      { key: 'dim', type: 'range', label: 'Dim', min: 1, max: 400, step: 1,
+        value: Math.round((item.dim || 0) / px), suffix: unitLabel(), commit: true,
+        scale: px },
+      { key: 'color', type: 'color', label: 'Colour', value: item.color || '#ffb663', commit: true },
+      { key: 'intensity', type: 'range', label: 'Intensity', min: 0.1, max: 1, step: 0.02,
+        value: item.intensity != null ? item.intensity : 1, percent: true, commit: true },
+      { key: 'cone', type: 'range', label: 'Spread', min: 15, max: 360, step: 5,
+        value: item.cone != null ? item.cone : 360, suffix: '°', commit: true },
+    ];
+  },
+};
+
+const unitLabel = () => ' ' + ((app.doc && app.doc.scale && app.doc.scale.unit) || 'units');
+
+/** Change one field of the selected item, undoably.
+ *
+ * Deep copies on the way out and on the way back: handing the item the
+ * snapshot's own `points` array is what let a later drag rewrite a snapshot
+ * the history was still holding, and this panel would have invited that
+ * mistake at six op kinds at once. Nothing is pushed for an edit that changed
+ * nothing -- the stack holds 32 entries and a dead one evicts a real step.
+ */
+function editObject(layer, item, key, value) {
+  const before = JSON.parse(JSON.stringify(item));
+  item[key] = value;
+  if (JSON.stringify(before) === JSON.stringify(item)) return;
+  const after = JSON.parse(JSON.stringify(item));
+  const put = (snap) => {
+    Object.assign(item, JSON.parse(JSON.stringify(snap)));
+    // invalidate, not compositeAll: it rebuilds the layer and relights when
+    // the thing edited was a wall, which changing a door to a window is.
+    R.invalidate(layer);
+    renderSelection();
+  };
+  // No re-render here: the control the user is holding already shows the new
+  // value, and rebuilding the panel under a text field takes the focus with
+  // it. Undo and redo do rebuild, because they change values nobody typed.
+  R.invalidate(layer);
+  pushEntry({
+    label: 'Edit ' + (OBJECT_NOUNS[layer.kind] || 'object'),
+    bytes: 0,
+    undo() { put(before); },
+    redo() { put(after); },
+  });
+  markDirty(); scheduleAutosave();
+}
+
+export function renderSelection() {
+  const panel = $('#panel-selection');
+  const root = $('#selection-props');
+  if (!panel || !root) return;
+  root.innerHTML = '';
+  const picked = selectedObject();
+  const fields = picked && OBJECT_FIELDS[picked.layer.kind];
+  if (!picked || !fields) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  const { layer, item } = picked;
+  root.appendChild(el('p', { class: 'muted small',
+    text: 'A ' + (OBJECT_NOUNS[layer.kind] || 'thing') + ' on ' + layer.name + '.' }));
+  for (const spec of fields(item)) {
+    root.appendChild(field(spec, (v) => {
+      // A light's radii are shown in map units and stored in pixels.
+      editObject(layer, item, spec.key, spec.scale ? v * spec.scale : v);
+    }));
+  }
+  root.appendChild(el('p', { class: 'muted small',
+    text: 'Drag it to move it. Delete removes it.' }));
 }
 
 /* ------------------------------------------------------- collapsible panels */
@@ -887,9 +1050,13 @@ export function initUI() {
   renderToolOptions();
   renderAssetPicker();
   renderHistory();
-  on('tool', () => { renderToolbar(); renderToolOptions(); renderAssetPicker(); });
-  on('layers', () => { renderLayers(); renderMapProps(); renderToolOptions(); renderExtensionPanels(); });
-  on('document', () => { renderLayers(); renderMapProps(); renderExtensionPanels(); renderHistory(); });
+  renderSelection();
+  on('tool', () => { renderToolbar(); renderToolOptions(); renderAssetPicker(); renderSelection(); });
+  on('selection', renderSelection);
+  // The selection can be undone away or have its layer deleted under it, so
+  // the panel is rebuilt whenever either could have happened.
+  on('layers', () => { renderLayers(); renderMapProps(); renderToolOptions(); renderExtensionPanels(); renderSelection(); });
+  on('document', () => { renderLayers(); renderMapProps(); renderExtensionPanels(); renderHistory(); renderSelection(); });
   on('tool-registry', () => renderToolbar());
   on('panels', renderExtensionPanels);
   on('library', () => renderAssetPicker());

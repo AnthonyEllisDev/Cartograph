@@ -20,7 +20,7 @@ import * as hex from './hex.js';
 import { pushEntry, restore, snapshot } from './history.js';
 import { icon, ICONS } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, setTool } from './tools.js';
+import { TOOLS, clearSelection, currentTool, selectedObject, setTool } from './tools.js';
 import { clamp, el, hashString, modal, rng, toast, uid } from './util.js';
 
 export const API_VERSION = 1;
@@ -109,7 +109,7 @@ function makeApi(manifest) {
 
     events: { on, emit },
     render: R,
-    tools: { TOOLS, currentTool, setTool },
+    tools: { TOOLS, clearSelection, currentTool, selectedObject, setTool },
     assets: { library, image, imageNow, pattern, warm },
     history: { push: pushEntry, snapshot, restore },
     server: serverApi,

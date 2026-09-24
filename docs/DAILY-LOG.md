@@ -5,6 +5,201 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-24 — a properties panel, and a paint layer that would not go away
+
+Anthony's working copy matched `origin/main` byte for byte across all 66 tracked
+source files, so this could be a feature day.
+
+**The baseline was not quite green, and the reason is worth reading.**
+`test/pro.mjs` failed one check — *hiding a group hides its members* — against a
+pristine `git clone` as surely as against the working tree, so it was not a
+regression in the program. The preset section of that suite reloads the page to
+prove a preset outlives it, and **a new map lives only in memory until the first
+save**: `newMap` posts nothing to the server, `app.slug` is null until
+`saveProject` runs, and autosave does not fire for fifteen seconds. So the
+reload did not bring "Pro Workbench" back at all — it reopened whatever map was
+last written to disk, which is the *previous suite's*. The group section then
+grouped and hid layers on that map and measured it. It passed for as long as the
+inherited map happened to have paint on a raster layer and failed the first day
+it did not, a long way from the cause. That is the same poisoning `newMap` and
+`ready` exist to stop, arriving through a reload rather than through omission.
+The section now makes its own map and paints on it, with a precondition check
+saying so, which is what its neighbour is measured against.
+
+**The feature: changing a thing after it has been drawn.** Research first —
+Dungeondraft treats its Selection Tool as the primary property editor, Azgaar
+opens a properties window on any marker, Foundry gives every map note a config
+dialog, and Inkarnate, which largely does not have this, has a stamp-tool
+feature board dominated by requests for it. Cartograph had fifteen tools writing
+six op kinds, every one of them fully-specified JSON carrying exactly the fields
+a panel would expose — and no way to reach any of them. A region's colour, a
+road's width, a label's wording, a door's kind and a lamp's reach were all fixed
+at the moment the tool committed them, and the only way to change one was to
+delete it and draw it again. This is the gap against the baseline rather than an
+addition on top of it, and it is the only candidate on the list that retrofits
+six landed features at once.
+
+There is a **Selected** panel at the top of the right rail, there only while the
+Select tool is holding something. Three things about it were decisions.
+
+It is **one table, not six hand-written panels**. Every field goes through a
+single `editObject`, so the two mistakes this invites — a colour input firing on
+every tick of a drag inside the picker, and an undo entry that hands the item
+back the snapshot's own arrays — are one fix each rather than six. Every
+expensive control carries `commit: true`; the undo entry deep-copies in both
+directions; an edit that changes nothing pushes no entry, because at 32 slots a
+dead one evicts a real step.
+
+Edits go through **`R.invalidate(layer)`**, not `compositeAll`. That matters for
+exactly one case and it is the case the suite measures: turning a door into a
+window has to lift the shadows behind it, and `invalidate` is the route that
+relights. A light's Bright and Dim are shown in **map units and stored in
+pixels**, the conversion `unitPx()` makes, so a light edited here is worth the
+same as one placed there.
+
+`hitTest` learnt about **walls**, which it did not cover at all, so a wall can
+now be picked up and restyled. Hit testing on a wall is by its points — a
+straight one has exactly two — which is why the suite grabs it by reading the op
+rather than by clicking where the drag started; snapping has moved the ends onto
+the grid by then.
+
+The panel sits **first in the rail**, above Layers. It is what you are working
+on at that moment, and the Layers panel is long enough to push anything under it
+off the bottom of a short window — which is exactly what happened to the first
+version, and was obvious in a screenshot and invisible in the source.
+
+**Two bugs that lost work.** Both were found by reading and then reproduced.
+
+*Undoing past a layer delete left the paint on the canvas and took the ops out
+of the document.* `deleteLayer`'s undo called `R.setDocument(app.doc)`, which
+empties `layerCanvases` and mints fresh ones — and every painting entry below it
+in the stack is a closure holding the canvas it snapshotted. The next undo wrote
+its pixels into an orphan while still splicing the op out of `layer.ops`, so the
+stroke stayed on screen and left the file; the next save wrote a map without it.
+Measured on the unfixed tree the flattened map was byte-for-byte unchanged while
+the ops were gone. The undo now rebuilds just the layer it put back, which is
+the only one whose canvas was dropped. `resizeDialog` has the same shape and no
+targeted fix is available — every canvas really is replaced — so it clears the
+history, as opening a map does.
+
+*Narrowing a coastline left a band of the wider one behind.* `repaintLand`
+clears only the rectangle it is about to draw and grew that rectangle from the
+*current* shelf and ink widths. Drag *Shallow width* from 120 down to 2 and the
+wider band falls outside the clear and stays on the canvas, in 64-px steps,
+until something forces a full rebuild — and a full rebuild clears the whole
+canvas, so the map did not come back from disk the way it was on screen. That is
+invariant (a). There is a `coastReach` map now: cleared as far as the coast has
+ever reached on that layer, drawn as far as it reaches now. The box is still
+snapped to `SHELF_GRID` inside `paintLand`, so widening it by whole grid steps
+moves nothing the shelf downscale depends on — this is not the `opBox` change
+that was reverted yesterday, because nothing here feeds `applyStroke`. Measured
+against a full rebuild of the same layer: 595,585 bytes differed before, none
+after.
+
+**The stroke under the cursor was not the stroke that got committed.**
+`strokePath` picks a different rasteriser depending on whether `op.widths` is
+there: with widths it stamps discs along the straight chords between points,
+without them it strokes the corner-cutting spline. `endPaint` deletes a uniform
+widths array — and `dynamicWidth` returns a flat `size` for every point on a
+mouse, because only a pen has pressure to read. So that was *every ordinary
+stroke*: angular under the cursor, smooth the instant the button came up. The
+comment justifying the deletion said it was "a different rendering path for no
+difference at all", which was the wrong half of true. The live preview drops a
+uniform array too now, so both sides take the spline. Nothing committed changed,
+which is why no fingerprint moved; 35,579 samples moved between preview and
+commit on the unfixed tree, none after.
+
+**Server robustness, four things that answered 500 where they should have
+answered 400 or nothing at all.** `projects.write` made
+`projects/<name>/layers/` and *then* reached the line that rejects a body which
+is not an object, so every refused PUT left a folder behind — invisible in the
+Projects tab and enough to make `unique_slug` walk away from that name for ever.
+`/api/open-folder` put an unhashable `which` straight into a dict lookup.
+`disabledExtensions` holding anything but a list took **both** extension
+endpoints down with "not iterable", which empties the Extensions tab and leaves
+no way to repair it from inside the program; a bare string there was worse,
+exploding into its own characters and being written back that way. And
+`load_config`'s "config.json ignored" net caught `OSError` and `ValueError` but
+not the `TypeError` that `dict.update` raises on valid JSON of the wrong shape —
+so a `config.json` holding `5` or `[1,2]`, which is what a crash during
+`save_config`'s truncating in-place write can leave, stopped the program
+starting at all.
+
+**Three races, fixed and not covered by a check.** `sweep_blobs` ran `os.remove`
+unguarded, *after* `projects.write` had already replaced `project.json` — so an
+autosave landing on top of a manual save had both threads removing the same
+stale blob and the loser reported a failed save for one that was on disk and
+complete, which skips `markDirty(false)` and leaves the document dirty for good.
+`write_blob` used a fixed `<name>.tmp`, one name per blob rather than one per
+write: the identical bug `projects.write` was given `mkstemp` for, twelve lines
+below it. `projects.delete` surfaced the loser of an `isdir`-then-`rmtree` race
+as a 500 rather than a 404. All three now behave. **No check went in for any of
+them**: the drafts passed against a pristine clone as readily as against the
+fixed tree — this container serialises them too well — and one of them reset the
+connection under load. A check that cannot fail is a lie about the program, so
+they were deleted rather than kept, as the dabs-box assertion was yesterday.
+Worth re-attempting on real hardware.
+
+**Smaller things, all of them things you would meet.** `markDirty` and
+`scheduleAutosave` travel together, and sixteen places in `ui.js`, three in the
+command palette and the project-rename field called the first without the
+second — so an undo, a jump in the History panel, a rename, a layer opacity or a
+coast colour set after the last autosave had fired marked the document dirty and
+rearmed nothing, and the file on disk kept what had been changed away. The
+scatter preview drew without the layer's style, so a run of trees previewed flat
+and gained every drop shadow and tint at once on release. `[` and `]` wrote the
+brush size straight into the settings bag instead of through `setToolSetting`,
+so it never reached `localStorage` and reverted at the next launch. A stamp
+whose variant finished decoding after pointerup was in `project.json` and
+missing from the map, because the warm handler asked for a redraw rather than a
+rebuild and `renderObjects` skips an asset `imageNow` has not decoded. `toUVTT`
+threw on a degenerate wall where `renderWalls` and `wallSegments` both skip one.
+
+**Tests.** One new suite and six new assertions elsewhere, 342 in all.
+`test/props.mjs` (37) is the feature: the panel absent with nothing picked up,
+a region picked up by its border and its five fields offered, a colour change
+reaching the op *and* the map, one undo step named for what it changed, a
+re-set of the same value pushing nothing, undo restoring the colour and the
+pixels and the control, select and text fields writing through, a label
+reworded and resized, a path widened, the panel going away when another tool is
+picked up and when the selection is deleted, the whole lot surviving a save and
+a reload, a wall picked up at all, a door turned into a window *and the light
+coming through it*, undo putting the shadow back, a light's radii reading in
+feet while stored in pixels, and a wider dim radius lighting what it now
+reaches. Three new checks in `regress.mjs` and three in `guards.mjs`. All six
+were run against a pristine clone of `origin/main`: **6 of 6 fail there**, and
+`props.mjs` cannot run there at all — there is no `#panel-selection` to ask
+about. Two region measurements were rewritten rather than kept as first
+written: one sampled a point outside the territory entirely, and the first
+colour was another blue over a blue sea, which is a check that cannot tell the
+tint from what is under it. The light check moved to a 40x30 battle map,
+because on the default 20x15 room every corner is already inside a torch's
+reach and "it lights further" cannot move.
+
+**Tests:** 82 verify, 37 props, 35 guards, 34 regress, 29 lighting, 27 hex, 25
+pro, 25 regions, 16 ext, 16 theme, 8 labels, 8 brushes — 342 assertions, all
+passing, plus `battle`, over two full back-to-back rounds.
+
+**Not done, deliberately.** The extension API is additive only and
+`API_VERSION` is still 1: `api.tools` gained `selectedObject()` and
+`clearSelection()`, and there is a `'selection'` event. Three findings were
+written up rather than changed. The layer **Opacity** slider is the only range
+field in the Layers panel without `commit: true` and runs a full-map
+`compositeAll` on every pointer tick — but live feedback is most of the point of
+an opacity slider, so that is a judgement call rather than a defect, and it
+belongs to whoever decides which way it should feel. The Shape tool commits with
+`live.box`, the union of every frame, while a reload replays it with `opBox`
+alone, so dragging an ellipse out and back in before releasing keeps a little
+more of the feather's tail than the reload reproduces; it is sub-visible above
+about Feather 71% and it is squarely in the territory of yesterday's two
+reverted box changes, so it was left alone. And the handler sets no socket
+timeout, so sixty connections that declare a `Content-Length` and then dribble
+one byte pin sixty threads indefinitely — reproduced, bounded by this being a
+desktop app, and a behaviour change to the request path that deserves its own
+day rather than a corner of a feature day.
+
+---
+
 ## 2026-09-23 — regions, and two fixes that were not one-liners
 
 A feature day. Anthony's working copy matched `origin/main` byte for byte and

@@ -83,6 +83,7 @@ export function resize() {
 export function setDocument(doc) {
   view.doc = doc;
   layerCanvases.clear();
+  coastReach.clear();
   view.flat = makeCanvas(doc.width, doc.height);
   view.flatCtx = view.flat.getContext('2d');
   view.live = makeCanvas(doc.width, doc.height);
@@ -90,6 +91,19 @@ export function setDocument(doc) {
   for (const layer of doc.layers) rebuildLayer(layer);
   compositeAll();
 }
+
+/* How far the coast reached the last time each land layer was painted.
+ *
+ * repaintLand clears only the rectangle it is about to draw, and that
+ * rectangle is grown from the *current* shelf and ink widths. Narrow them --
+ * or turn the shallow water off -- and the wider band painted a moment ago
+ * falls outside the clear and stays on the canvas, in 64-px steps, until
+ * something forces a full rebuild. A rebuild clears the whole canvas, so the
+ * map came back from disk without the band that was on screen, which is
+ * invariant (a). Clearing as far as the widest reach so far costs one number
+ * a layer.
+ */
+const coastReach = new Map();
 
 export function canvasFor(layer) {
   let c = layerCanvases.get(layer.id);
@@ -390,12 +404,15 @@ export function applyMaskStroke(maskCtx, op, box) {
 
 /* ------------------------------------------------------------ scatter brush */
 
-export function applyScatter(ctx, op) {
+export function applyScatter(ctx, op, style) {
   const rand = rng(op.seed || 1);
   for (const item of scatterItems(op, rand)) {
     const img = imageNow(item.asset);
     if (!img) continue;
-    drawSprite(ctx, img, item);
+    // The style is the layer: drop shadow and tint live there, and leaving it
+    // off here meant a scatter previewed flat and then gained every shadow at
+    // once on release. renderObjects has always passed it.
+    drawSprite(ctx, img, item, style);
   }
 }
 
@@ -753,6 +770,9 @@ function renderLand(layer, ctx) {
   rebuildLandMask(layer);
   const coast = layer.coast || {};
   const pad = (coast.shallow ? (coast.shallowWidth || 26) : 0) + (coast.inkWidth || 0) + 8;
+  // rebuildLayer has just cleared the whole canvas, so nothing older survives
+  // and the reach starts again from this one.
+  coastReach.set(layer.id, pad);
   const box = opsBox(layer, pad);
   if (!box) return;
   // A full rebuild only has to regrow the coast where there is any coast. The
@@ -805,7 +825,13 @@ export function paintLand(layer, ctx, box, dirty) {
 export function repaintLand(layer) {
   const coast = layer.coast || {};
   const pad = (coast.shallow ? (coast.shallowWidth || 26) : 0) + (coast.inkWidth || 0) + 8;
-  const box = opsBox(layer, pad);
+  // Cleared as far as the coast has ever reached on this layer, drawn as far
+  // as it reaches now -- see coastReach. The box is still snapped to
+  // SHELF_GRID inside paintLand, so widening it by whole grid steps moves
+  // nothing the shelf downscale depends on.
+  const reach = Math.max(pad, coastReach.get(layer.id) || 0);
+  coastReach.set(layer.id, pad);
+  const box = opsBox(layer, reach);
   if (!box) return;
   paintLand(layer, canvasFor(layer).getContext('2d'), box);
   compositeAll(snapBox(box, SHELF_GRID));
@@ -1498,6 +1524,7 @@ export function relightAll() {
  *  time on a session where somebody tries a few compositions. */
 export function forgetLayer(id) {
   for (const key of [id, id + ':mask', id + ':shape', id + ':small']) layerCanvases.delete(key);
+  coastReach.delete(id);
 }
 
 /* ------------------------------------------------------------------ display */
@@ -1663,6 +1690,10 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
   const wallsShown = wallLayer && layerVisible(doc, wallLayer);
   for (const item of (wallsShown ? wallLayer.ops : [])) {
     const kind = WALL_KINDS[item.kind] || WALL_KINDS.wall;
+    // Guarded as renderWalls and wallSegments already guard: the wall tool
+    // cannot make a one-point wall, but a hand-edited map or an extension can,
+    // and this is the one of the three that threw rather than skipped.
+    if (!item.points || item.points.length < 2) continue;
     const pts = item.points.map(toCell);
     if (kind.portal) {
       const a = pts[0], b = pts[pts.length - 1];

@@ -23,6 +23,20 @@ def _err(message, status=400):
     return _json({"ok": False, "error": str(message)}, status)
 
 
+def _disabled(ctx):
+    """The set of switched-off extensions, from a config file anyone can edit.
+
+    `or []` only covers a falsy value. A number there raised "not iterable" out
+    of both extension endpoints at once, which empties the Extensions tab and
+    leaves no way to put it right from inside the program; a bare string was
+    worse, exploding into its own characters and being written back that way.
+    """
+    raw = ctx.config.get("disabledExtensions")
+    if not isinstance(raw, list):
+        return set()
+    return {name for name in raw if isinstance(name, str)}
+
+
 def _reveal(path):
     """Open a folder in the desktop's own file manager."""
     if sys.platform == "win32":
@@ -54,8 +68,7 @@ def route(req):
         })
 
     if path == "/api/extensions" and method == "GET":
-        disabled = set(ctx.config.get("disabledExtensions") or [])
-        return _json({"ok": True, "extensions": extensions.index(ctx.extensions_dir, disabled)})
+        return _json({"ok": True, "extensions": extensions.index(ctx.extensions_dir, _disabled(ctx))})
 
     if path.startswith("/api/extensions/") and method == "POST":
         try:
@@ -63,8 +76,8 @@ def route(req):
         except Unsafe as exc:
             return _err(exc)
         body = json.loads(req.body or b"{}")
-        disabled = set(ctx.config.get("disabledExtensions") or [])
-        if body.get("enabled"):
+        disabled = _disabled(ctx)
+        if isinstance(body, dict) and body.get("enabled"):
             disabled.discard(name)
         else:
             disabled.add(name)
@@ -76,7 +89,12 @@ def route(req):
         # A local program should be able to show you its own folders. Only the
         # four it owns, and only ever a folder.
         body = json.loads(req.body or b"{}")
-        which = body.get("which")
+        which = body.get("which") if isinstance(body, dict) else None
+        # Only a string can name one of the four. A list or an object reached
+        # the dict lookup below and raised "unhashable type" as a 500, where
+        # the 400 four lines down is the right answer.
+        if not isinstance(which, str):
+            return _err("unknown folder")
         target = {
             "packs": ctx.packs_dir, "projects": ctx.projects_dir,
             "exports": ctx.exports_dir, "extensions": ctx.extensions_dir,
@@ -132,7 +150,10 @@ def route(req):
 
         if len(parts) == 1 and method == "PUT":
             doc = json.loads(req.body or b"{}")
-            saved = projects.write(ctx.projects_dir, name, doc)
+            try:
+                saved = projects.write(ctx.projects_dir, name, doc)
+            except ValueError as exc:
+                return _err(exc)
             # Every layer still in the document keeps its blob. The old test
             # was `l.get("raster")`, a property no layer has ever had -- raster
             # is a layer *kind* -- so the list was always empty and the sweep

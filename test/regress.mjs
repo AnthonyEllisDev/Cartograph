@@ -589,6 +589,148 @@ t('clicking a stamp to select it records no history step', stepsAfter === stepsB
   t('and the orphan layer is listed so it can be removed', listed > 1, listed + ' rows');
 }
 
+/* a coastline that is narrowed leaves nothing of the wider one behind ------- */
+
+{
+  await newMap(p, { name: 'Shrinking Shore', kind: 'region' });
+  await tool('land');
+  const f = await M(520, 480);
+  await p.mouse.move(f.x, f.y); await p.mouse.down();
+  for (const q of [[900, 460], [980, 820], [560, 800], [520, 480]]) {
+    const s = await M(...q); await p.mouse.move(s.x, s.y, { steps: 6 });
+  }
+  await p.mouse.up();
+  await p.waitForTimeout(1500);
+
+  // Widen the shelf, then narrow it. repaintLand clears only the rectangle it
+  // is about to draw and grew that rectangle from the *current* widths, so the
+  // wider band painted a moment earlier fell outside the clear and stayed on
+  // the canvas in 64-px steps -- and a rebuild, which clears the whole canvas,
+  // did not reproduce it. Compared against a full rebuild of the same layer,
+  // which is the thing a reload does.
+  const widthTo = async (v) => {
+    await p.evaluate((n) => {
+      const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'land');
+      layer.coast.shallow = true;
+      layer.coast.shallowWidth = n;
+      window.__cg.R.repaintLand(layer);
+    }, v);
+    await p.waitForTimeout(700);
+  };
+  await widthTo(150);
+  await widthTo(4);
+  const shown = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.slice();
+  });
+  await p.evaluate(() => {
+    const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'land');
+    window.__cg.R.invalidate(layer);
+  });
+  await p.waitForTimeout(1500);
+  const rebuilt = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.slice();
+  });
+  let off = 0;
+  for (const k of Object.keys(shown)) if (shown[k] !== rebuilt[k]) off++;
+  t('narrowing the shallow shelf leaves none of the wider one on the canvas',
+    off === 0, off + ' bytes differ from a full rebuild');
+}
+
+/* the stroke under the cursor is the stroke that is committed --------------- */
+
+{
+  await newMap(p, { name: 'Curved Preview', kind: 'region' });
+  await tool('brush');
+  await p.click('#asset-picker .asset');
+  await p.waitForTimeout(250);
+  await setOpt('Size', 90);
+
+  // A uniform widths array picks the tapered rasteriser, which stamps discs
+  // along the straight chords between points; endPaint drops the array, and
+  // the committed stroke is drawn as the corner-cutting spline instead. A
+  // mouse gives every point the same width, so this was every ordinary stroke:
+  // angular under the cursor, smooth the instant the button came up. Corners
+  // are what shows it, hence the zig-zag.
+  const route = [[500, 500], [700, 380], [820, 620], [1000, 420], [1120, 660]];
+  const f2 = await M(...route[0]);
+  await p.mouse.move(f2.x, f2.y); await p.mouse.down();
+  for (const q of route.slice(1)) { const s = await M(...q); await p.mouse.move(s.x, s.y, { steps: 3 }); }
+  await p.waitForTimeout(400);
+  const mid = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    return Array.from(c.getContext('2d').getImageData(440, 320, 760, 420).data);
+  });
+  await p.mouse.up();
+  await p.waitForTimeout(700);
+  const done = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    return Array.from(c.getContext('2d').getImageData(440, 320, 760, 420).data);
+  });
+  let moved = 0;
+  for (let i = 0; i < mid.length; i++) if (Math.abs(mid[i] - done[i]) > 8) moved++;
+  t('letting go of a curved stroke does not change its shape', moved === 0,
+    moved + ' samples moved between the preview and the commit');
+}
+
+/* undoing a layer delete does not orphan the steps under it ----------------- */
+
+{
+  await newMap(p, { name: 'Orphaned Steps', kind: 'region' });
+  await tool('brush');
+  await p.click('#asset-picker .asset');
+  await p.waitForTimeout(250);
+  const f3 = await M(560, 520);
+  await p.mouse.move(f3.x, f3.y); await p.mouse.down();
+  const s3 = await M(1000, 640); await p.mouse.move(s3.x, s3.y, { steps: 6 });
+  await p.mouse.up();
+  await p.waitForTimeout(700);
+
+  const painted = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    const d = c.getContext('2d').getImageData(540, 500, 500, 180).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 16) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  });
+
+  // Delete a layer and put it back. The undo used to call setDocument, which
+  // empties every layer canvas and mints new ones -- and every painting entry
+  // below it in the stack is a closure holding the canvas it snapshotted. The
+  // next undo then wrote its pixels into an orphan while still taking the op
+  // out of the document, so the stroke stayed on screen and left the file.
+  await p.evaluate(async () => {
+    const ui = await import('/js/ui.js');
+    ui.addPaintLayer();                       // selects it as it adds it
+  });
+  await p.waitForTimeout(400);
+  // The Layers panel's own route: "Delete layer" at the foot of the properties.
+  await p.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('#layer-props button'))
+      .find((x) => x.textContent === 'Delete layer');
+    btn.click();
+  });
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => { (await import('/js/history.js')).undo(); });
+  await p.waitForTimeout(600);               // the delete comes back
+  await p.evaluate(async () => { (await import('/js/history.js')).undo(); });
+  await p.waitForTimeout(800);               // and now the stroke should go
+
+  const after = await p.evaluate(() => {
+    const c = window.__cg.R.view.flat;
+    const d = c.getContext('2d').getImageData(540, 500, 500, 180).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 16) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  });
+  const opsGone = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.filter((x) => x.kind === 'raster');
+    return l.every((x) => x.ops.length === 0);
+  });
+  t('undoing past a layer delete really takes the paint off the canvas',
+    opsGone && Math.abs(after - painted) > 1,
+    'ops gone=' + opsGone + ' painted=' + painted + ' after=' + after);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

@@ -4,7 +4,7 @@
  * cursor, and everything else is handed to the active tool in map coordinates
  * so no tool has to know the view transform exists. */
 
-import { app, toolSetting } from './app.js';
+import { app, setToolSetting, toolSetting } from './app.js';
 import { snapPoint } from './doc.js';
 import * as R from './render.js';
 import { TOOLS, currentTool, setTool } from './tools.js';
@@ -103,7 +103,9 @@ export function initInput() {
     const size = toolSetting(tool.id, 'size', null);
     if (size != null && (ev.key === '[' || ev.key === ']')) {
       const next = clamp(ev.key === '[' ? size * 0.85 : size * 1.18, 2, 900);
-      app.settings.tools[tool.id].size = Math.round(next);
+      // Through setToolSetting, not into the bag: writing the bag directly
+      // skips saveSettings, so a size set with [ or ] lived only in memory.
+      setToolSetting(tool.id, 'size', Math.round(next));
       R.requestDraw();
       window.dispatchEvent(new CustomEvent('cartograph:tool-options'));
       return;

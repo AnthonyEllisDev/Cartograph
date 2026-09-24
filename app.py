@@ -47,7 +47,16 @@ def load_config():
     if os.path.isfile(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, encoding="utf-8") as fh:
-                config.update(json.load(fh))
+                loaded = json.load(fh)
+            # Valid JSON of the wrong shape, not just unparseable JSON: a file
+            # holding 5, null or [1,2] parses cleanly and then raises TypeError
+            # out of dict.update, which is not in the net below -- so the one
+            # thing this fallback exists for stopped the program starting at
+            # all. save_config truncates in place, so a crash mid-write can
+            # leave exactly such a remnant.
+            if not isinstance(loaded, dict):
+                raise ValueError("expected an object, got %s" % type(loaded).__name__)
+            config.update(loaded)
         except (OSError, ValueError) as exc:
             print("  ! config.json ignored (%s)" % exc)
     return config

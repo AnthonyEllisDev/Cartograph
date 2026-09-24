@@ -152,6 +152,25 @@ await p.screenshot({ path: '/tmp/shots/pro-presets.png' });
 
 /* ---- layer groups -------------------------------------------------------- */
 
+// Its own map again, and its own paint.
+//
+// The preset section above reloads the page to prove a preset outlives it, and
+// a new map lives only in memory until the first save -- so the reload does
+// not bring "Pro Workbench" back, it reopens whatever map was last written to
+// disk, which is the previous suite's. This section then measured that map.
+// It passed for as long as the inherited map happened to have something on a
+// raster layer and failed the day it did not, a long way from the cause. Same
+// rule as newMap itself: do not measure whatever happens to be open.
+await newMap(p, { name: 'Pro Groups', kind: 'region' });
+await tool('brush');
+await pickFirstAsset();
+await drag([[620,480],[860,520]], 5);
+await p.waitForTimeout(400);
+t('the group section has paint of its own', await p.evaluate(() => {
+  const l = window.__cg.app.doc.layers.find(x => x.kind === 'raster');
+  return !!l && l.ops.length > 0;
+}));
+
 // A group is a folder: membership is an id on the member, so doc.layers stays
 // the flat array everything else in the program walks.
 const grouped = await p.evaluate(async () => {
