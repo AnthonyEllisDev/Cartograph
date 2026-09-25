@@ -23,6 +23,10 @@ const EPS = 1e-9;
    answer without being wide enough to see. */
 const NUDGE = 1e-4;
 
+/* How close in front of the light a wall has to be before it is treated as the
+   one the light is sitting on. Well under a pixel, since rays are unit length. */
+const T_MIN = 1e-3;
+
 /** How far `t` along the ray the segment is hit, or Infinity for a miss.
  *
  *  Ray: O + t·D. Segment: A + u·S, with u in [0, 1]. */
@@ -34,7 +38,11 @@ function hit(ox, oy, dx, dy, seg) {
   const u = (dx * ry - dy * rx) / det;
   if (u < 0 || u > 1) return Infinity;
   const t = (sx * ry - rx * sy) / det;
-  return t < 0 ? Infinity : t;
+  // A wall through the light itself is hit at t = 0 by every ray, and the
+  // visibility polygon collapses to a point: the lamp lit nothing. Snapping
+  // puts lights exactly there -- a diagonal wall crosses a square's centre, a
+  // hex light snaps to corners -- so such a wall is taken as not in the way.
+  return t < T_MIN ? Infinity : t;
 }
 
 /** Distance from a point to a segment — used only to decide whether a wall is

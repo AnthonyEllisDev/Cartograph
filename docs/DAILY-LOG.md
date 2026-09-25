@@ -5,6 +5,173 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-25 — land from a seed, and a fill that follows the coast
+
+Anthony's working copy matched `origin/main` across all 69 tracked source files,
+so this could be a feature day. The baseline was green: 342 checks across twelve
+suites, plus `battle`.
+
+**Review.** Three readers in parallel again — the renderer and lighting, the
+server, and the front-end state — turned up about twenty candidates. Each was
+checked against the code before anything was changed, and every one that was
+fixed has a check that was run against a pristine clone of `origin/main` and
+**failed there**: 8 of the 9 new guard checks and 7 of the 10 new regression
+checks, and all three of the new "fill follows the land" checks against the
+current tree with only that fix reverted. The four that pass on both do so on
+purpose — they are preconditions: *while localhost by name is still answered*
+for the Host checks, and in `regress.mjs` that the light snapped onto the wall,
+that unticking Lit puts it out, and that undoing the delete brings the painted
+layer back.
+
+**Fixed, server side.**
+
+- *DNS rebinding could read every map.* The Origin guard stops another site
+  driving the API, but a page on `attacker.example` that re-points its own name
+  at 127.0.0.1 is same-origin with the server, and a same-origin GET carries no
+  Origin at all. `/api/state`, `/api/projects` and each map came back 200 to
+  `Host: attacker.example:7871`. Any request whose `Host` is not
+  `127.0.0.1:<port>` or `localhost:<port>` is now refused with 421 and the
+  connection closed, ahead of the routing split like the other guards — a
+  rebound page can read static files under `/projects/` just as well. A request
+  with no Host at all is not a browser and is left to the other guards.
+- *A document nested ~980 deep saved and then broke the Projects tab.* It
+  parsed, `projects.write` replaced `project.json`, and the reply — which echoes
+  the document two levels deeper — ran out of stack: a 500 for a save that
+  landed. The file on disk then raised `RecursionError`, which is a
+  `RuntimeError` and not the `ValueError` the loaders catch, so `GET
+  /api/projects` went 500 and the whole tab emptied. `write` now refuses
+  anything nested more than 64 deep before it makes a folder (a real map is
+  about seven), and the four JSON loaders — projects, packs, extensions and
+  `config.json` — catch `RecursionError` too.
+- *A thumbnail for a deleted map recreated its folder.* `write_blob` made the
+  folder it was writing into, so a thumb landing after another tab deleted the
+  map left a folder holding only `thumb.png` — invisible in the Projects tab,
+  and enough for `unique_slug` to avoid that name for good. The same class as
+  the `projects.write` fix of 2026-09-24. Refused with 404 now.
+
+**Fixed, in the editor.**
+
+- *Undoing a Selected-panel edit of a field the item did not have did nothing.*
+  Light ops are placed with no `on`; untick Lit, press Ctrl+Z, and
+  `Object.assign(item, before)` — which never deletes a key — used up the step
+  and left the light out. Same for a stamp's first Opacity and several region
+  and label fields. Keys the snapshot lacks are removed first now.
+- *A light standing on a wall lit nothing.* Every ray hit the wall at `t = 0`
+  and the visibility polygon collapsed to a point. Snapping puts lights exactly
+  there — a diagonal wall crosses a square's centre, and hex half-snapping lands
+  on corners. A wall through the light itself is now taken as not in the way.
+- *Deleting the painted layer, then undoing twice, left the stroke on screen and
+  took it out of the file.* The 2026-09-24 fix covered every other layer's
+  entries but not the deleted layer's own: the delete dropped its canvases, the
+  undo rebuilt it into fresh ones, and its own paint entry then restored into
+  the orphan. `forgetLayer` now returns what it dropped and `adoptLayer` puts
+  the same canvas objects back; the entry is charged for holding them.
+- *Clearing the landmass left the old coast's ink cached.* `renderLand` returned
+  on an empty layer before it wiped the ink, and the next stroke nearby tinted
+  across the stale cache: 13,166 pixels of old coastline against a rebuild.
+- *Ctrl+Z while typing undid the map*, and the history change then rebuilt the
+  Selected panel and threw the half-typed text away. Text fields keep it now.
+- *Ctrl+Z with nothing to undo marked the map unsaved*, prompted on close and
+  had autosave rewrite an identical file. Undo and redo count as edits only when
+  they moved.
+- *Delete on a selection that had been undone away* pushed a dead entry that
+  threw away the redo. The Select tool asks `selectedObject()` first.
+- Bare `markDirty()` with no autosave rearm in the Landmass ground picker and in
+  both bundled extensions; the coordinates extension's sliders and colour now
+  commit on release, since each tick redrew text in every cell of the grid.
+
+**Written up rather than fixed.** Each is real by reading; none was fixed today.
+
+- *map-aging's stains are not in the document.* The command draws straight
+  onto the paper canvas, so they vanish on reload and on any paper rebuild, and
+  undoing after such a rebuild restores a snapshot with the old vignette in it.
+  Fixing it means storing the ageing as paper-layer data — a change to a worked
+  example's design, not a patch.
+- *Reload extensions leaves extension layers blank* until something invalidates
+  them: `loadExtensions` re-registers the kind but, unlike the per-extension
+  toggle, neither rebuilds the orphaned layers nor emits `'layers'`.
+- *A `setup()` that throws after registering things leaks them*, since the
+  extension never reaches `extensions.loaded` for `unloadExtension` to find.
+- *Only the first walls layer casts shadows or exports sight lines*
+  (`wallSegments` and `toUVTT` use `find`), though every walls layer draws.
+- *A save with no `layers` key sweeps every blob and leaves an unopenable map.*
+  Not changed, because `guards.mjs` deliberately asserts that saves with
+  `layers: null` and `layers: []` succeed; refusing them is a contract change.
+- Saved files are created 0600 (`mkstemp`), which matters on a shared folder;
+  `tools/import_folder.py --name starter` overwrites the starter pack; Windows
+  device names (`nul`, `con`) pass `SLUG_RE`; a non-numeric `port` in
+  `config.json` crashes startup outside the `OSError` fallback; a hex grid with
+  an offset over one column leaves an edge without lines.
+
+**The feature: land from a seed.** The 2026-09-24 research named seeded
+generation the largest category gap, and today's check agreed: Wonderdraft's
+Landmass Wizard, Inkarnate's World Generator (whose feature board has requests
+for more control over it), Azgaar's heightmap templates and Watabou's whole line
+all start you at something to push around, and Cartograph started you at a
+blank page. Rejected today: pins with an exported key (good, and next in line —
+it needs the export allow-list and `safe.py` work), prefabs and copy/paste (a
+larger change to the Select tool), print tiling (a PDF writer), and GM/player
+export (small, and better paired with pins).
+
+*Generate land…* sits at the top of the Landmass panel and in the palette. A
+dialog with a live preview offers a seed (typed, or re-rolled as three readable
+words), eight shapes — one continent, a single island, an archipelago, scattered
+lands, and a coast to each compass point — land share, feature size, how ragged
+the coast is, whether to keep clear of the frame, and whether to replace or add
+to the land already there. The decisions worth knowing:
+
+- **The document is ops, so the height field is not stored.** It is
+  thresholded, traced into closed rings with marching squares, simplified with
+  Douglas-Peucker, and written as one ordinary landmass op:
+  `{ t: 'stroke', mode: 'shape', shape: 'generated', rings: [[x, y, …], …],
+  gen: {…settings}, points: [corners] }`. The rings are saved, not just the
+  seed, so a map reopens pixel-identical even if a later generator draws that
+  seed differently; the settings are kept beside them so the result can be read
+  and re-rolled. A continent is about 8 kB. `points` holds the extent's two
+  corners, which is what every existing box function already reads, so nothing
+  downstream needed teaching.
+- **Rings are filled even-odd**, in one new branch of `applyMaskStroke`, so a
+  lake inside a continent and an island in the lake come out right without
+  anyone deciding which ring is which. Everything after the mask — the shelf,
+  the ink, the texture, the eraser — is the existing landmass pipeline.
+- **Sea level is picked by rank**, so *Land 40%* is forty per cent whatever the
+  seed did to the heights (40.3% measured).
+- **The trace is padded** with a ring of edge heights carried 24 px past the
+  frame and then deep sea, so every contour closes, and land that meets the
+  frame carries on past it instead of growing an ink line along the border.
+- **Replace is a `clear` op then the new land**, which the mask replay has
+  always honoured, so the step undoes to exactly the land that was there.
+- Noise is hashed value noise with a domain warp and each octave turned against
+  the last. Before the base octave was turned too, several seeds on the
+  tuning sheet had a ruler-straight north-south coast; the tuning was done against a sheet of
+  seeds for every shape, in a screenshot.
+
+**And a fill that follows the coast.** A Fill set to *Inside the landmass* was
+already meant to follow a redrawn coast, and did not: it is baked into its
+raster layer like any stroke, and nothing redrew that layer when the mask
+changed — the generator would have made that obvious on the first click.
+`followLand()` rebuilds every paint layer holding a land- or sea-bound fill, and
+is called from `invalidate` on a landmass and from the Landmass brush's commit,
+undo and redo; a paint entry on such a layer rebuilds instead of restoring a
+snapshot taken against the old coast. Separately, `setDocument` rebuilds the
+landmass first, because `doc.layers` is bottom-first and a fill layer *below* a
+see-through landmass was rebuilt against an empty mask on opening, and vanished.
+Measured: 94,501 samples differed from a rebuild after regenerating with the
+fix reverted, and 1,378 after one brush stroke; none with it.
+
+**Tests.** A new suite, `test/generate.mjs` (27): determinism to the byte, the
+op's shape and size, the dialog and its preview, cancel, the land share, edge
+clearance, the eraser on generated land, the round trip, replace and add with
+undo and redo to identical pixels, a west coast meeting the frame without a
+coastline, a lake as a hole, the fill following regeneration and the brush, the
+load order, and the palette. `guards.mjs` 35 → 44, `regress.mjs` 34 → 44.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 44 guards, 44 regress, 8 labels, 8 brushes, 27 generate — 388 checks,
+all passing, plus `battle`, over two full back-to-back rounds.
+
+---
+
 ## 2026-09-24 — a properties panel, and a paint layer that would not go away
 
 Anthony's working copy matched `origin/main` byte for byte across all 66 tracked

@@ -731,6 +731,190 @@ t('clicking a stamp to select it records no history step', stepsAfter === stepsB
     'ops gone=' + opsGone + ' painted=' + painted + ' after=' + after);
 }
 
+/* ========================================================================== *
+ * 2026-09-25: found by three readers in parallel, reproduced, then fixed.
+ * ========================================================================== */
+
+const hist = () => p.evaluate(() => ({ past: window.__cg.history.past.length,
+                                       future: window.__cg.history.future.length }));
+const undoStep = async () => { await p.evaluate(async () => { (await import('/js/history.js')).undo(); }); await p.waitForTimeout(500); };
+
+/* a light, its panel, and a wall it sits on ------------------------------------ */
+
+{
+  await newMap(p, { name: 'Lamp On The Wall', kind: 'battle', size: '40x30' });
+
+  // A diagonal wall across one square, corner to corner -- which passes exactly
+  // through that square's centre, which is where the Light tool snaps to.
+  await tool('wall');
+  await clickAt(140, 140); await clickAt(210, 210);
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(400);
+  await tool('light');
+  await clickAt(175, 175);
+  await p.waitForTimeout(600);
+  const placed = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights');
+    return l && l.ops[0] ? [l.ops[0].x, l.ops[0].y] : null;
+  });
+  t('precondition: the light snapped onto the wall', placed && placed[0] === 175 && placed[1] === 175,
+    JSON.stringify(placed));
+  // A little way off the wall on either side, well inside a torch's reach, and
+  // a point far outside it for the darkness to be measured against.
+  const near = Math.min(await brightnessAt(175, 280), await brightnessAt(280, 175));
+  const dark = await brightnessAt(2400, 1800);
+  t('a light standing on a wall still lights the room', near > dark + 25,
+    'near ' + near.toFixed(0) + ' vs dark ' + dark.toFixed(0));
+
+  // Pick it up and untick Lit. Light ops are placed with no `on` field at all,
+  // and the undo used Object.assign, which never deletes a key.
+  await tool('select');
+  await clickAt(175, 175);
+  await p.evaluate(() => {
+    const box = Array.from(document.querySelectorAll('#selection-props .check'))
+      .find((c) => c.querySelector('span').textContent === 'Lit').querySelector('input');
+    box.checked = false;
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await p.waitForTimeout(500);
+  const offNow = await p.evaluate(() => window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops[0].on);
+  t('precondition: unticking Lit puts the light out', offNow === false, offNow);
+  await undoStep();
+  const onAgain = await p.evaluate(() => window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops[0].on);
+  t('undoing it relights it -- a field the light never had is taken off again', onAgain !== false, onAgain);
+
+  // Now undo the light itself while the Select tool is still holding it, and
+  // press Delete: there is nothing to delete, and the redo must survive.
+  await undoStep();
+  const lightsLeft = await p.evaluate(() => window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops.length);
+  const h0 = await hist();
+  await p.mouse.move(10, 10);
+  await p.keyboard.press('Delete');
+  await p.waitForTimeout(300);
+  const h1 = await hist();
+  t('Delete on something already undone away pushes nothing and keeps the redo',
+    lightsLeft === 0 && h1.past === h0.past && h1.future === h0.future && h0.future > 0,
+    JSON.stringify([lightsLeft, h0, h1]));
+}
+
+/* Ctrl+Z belongs to a text field while you are typing in it ------------------- */
+
+{
+  await newMap(p, { name: 'Typing Undo', kind: 'battle' });
+  await tool('light');
+  await clickAt(420, 420);
+  await p.waitForTimeout(500);
+  const before = await hist();
+  await p.click('#project-name');
+  await p.keyboard.type(' renamed');
+  await p.keyboard.press('Control+z');
+  await p.waitForTimeout(400);
+  const after = await hist();
+  const lit = await p.evaluate(() => window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops.length);
+  t('Ctrl+Z in the name field does not undo the map', after.past === before.past && lit === 1,
+    JSON.stringify([before, after, lit]));
+  await p.keyboard.press('Escape');
+  await p.click('#canvas', { position: { x: 5, y: 5 } }).catch(() => {});
+}
+
+/* an undo with nothing to undo is not an edit ------------------------------------ */
+
+{
+  await newMap(p, { name: 'Nothing To Undo', kind: 'region' });
+  await p.click('#btn-save');
+  await p.waitForTimeout(1800);
+  const clean = await p.evaluate(() => window.__cg.app.dirty);
+  await p.mouse.move(800, 500);
+  await p.keyboard.press('Control+z');
+  await p.waitForTimeout(300);
+  const dirty = await p.evaluate(() => window.__cg.app.dirty);
+  t('Ctrl+Z on a freshly saved map does not mark it unsaved', clean === false && dirty === false,
+    JSON.stringify([clean, dirty]));
+}
+
+/* undoing a delete of the painted layer itself ------------------------------------ */
+
+{
+  await newMap(p, { name: 'Own Steps', kind: 'region' });
+  await tool('brush');
+  await p.click('#asset-picker .asset');
+  await p.waitForTimeout(250);
+  const f = await M(560, 520);
+  await p.mouse.move(f.x, f.y); await p.mouse.down();
+  const s = await M(1000, 640); await p.mouse.move(s.x, s.y, { steps: 6 });
+  await p.mouse.up();
+  await p.waitForTimeout(700);
+  const band = () => p.evaluate(() => {
+    const d = window.__cg.R.view.flat.getContext('2d').getImageData(540, 500, 500, 180).data;
+    let sum = 0; for (let i = 0; i < d.length; i += 16) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  });
+  const painted = await band();
+  // Delete the layer the stroke is *on* this time. Its own paint entry sits
+  // below the delete holding the canvas it snapshotted, and the delete's undo
+  // used to rebuild the layer into a fresh one.
+  await p.evaluate(() => {
+    const terrain = window.__cg.app.doc.layers.find((x) => x.kind === 'raster' && x.ops.length);
+    window.__cg.app.activeLayerId = terrain.id;
+  });
+  await p.evaluate(async () => { (await import('/js/app.js')).emit('layers'); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => {
+    Array.from(document.querySelectorAll('#layer-props button')).find((x) => x.textContent === 'Delete layer').click();
+  });
+  await p.waitForTimeout(500);
+  await undoStep();                          // the layer comes back
+  await p.waitForTimeout(300);
+  const back = await band();
+  await undoStep();                          // and now its stroke should go
+  await p.waitForTimeout(400);
+  const after = await band();
+  const opsGone = await p.evaluate(() =>
+    window.__cg.app.doc.layers.filter((x) => x.kind === 'raster').every((x) => x.ops.length === 0));
+  t('precondition: undoing the delete brings the painted layer back', Math.abs(back - painted) <= 1,
+    painted + ' vs ' + back);
+  t('undoing past a delete of the painted layer takes its paint off the canvas',
+    opsGone && Math.abs(after - painted) > 1, 'ops gone=' + opsGone + ' painted=' + painted + ' after=' + after);
+}
+
+/* a cleared landmass leaves no coast behind ----------------------------------------- */
+
+{
+  await newMap(p, { name: 'Cleared Coast', kind: 'region' });
+  await tool('land');
+  await setOpt('Size', '260');
+  await drag([[500, 600], [1500, 600]], 6);
+  await p.evaluate(() => {
+    const land = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    window.__cg.app.activeLayerId = land.id;
+  });
+  await p.evaluate(async () => { (await import('/js/app.js')).emit('layers'); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => {
+    Array.from(document.querySelectorAll('#layer-props button')).find((x) => x.textContent === 'Clear').click();
+  });
+  await p.waitForTimeout(700);
+  // A narrower stroke along the same line: the old coast is inside the band
+  // the repaint tints, and outside the band it regrows.
+  await setOpt('Size', '200');
+  await drag([[600, 600], [1400, 600]], 6);
+  const ghost = await p.evaluate(() => {
+    const R = window.__cg.R;
+    const land = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    const grab = () => R.canvasFor(land).getContext('2d').getImageData(0, 0, 2048, 1536).data;
+    const shown = grab();
+    R.forgetLayer(land.id);                // nothing cached: rebuilt from the ops alone
+    R.rebuildLayer(land);
+    const rebuilt = grab();
+    let n = 0;
+    for (let i = 3; i < shown.length; i += 4) if (Math.abs(shown[i] - rebuilt[i]) > 8) n++;
+    R.compositeAll(); R.requestDraw();
+    return n;
+  });
+  t('painting after clearing the landmass brings none of the old coast back', ghost === 0,
+    ghost + ' pixels differ from a rebuild');
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

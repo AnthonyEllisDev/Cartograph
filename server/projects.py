@@ -16,6 +16,25 @@ from server.safe import Unsafe, slug, slugify, under
 
 FORMAT = 1
 
+# Deeper than any map this editor writes by two orders of magnitude, and far
+# short of the ~980 at which json.dumps runs out of stack. See _too_deep.
+MAX_DEPTH = 64
+
+
+def _too_deep(value, limit=MAX_DEPTH):
+    """Is this value nested deeper than `limit`? Iterative, so it cannot itself
+    run out of stack on the input it exists to refuse."""
+    stack = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limit:
+            return True
+        if isinstance(node, dict):
+            stack.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, list):
+            stack.extend((v, depth + 1) for v in node)
+    return False
+
 
 def _meta_path(root, name):
     return under(root, name, "project.json")
@@ -47,7 +66,10 @@ def list_projects(root):
                 "modified": os.path.getmtime(meta),
                 "thumb": os.path.isfile(os.path.join(folder, "thumb.png")),
             })
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
+            # RecursionError is a RuntimeError, not a ValueError: a file nested
+            # a thousand deep parsed as "not JSON" nowhere and emptied the
+            # whole Projects tab instead.
             continue
     out.sort(key=lambda p: p["modified"], reverse=True)
     return out
@@ -55,7 +77,10 @@ def list_projects(root):
 
 def read(root, name):
     with open(_meta_path(root, slug(name, "project")), encoding="utf-8") as fh:
-        doc = json.load(fh)
+        try:
+            doc = json.load(fh)
+        except RecursionError:
+            raise ValueError("project.json is nested too deeply") from None
     # list_projects already refuses valid JSON of the wrong shape; read did
     # not, so a hand-edited map reached openDocument and threw outside any try
     # -- the editor came up half-initialised with nothing said about why. A
@@ -78,6 +103,12 @@ def write(root, name, doc):
     # the Projects tab and enough to make unique_slug avoid that name forever.
     if not isinstance(doc, dict):
         raise ValueError("document must be an object")
+    # The body parsed, so it is under the parser's limit -- but the reply echoes
+    # it two levels deeper, and json.dumps gave out there *after* the file had
+    # been replaced: a 500 for a save that landed, and a project.json that then
+    # took GET /api/projects down with it. Refused here, before anything exists.
+    if _too_deep(doc):
+        raise ValueError("document is nested more than %d deep" % MAX_DEPTH)
     folder = under(root, name)
     os.makedirs(os.path.join(folder, "layers"), exist_ok=True)
     doc["format"] = FORMAT
@@ -111,6 +142,12 @@ def write_blob(root, name, kind, blob_id, data):
     else:
         blob_id = slug(blob_id, "layer")
         path = under(root, name, "layers", blob_id + ".png")
+    # A picture belongs to a map that exists. makedirs here used to recreate the
+    # folder of a project deleted between saveProject's write and its thumb --
+    # a folder with no project.json, invisible in the Projects tab, whose name
+    # unique_slug then walked away from for good. Same class as write() above.
+    if not os.path.isfile(under(root, name, "project.json")):
+        raise Unsafe("no such project")
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
     # Unique per write, for the reason `write` above gives: a fixed "<name>.tmp"

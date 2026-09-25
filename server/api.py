@@ -177,7 +177,10 @@ def route(req):
             return _json({"ok": True})
 
         if len(parts) == 2 and parts[1] == "thumb" and method == "PUT":
-            projects.write_blob(ctx.projects_dir, name, "thumb", None, req.body)
+            try:
+                projects.write_blob(ctx.projects_dir, name, "thumb", None, req.body)
+            except Unsafe as exc:
+                return _err(exc, 404)
             return _json({"ok": True})
 
         if len(parts) == 3 and parts[1] == "layer" and method == "PUT":

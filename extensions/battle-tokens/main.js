@@ -142,7 +142,7 @@ export default function setup(api) {
         undo() { layer.ops = before.slice(); R.invalidate(layer); },
         redo() { layer.ops = []; R.invalidate(layer); },
       });
-      api.markDirty();
+      api.markDirty(); api.scheduleAutosave();
       ui.toast(`Removed ${before.length} tokens`, 'good');
     },
   });

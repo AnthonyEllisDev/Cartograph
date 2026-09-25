@@ -9,6 +9,7 @@
 
 import { app, emit, markDirty, saveProject, scheduleAutosave } from './app.js';
 import { extensions } from './extensions.js';
+import { generateDialog } from './generate.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
 import * as R from './render.js';
@@ -30,12 +31,15 @@ const BUILT_IN = [
   // autosave had fired marked the document dirty and rearmed nothing, so the
   // step that was undone stayed in project.json for good.
   { id: 'undo', group: 'Edit', title: 'Undo', keys: 'Ctrl+Z',
-    run: () => { undo(); markDirty(); scheduleAutosave(); } },
+    run: () => { if (undo()) { markDirty(); scheduleAutosave(); } } },
   { id: 'redo', group: 'Edit', title: 'Redo', keys: 'Ctrl+Shift+Z',
-    run: () => { redo(); markDirty(); scheduleAutosave(); } },
+    run: () => { if (redo()) { markDirty(); scheduleAutosave(); } } },
   { id: 'revert-all', group: 'Edit', title: 'Go back to the start of this session',
     detail: 'Undoes everything still in the history',
     run: () => { jumpTo(0); markDirty(); scheduleAutosave(); R.requestDraw(); } },
+  { id: 'generate-land', group: 'Map', title: 'Generate land…',
+    detail: 'Grow a coastline from a seed onto the Landmass layer',
+    run: () => generateDialog() },
   { id: 'scale-bar', group: 'View', title: 'Show or hide the scale bar',
     run: () => {
       app.settings.showScaleBar = !(app.settings.showScaleBar !== false);

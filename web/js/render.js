@@ -88,7 +88,11 @@ export function setDocument(doc) {
   view.flatCtx = view.flat.getContext('2d');
   view.live = makeCanvas(doc.width, doc.height);
   view.liveCtx = view.live.getContext('2d');
-  for (const layer of doc.layers) rebuildLayer(layer);
+  // The landmass first: a terrain fill bound to it reads its mask, and a map
+  // with the terrain layer below the landmass rebuilt that fill against an
+  // empty mask and opened with the fill gone.
+  for (const layer of doc.layers) if (layer.kind === 'land') rebuildLayer(layer);
+  for (const layer of doc.layers) if (layer.kind !== 'land') rebuildLayer(layer);
   compositeAll();
 }
 
@@ -395,6 +399,22 @@ export function applyMaskStroke(maskCtx, op, box) {
   maskCtx.save();
   maskCtx.globalCompositeOperation = op.erase ? 'destination-out' : 'source-over';
   maskCtx.globalAlpha = op.opacity != null ? op.opacity : 1;
+  if (op.rings) {
+    // Generated land (generate.js): closed polygons, filled even-odd so a lake
+    // inside a continent, and an island inside the lake, come out as holes and
+    // land again without anyone having to say which ring is which.
+    maskCtx.fillStyle = '#fff';
+    maskCtx.beginPath();
+    for (const ring of op.rings) {
+      for (let i = 0; i + 1 < ring.length; i += 2) {
+        if (i === 0) maskCtx.moveTo(ring[0], ring[1]); else maskCtx.lineTo(ring[i], ring[i + 1]);
+      }
+      maskCtx.closePath();
+    }
+    maskCtx.fill('evenodd');
+    maskCtx.restore();
+    return;
+  }
   // op.widths, like drawBrushMask: without them the mask was always stroked
   // at a uniform op.size, so a tapered coastline under the cursor snapped to
   // full width the instant the button came up.
@@ -773,13 +793,16 @@ function renderLand(layer, ctx) {
   // rebuildLayer has just cleared the whole canvas, so nothing older survives
   // and the reach starts again from this one.
   coastReach.set(layer.id, pad);
-  const box = opsBox(layer, pad);
-  if (!box) return;
-  // A full rebuild only has to regrow the coast where there is any coast. The
-  // cached ink is wiped first so nothing survives from a shape that has since
-  // been undone.
+  // The cached ink is wiped first so nothing survives from a shape that has
+  // since been undone -- and before the early return, not after it: a cleared
+  // landmass has no box, so the old coast's ink stayed cached under an
+  // unchanged geometry key and came back in pieces round the next thing
+  // painted near it, or everywhere at the next colour change.
   const shape = layerCanvases.get(layer.id + ':shape');
   if (shape && shape.ink) shape.ink.getContext('2d').clearRect(0, 0, shape.ink.width, shape.ink.height);
+  const box = opsBox(layer, pad);
+  if (!box) return;
+  // A full rebuild only has to regrow the coast where there is any coast.
   paintLand(layer, ctx, box, opsBox(layer, (layer.coast || {}).inkWidth || 4));
 }
 
@@ -1479,11 +1502,37 @@ export function compositeAll(box) {
 
 export function invalidate(layer, box) {
   if (layer) rebuildLayer(layer);
+  if (layer && layer.kind === 'land' && followLand()) box = undefined;
   // A shadow reaches as far as the light that casts it, which is nothing like
   // the box the caller just edited, so a relight has to composite the lot.
   if (relight(layer)) box = undefined;
   compositeAll(box);
   requestDraw();
+}
+
+/* A Fill with Region "Inside" or "Outside the landmass" is bound to the land
+ * mask rather than to a frozen outline -- see shapeMask -- but it is baked into
+ * its raster layer's pixels like any other stroke. Nothing redrew that layer
+ * when the mask changed, so painting more land left the old fill on screen
+ * while a reload drew the new one: invariant (a). Every route that changes the
+ * mask calls this afterwards. */
+function boundToLand(layer) {
+  return layer.kind === 'raster' && layer.ops.some((op) =>
+    op.mode === 'shape' && (op.shape === 'land' || op.shape === 'sea'));
+}
+
+export function followsLand(layer) {
+  return !!layer && boundToLand(layer);
+}
+
+/** Rebuild every raster layer bound to the landmass. True if there was one,
+ *  in which case the caller has to composite the whole map. */
+export function followLand() {
+  const doc = view.doc;
+  if (!doc) return false;
+  let did = false;
+  for (const l of doc.layers) if (boundToLand(l)) { rebuildLayer(l); did = true; }
+  return did;
 }
 
 /** Rebuild the lighting if `layer` is something the shadows are derived from.
@@ -1523,8 +1572,22 @@ export function relightAll() {
  *  every one of them in the map, which at a full canvas each is megabytes a
  *  time on a session where somebody tries a few compositions. */
 export function forgetLayer(id) {
-  for (const key of [id, id + ':mask', id + ':shape', id + ':small']) layerCanvases.delete(key);
+  const kept = new Map();
+  for (const key of [id, id + ':mask', id + ':shape', id + ':small']) {
+    if (layerCanvases.has(key)) kept.set(key, layerCanvases.get(key));
+    layerCanvases.delete(key);
+  }
   coastReach.delete(id);
+  return kept;
+}
+
+/** Put back the canvases forgetLayer returned. An undo of a layer delete needs
+ *  the *same* canvas objects, not fresh ones: every paint entry for that layer
+ *  further down the stack is a closure over the canvas it snapshotted, and
+ *  restoring into one that is no longer drawn leaves the stroke on screen
+ *  while taking its op out of the document. */
+export function adoptLayer(kept) {
+  for (const [key, canvas] of kept) layerCanvases.set(key, canvas);
 }
 
 /* ------------------------------------------------------------------ display */

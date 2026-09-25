@@ -99,8 +99,16 @@ api.registerTool({
   move(pt, ev, layer) { … },
   up(pt, ev, layer) { … },
   overlay(ctx) { … },                // optional, drawn over the canvas each frame
+  actions: () => ([                  // optional: one-off buttons above the options
+    { id: 'reset', label: 'Clear every token…', run: () => { … } },
+  ]),
 });
 ```
+
+`actions` is for things a tool *does* rather than settings it draws with — the
+Landmass tool's *Generate land…* is the built-in example. Each becomes a button
+at the top of the tool's panel, carrying `data-action="<id>"`. Optional, and
+added within API version 1: a Cartograph from before it simply shows no button.
 
 Option types are `range`, `number`, `color`, `select`, `toggle`, and — for
 anything else — plain text. A `range` may carry `percent: true` or
@@ -230,6 +238,14 @@ what a walls layer draws by some other route — hiding it, for instance — cal
 already done the thing: take a walls layer out of a group and the group no
 longer knows it ever held one. For that case work out whether the walls were
 involved *before* you mutate, and call `api.render.relightAll()` afterwards.
+
+The landmass works the same way. A terrain fill set to *Inside the landmass* or
+*Outside the landmass* is drawn from the landmass mask, so `api.invalidate` on a
+landmass layer also rebuilds every paint layer holding such a fill, and
+composites the whole map. If you change a landmass's ops and rebuild it some
+other way, call `api.render.followLand()` afterwards. To grow land from a seed
+yourself, `generateLand(params, width, height)` in `web/js/generate.js` returns
+an ordinary landmass op; push it onto the layer's `ops` and invalidate.
 
 ### Unloading
 

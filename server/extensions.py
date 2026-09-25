@@ -30,7 +30,8 @@ def index(root, disabled=()):
         try:
             with open(path, encoding="utf-8") as fh:
                 manifest = json.load(fh)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
+            # RecursionError is not a ValueError; see projects.list_projects.
             entry["error"] = "extension.json: %s" % exc
             out.append(entry)
             continue

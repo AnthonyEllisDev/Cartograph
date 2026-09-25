@@ -82,7 +82,7 @@ export default function setup(api) {
     R.rebuildLayer(layer);
     R.compositeAll();
     api.events.emit('layers');
-    api.markDirty();
+    api.markDirty(); api.scheduleAutosave();
     return layer;
   }
 
@@ -103,18 +103,19 @@ export default function setup(api) {
       root.appendChild(field({
         type: 'select', label: 'Scheme', value: layer.scheme,
         options: Object.entries(SCHEMES).map(([id, s]) => [id, s.label]),
-      }, (v) => { layer.scheme = v; R.invalidate(layer); api.markDirty(); }));
+      }, (v) => { layer.scheme = v; R.invalidate(layer); api.markDirty(); api.scheduleAutosave(); }));
       root.appendChild(field({
+        // commit: every tick rebuilds the text in every cell of the grid.
         type: 'range', label: 'Text size', min: 0.08, max: 0.5, step: 0.01,
-        value: layer.textScale, percent: true,
-      }, (v) => { layer.textScale = v; R.invalidate(layer); api.markDirty(); }));
+        value: layer.textScale, percent: true, commit: true,
+      }, (v) => { layer.textScale = v; R.invalidate(layer); api.markDirty(); api.scheduleAutosave(); }));
       root.appendChild(field({
         type: 'range', label: 'Opacity', min: 0.1, max: 1, step: 0.02,
-        value: layer.textOpacity, percent: true,
-      }, (v) => { layer.textOpacity = v; R.invalidate(layer); api.markDirty(); }));
+        value: layer.textOpacity, percent: true, commit: true,
+      }, (v) => { layer.textOpacity = v; R.invalidate(layer); api.markDirty(); api.scheduleAutosave(); }));
       root.appendChild(field({
-        type: 'color', label: 'Colour', value: layer.color,
-      }, (v) => { layer.color = v; R.invalidate(layer); api.markDirty(); }));
+        type: 'color', label: 'Colour', value: layer.color, commit: true,
+      }, (v) => { layer.color = v; R.invalidate(layer); api.markDirty(); api.scheduleAutosave(); }));
     },
   });
 
@@ -127,7 +128,7 @@ export default function setup(api) {
       R.compositeAll();
       R.requestDraw();
       api.events.emit('layers');
-      api.markDirty();
+      api.markDirty(); api.scheduleAutosave();
     },
   });
 }

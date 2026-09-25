@@ -47,7 +47,7 @@ run.bat / run.sh      launchers
 app.py                entry point — first-run setup, then serve
 config.json           written on first launch: port, whether to open a browser
 server/               the local HTTP server and file API (standard library only)
-  http.py               transport, static files, the two security guards
+  http.py               transport, static files, the security guards
   api.py                the JSON endpoints
   projects.py           reading and writing maps
   packs.py              indexing asset folders
@@ -61,6 +61,7 @@ tools/                the art generators
 web/                  the editor itself — plain ES modules, no build step
   js/hex.js             hex geometry: the one definition of where hexes are
   js/light.js           shadow casting for the lighting layer
+  js/generate.js        seeded land: noise, marching squares, the dialog
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
@@ -73,8 +74,9 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       25 more, for the server's two guards, over raw sockets
-test/regress.mjs      13 more, for bugs that have been in here once already
+test/guards.mjs       44 more, for the server's guards, over raw sockets
+test/regress.mjs      44 more, for bugs that have been in here once already
+test/generate.mjs     27 more, for seeded land generation
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -107,6 +109,19 @@ the right.
 coastline draws itself — an ink line round the edge and a banded shallow-water
 shelf outside it, both derived from the shape you painted and both updating as
 you paint. Turn on *Carve sea instead* to cut bays and inlets back out of it.
+
+Or let it start you off: **Generate land…** at the top of the Landmass panel
+(and in the command palette) grows a coastline from a seed. Pick a shape — one
+continent, a single island, an archipelago, scattered lands, or a coast running
+off one side of the map — how much of the map is land, how large the features
+are and how ragged the coast, and watch the preview change as you do. *Land 40%*
+means forty per cent, whatever the seed. The same seed and settings always give
+the same land, so a seed is worth writing down. What it writes is ordinary
+landmass: the brush adds to it, the eraser bites into it, undo takes it back,
+and a terrain fill set to *Inside the landmass* follows the new coast. The map
+file keeps the traced coastline itself, a few kilobytes, with the seed and
+settings beside it — so a map reopens exactly as it was even if a later version
+of the generator draws that seed differently.
 
 **Terrain** paints textures onto a normal paint layer: forest, sand, highland,
 marsh, whatever is in your packs. **Stamp** places symbols — click for one, drag
@@ -329,7 +344,8 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 342 assertions in all: `props.mjs`
+There are narrower scripts beside it, 388 assertions in all: `generate.mjs`
+(seeded land, its round trip, and a fill that follows it), `props.mjs`
 (changing a thing after it has been drawn), `lighting.mjs`
 (darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
 snapping, measurement and both orientations), `labels.mjs` (text along a path),
@@ -343,7 +359,8 @@ VTT export), `guards.mjs` and `regress.mjs`.
 what the server does with bytes a browser would never send in that order — a
 body left on a keep-alive socket after a request is refused, two `Content-Length`
 headers that disagree, a `Content-Length` that is not a number, a NUL byte in a
-path, and a manifest that is valid JSON of entirely the wrong shape. `regress.mjs` is a standing guard
+path, a `Host` header naming some other site, and a manifest that is valid JSON
+of entirely the wrong shape. `regress.mjs` is a standing guard
 against the bugs listed in `docs/DAILY-LOG.md` coming back.
 
 Every suite makes its own map before it starts. The editor reopens the last map

@@ -52,6 +52,15 @@ async function start() {
   refreshHistoryButtons();
 }
 
+/** Undo or redo one step, and count it as an edit only if there was a step.
+ *  Ctrl+Z on a freshly opened map used to mark it unsaved, prompt on close and
+ *  have autosave rewrite an identical file. */
+function stepHistory(step) {
+  const moved = step();
+  refreshHistoryButtons();
+  if (moved) { markDirty(); scheduleAutosave(); }
+}
+
 function wireTopbar() {
   $('#btn-save').addEventListener('click', () => doSave());
   $('#btn-export').addEventListener('click', exportDialog);
@@ -59,8 +68,8 @@ function wireTopbar() {
   // an undo after the last autosave had already fired left the document dirty
   // for good: nothing ever rearmed the timer, so the file on disk kept the
   // stroke that had been undone.
-  $('#btn-undo').addEventListener('click', () => { undo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); });
-  $('#btn-redo').addEventListener('click', () => { redo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); });
+  $('#btn-undo').addEventListener('click', () => stepHistory(undo));
+  $('#btn-redo').addEventListener('click', () => stepHistory(redo));
 
   const nameField = $('#project-name');
   nameField.addEventListener('change', () => {
@@ -93,12 +102,16 @@ function wireTopbar() {
     if (key === 's') { ev.preventDefault(); doSave(); }
     else if (key === 'e') { ev.preventDefault(); exportDialog(); }
     else if (key === 'n') { ev.preventDefault(); newMapDialog(); }
-    else if (key === 'z') {
+    else if (key === 'z' || key === 'y') {
+      // Inside a text field these belong to the field. Taking them undid a
+      // brush stroke while someone was retyping a label, and the history
+      // change then rebuilt the Selected panel under them and lost the text.
+      const t = ev.target;
+      if (t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
+          || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color', 'button'].includes(t.type))) return;
       ev.preventDefault();
-      if (ev.shiftKey) redo(); else undo();
-      refreshHistoryButtons();
-      markDirty(); scheduleAutosave();
-    } else if (key === 'y') { ev.preventDefault(); redo(); refreshHistoryButtons(); markDirty(); scheduleAutosave(); }
+      stepHistory(key === 'y' || ev.shiftKey ? redo : undo);
+    }
   });
 
   window.addEventListener('beforeunload', (ev) => {

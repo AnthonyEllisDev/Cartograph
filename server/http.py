@@ -48,6 +48,7 @@ class Context(object):
         self.save_config = lambda: None
         self.started = time.time()
         self.origins = set()
+        self.hosts = set()
         self._server = None
 
     def bind(self, server):
@@ -85,6 +86,23 @@ class Handler(BaseHTTPRequestHandler):
         if not origin:
             return True                      # same-origin navigations send none
         return origin in self.ctx.origins
+
+    def _host_ok(self):
+        """Is this request addressed to us by a name we answer to?
+
+        The Origin check stops another site *driving* the API, but not DNS
+        rebinding: a page on attacker.example re-points its own name at
+        127.0.0.1, and from then on it is same-origin with this server, so a
+        GET carries no Origin at all and sails through. What it cannot change
+        is the Host header, which still says attacker.example -- so refusing an
+        unknown Host is what keeps a rebound page from reading every map, the
+        folder paths and the config. A request with no Host is not a browser
+        and is left to the other guards.
+        """
+        host = self.headers.get("Host")
+        if host is None:
+            return True
+        return host.strip().lower() in self.ctx.hosts
 
     def _refuse(self, status, error):
         """Reject a request without reading its body, and hang up.
@@ -174,6 +192,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._refuse(400, "bad Content-Length")
         if length > MAX_BODY:
             return self._refuse(413, "body too large")
+        # Before the routing split, like everything above: a rebound page can
+        # read static files under /projects/ as readily as it can call the API.
+        if not self._host_ok():
+            return self._refuse(421, "unknown host")
 
         if path.startswith("/api/"):
             # The check covers GET too. No GET handler has a side effect, but a
@@ -252,5 +274,8 @@ def serve(ctx, host="127.0.0.1", port=0):
     httpd.daemon_threads = True
     actual = httpd.server_address[1]
     ctx.origins = {"http://127.0.0.1:%d" % actual, "http://localhost:%d" % actual}
+    ctx.hosts = {"127.0.0.1:%d" % actual, "localhost:%d" % actual}
+    if actual == 80:                         # a browser leaves the default port off
+        ctx.hosts |= {"127.0.0.1", "localhost"}
     ctx.bind(httpd)
     return httpd, actual

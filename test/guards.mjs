@@ -414,6 +414,79 @@ try {
   t('a folder name that is not a string is a 400, not a 500', r.status === 400, r.status);
 }
 
+/* a page that has rebound its own name to this machine ------------------------ */
+
+{
+  // DNS rebinding: attacker.example is re-pointed at 127.0.0.1, so its page is
+  // same-origin with the server and a GET from it carries no Origin at all.
+  // The one thing it cannot change is the Host header.
+  const api = await raw(`GET /api/projects HTTP/1.1${CRLF}Host: attacker.example:${port}${CRLF}${CRLF}`);
+  t('an API request addressed to another host name is refused',
+    statuses(api).join(',') === '421' && !api.includes('"projects"'), statuses(api).join(',') || 'no reply');
+  const stat = await raw(`GET /index.html HTTP/1.1${CRLF}Host: attacker.example:${port}${CRLF}${CRLF}`);
+  t('and so is a static file, which a rebound page could read just the same',
+    statuses(stat).join(',') === '421', statuses(stat).join(',') || 'no reply');
+  const ok = await raw(`GET /api/state HTTP/1.1${CRLF}Host: localhost:${port}${CRLF}${CRLF}`);
+  t('while localhost by name is still answered', statuses(ok)[0] === '200', statuses(ok).join(','));
+}
+
+/* a document nested past what json.dumps can reply with ----------------------- */
+
+{
+  const name = 'GuardDeep';
+  let nested = '1';
+  for (let i = 0; i < 900; i++) nested = '[' + nested + ']';
+  const body = `{"name":"${name}","layers":[{"id":"l-a","kind":"raster","ops":[]}],"x":${nested}}`;
+  const r = await fetch(`${BASE}/api/projects/${name}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body,
+  });
+  // It parsed, it was written, and then the reply -- which echoes it two
+  // levels deeper -- ran out of stack: a 500 for a save that had landed, and a
+  // project.json that then took GET /api/projects down with it.
+  t('a document nested too deep is refused before it is written', r.status === 400, r.status);
+  const list = await fetch(`${BASE}/api/projects`);
+  const listed = list.status === 200 && !(await list.json()).projects.some((x) => x.slug === name);
+  t('and the Projects list is unharmed', listed, list.status);
+  await fetch(`${BASE}/api/projects/${name}`, { method: 'DELETE' });
+
+  // A hand-edited file on disk that deep: RecursionError is not a ValueError.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'projects/guard-deep');
+  try {
+    mkdirSync(dir, { recursive: true });
+    let deep = '1';
+    for (let i = 0; i < 5000; i++) deep = '[' + deep + ']';
+    writeFileSync(join(dir, 'project.json'), `{"name":"Deep","layers":${deep}}`);
+    const l2 = await fetch(`${BASE}/api/projects`);
+    t('one map file nested beyond the parser does not empty the Projects tab', l2.status === 200, l2.status);
+    const one = await fetch(`${BASE}/api/projects/guard-deep`);
+    t('and opening it is a 404 like any other unreadable map, not a 500', one.status === 404, one.status);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/* a thumbnail for a map that is not there ---------------------------------------- */
+
+{
+  const name = 'GuardGhost';
+  const r = await fetch(`${BASE}/api/projects/${name}/thumb`, {
+    method: 'PUT', headers: { 'Content-Type': 'image/png' },
+    body: Buffer.from('\x89PNG\r\n\x1a\n' + 'x'.repeat(40), 'latin1'),
+  });
+  t('a thumbnail for a map that does not exist is refused', r.status === 404, r.status);
+  // A folder holding only thumb.png is invisible in the Projects tab; the way
+  // to see it is to ask for that name and watch unique_slug walk away from it.
+  const made = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, layers: [{ id: 'l-a', kind: 'raster', ops: [] }] }),
+  }).then((x) => x.json());
+  const slug = made.project && made.project.slug;
+  t('and leaves no folder behind to take the name', slug === name, slug);
+  if (slug) await fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  await fetch(`${BASE}/api/projects/${name}`, { method: 'DELETE' });
+}
+
 for (const [status, name, note] of out) {
   console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 }

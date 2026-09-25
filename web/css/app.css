@@ -431,3 +431,15 @@ body.is-light .asset .cap { background: rgba(0,0,0,.55); }
 .panel.foldable.is-closed > h3::after { transform: translateY(-30%) rotate(-135deg); }
 .panel.foldable.is-closed > *:not(h3) { display: none; }
 .panel.foldable.is-closed > h3 { margin-bottom: 0; }
+
+/* ---------------------------------------------------------- land generator */
+
+.tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.tool-actions .btn { flex: 1 1 auto; }
+.gen { width: 360px; max-width: 100%; }
+.gen-preview {
+  display: block; width: 100%; height: auto; margin: 0 0 12px;
+  border: 1px solid var(--line); border-radius: 6px; image-rendering: auto;
+}
+.gen-seed { display: flex; gap: 6px; }
+.gen-seed input { flex: 1 1 auto; min-width: 0; font-family: var(--mono); }

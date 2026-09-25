@@ -134,6 +134,14 @@ export function renderToolOptions() {
     }
   }
 
+  // One-off things a tool can do, as opposed to settings it draws with: the
+  // Landmass tool's generator is the first. Optional, so no tool has to care.
+  const actions = tool.actions ? tool.actions() : [];
+  if (actions.length) {
+    panel.appendChild(el('div', { class: 'tool-actions' }, actions.map((a) =>
+      el('button', { class: 'btn', text: a.label, 'data-action': a.id || null, onclick: () => a.run() }))));
+  }
+
   const specs = tool.options();
   if (!specs.length) panel.appendChild(el('p', { class: 'empty', text: tool.hint || 'No options.' }));
   for (const spec of specs) {
@@ -695,7 +703,7 @@ function deleteLayer(layer) {
   const touchedWalls = layer.kind === 'walls' || freed.some((m) => m.kind === 'walls');
   for (const m of freed) delete m.group;
   app.doc.layers.splice(index, 1);
-  R.forgetLayer(layer.id);
+  let kept = R.forgetLayer(layer.id);
   if (touchedWalls) R.relightAll();
   if (app.activeLayerId === layer.id) {
     const next = app.doc.layers.find((l) => kindOf(l).paint) || app.doc.layers[0];
@@ -704,9 +712,15 @@ function deleteLayer(layer) {
   R.compositeAll(); R.requestDraw();
   pushEntry({
     label: 'Delete layer',
+    // The canvases are held while this entry is, so they are counted.
+    bytes: app.doc.width * app.doc.height * 4 * [...kept.keys()].filter((k) => !k.endsWith(':shape')).length,
     undo() {
       app.doc.layers.splice(index, 0, layer);
       for (const m of freed) m.group = layer.id;
+      // The deleted layer's own paint entries sit below this one holding its
+      // old canvases; hand those back before the rebuild, or undoing one of
+      // them restores into a canvas nothing draws any more.
+      R.adoptLayer(kept);
       // Not setDocument: that empties layerCanvases and mints new ones, and
       // every painting entry below this in the stack is a closure holding the
       // canvas it snapshotted. Undoing past a layer delete used to restore
@@ -720,7 +734,7 @@ function deleteLayer(layer) {
     redo() {
       app.doc.layers.splice(app.doc.layers.indexOf(layer), 1);
       for (const m of freed) delete m.group;
-      R.forgetLayer(layer.id);
+      kept = R.forgetLayer(layer.id);
       if (touchedWalls) R.relightAll();
       R.compositeAll(); R.requestDraw(); emit('layers');
     },
@@ -977,6 +991,11 @@ function editObject(layer, item, key, value) {
   if (JSON.stringify(before) === JSON.stringify(item)) return;
   const after = JSON.parse(JSON.stringify(item));
   const put = (snap) => {
+    // Keys the snapshot does not have are taken off first. Most fields are
+    // optional and read with a default -- a light has no `on` until someone
+    // unticks Lit -- and Object.assign never deletes, so undoing the first
+    // edit of such a field used up the step and left the edit in place.
+    for (const k of Object.keys(item)) if (!(k in snap)) delete item[k];
     Object.assign(item, JSON.parse(JSON.stringify(snap)));
     // invalidate, not compositeAll: it rebuilds the layer and relights when
     // the thing edited was a wall, which changing a door to a window is.

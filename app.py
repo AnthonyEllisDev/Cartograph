@@ -57,7 +57,7 @@ def load_config():
             if not isinstance(loaded, dict):
                 raise ValueError("expected an object, got %s" % type(loaded).__name__)
             config.update(loaded)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             print("  ! config.json ignored (%s)" % exc)
     return config
 

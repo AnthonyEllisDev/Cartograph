@@ -69,7 +69,7 @@ def read_pack(pack_dir, pack_id):
         try:
             with open(manifest_path, encoding="utf-8") as fh:
                 manifest = json.load(fh)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             return {"id": pack_id, "name": pack_id, "error": "pack.json: %s" % exc, "assets": []}
         # Valid JSON is not the same as the right shape. A pack.json holding a
         # bare list parses cleanly and then takes the whole /api/packs call

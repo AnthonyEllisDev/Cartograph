@@ -12,6 +12,7 @@ import { LAYER_KINDS, gridLayer, gridStepPx, layerVisible, measureBetween } from
 import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
+import { generateDialog } from './generate.js';
 import { clamp, modal, el, toast, uid } from './util.js';
 
 const BLENDS = [
@@ -148,11 +149,13 @@ function endPaint() {
     const mask = R.maskFor(layer);
     const beforeLand = snapshot(canvas, box);
     const beforeMask = snapshot(mask, box);
+    // A terrain fill bound to the landmass follows the new mask; if there is
+    // one, it can have changed anywhere, so the whole map is composited.
+    const landed = () => { R.compositeAll(R.followLand() ? undefined : box); R.requestDraw(); };
     R.applyLandOp(layer, op);
     layer.ops.push(op);
     R.paintLand(layer, canvas.getContext('2d'), box, raw);
-    R.compositeAll(box);
-    R.requestDraw();
+    landed();
     pushEntry({
       label: 'Landmass',
       bytes: snapBytes(beforeLand) + snapBytes(beforeMask),
@@ -161,13 +164,13 @@ function endPaint() {
         restore(mask, beforeMask);
         const i = layer.ops.indexOf(op); if (i >= 0) layer.ops.splice(i, 1);
         R.invalidateCoast(layer, raw);
-        R.compositeAll(box); R.requestDraw();
+        landed();
       },
       redo() {
         R.applyLandOp(layer, op);
         layer.ops.push(op);
         R.paintLand(layer, canvas.getContext('2d'), box, raw);
-        R.compositeAll(box); R.requestDraw();
+        landed();
       },
     });
   } else if (live.kind === 'scatter') {
@@ -197,12 +200,21 @@ function endPaint() {
     pushEntry({
       label: op.erase ? 'Erase' : (LABELS[op.t] || 'Paint'),
       bytes: snapBytes(before),
+      // A snapshot of a layer bound to the landmass holds that fill as it was
+      // against the land of the moment; if the land has moved since, putting
+      // the pixels back puts the old coastline back with them. Such a layer is
+      // rebuilt from its ops instead.
       undo() {
         restore(canvas, before);
         const i = layer.ops.indexOf(op); if (i >= 0) layer.ops.splice(i, 1);
-        R.compositeAll(box); R.requestDraw();
+        if (R.followsLand(layer)) { R.rebuildLayer(layer); R.compositeAll(); } else R.compositeAll(box);
+        R.requestDraw();
       },
-      redo() { draw(); layer.ops.push(op); R.compositeAll(box); R.requestDraw(); },
+      redo() {
+        draw(); layer.ops.push(op);
+        if (R.followsLand(layer)) { R.rebuildLayer(layer); R.compositeAll(); } else R.compositeAll(box);
+        R.requestDraw();
+      },
     });
   }
   markDirty();
@@ -365,13 +377,16 @@ define({
     const layer = app.doc.layers.find((l) => l.kind === 'land');
     if (!layer) return;
     layer.texture = id;
-    warm([id]).then(() => { R.repaintLand(layer); markDirty(); });
+    warm([id]).then(() => { R.repaintLand(layer); markDirty(); scheduleAutosave(); });
   },
   currentAsset() {
     const layer = app.doc.layers.find((l) => l.kind === 'land');
     return layer ? layer.texture : null;
   },
   hint: 'Paint continents. The coastline and shallows are drawn for you.',
+  actions: () => ([
+    { label: 'Generate land…', id: 'generate-land', run: generateDialog },
+  ]),
   options: () => ([
     { key: 'size', type: 'range', label: 'Size', min: 10, max: 900, step: 1, value: S('land', 'size', 260), suffix: 'px' },
     { key: 'hardness', type: 'range', label: 'Edge', min: 0, max: 1, step: 0.01, value: S('land', 'hardness', 0.85), percent: true },
@@ -1383,6 +1398,10 @@ define({
   key(ev) {
     const { grabbed, layer } = this.state;
     if (!grabbed || (ev.key !== 'Delete' && ev.key !== 'Backspace')) return false;
+    // selectedObject() checks against the document and this did not: undo the
+    // placement of the thing in hand, press Delete, and a dead entry was pushed
+    // that threw away the redo of it and one of the 32 slots.
+    if (!selectedObject()) { this.state.grabbed = null; emit('selection'); return false; }
     const before = layer.ops.slice();
     layer.ops = layer.ops.filter((o) => o !== grabbed);
     const after = layer.ops.slice();
