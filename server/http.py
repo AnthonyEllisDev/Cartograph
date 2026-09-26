@@ -213,6 +213,9 @@ class Handler(BaseHTTPRequestHandler):
             except Unsafe as exc:
                 return self._send(403, "application/json",
                                   json.dumps({"ok": False, "error": str(exc)}).encode())
+            except api.BadBody as exc:
+                return self._send(400, "application/json",
+                                  json.dumps({"ok": False, "error": str(exc)}).encode())
             except Exception as exc:                       # noqa: BLE001 - report, do not crash
                 self.log_error("api %s %s: %s", method, path, exc)
                 return self._send(500, "application/json",
@@ -238,14 +241,27 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", ""):
             path = "/index.html"
 
+        # Art packs and map folders hold files other people made. Served plain
+        # from this origin, an SVG or HTML file among them ran its script as
+        # the editor -- same origin, so its requests carried an Origin the
+        # guard accepts -- and a stamp in a downloaded pack could delete every
+        # map from a single link. A sandboxed document runs no script and has
+        # an opaque origin; an <img> or a canvas ignores the header entirely,
+        # so the editor's own use of these files is untouched. Extensions are
+        # code by design, and are not sandboxed; see EXTENSIONS.md.
+        foreign = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"}
         if path.startswith("/assets/"):
             root, rel, cache = self.ctx.assets_dir, path[len("/assets/"):], "public, max-age=60"
+            extra = foreign
         elif path.startswith("/extensions/"):
             root, rel, cache = self.ctx.extensions_dir, path[len("/extensions/"):], "no-store"
+            extra = {}
         elif path.startswith("/projects/"):
             root, rel, cache = self.ctx.projects_dir, path[len("/projects/"):], "no-store"
+            extra = foreign
         else:
             root, rel, cache = self.ctx.web_dir, path.lstrip("/"), "no-store"
+            extra = {}
 
         try:
             target = under(root, *[p for p in rel.split("/") if p and p != "."])
@@ -265,7 +281,7 @@ class Handler(BaseHTTPRequestHandler):
                 data = fh.read()
         except OSError:
             return self._send(404, "text/plain", b"not found")
-        return self._send(200, ctype, data, {"Cache-Control": cache})
+        return self._send(200, ctype, data, dict(extra, **{"Cache-Control": cache}))
 
 
 def serve(ctx, host="127.0.0.1", port=0):

@@ -7,7 +7,7 @@
  * the slowest way to use software.
  */
 
-import { app, emit, markDirty, saveProject, scheduleAutosave } from './app.js';
+import { app, emit, markDirty, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { extensions } from './extensions.js';
 import { generateDialog } from './generate.js';
 import { jumpTo, redo, undo } from './history.js';
@@ -43,6 +43,9 @@ const BUILT_IN = [
   { id: 'scale-bar', group: 'View', title: 'Show or hide the scale bar',
     run: () => {
       app.settings.showScaleBar = !(app.settings.showScaleBar !== false);
+      // Saved, as the Settings tab's checkbox saves it; this lived only in
+      // memory and came back on the next launch.
+      saveSettings();
       R.view.showScaleBar = app.settings.showScaleBar;
       R.requestDraw();
     } },

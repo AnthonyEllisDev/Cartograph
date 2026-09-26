@@ -6,6 +6,8 @@ the single place that turns such a string into a real path, and they refuse
 anything that would land outside the folder it belongs in.
 """
 
+import json
+import math
 import os
 import re
 
@@ -56,3 +58,33 @@ def slugify(text, fallback="untitled"):
     text = re.sub(r"[^A-Za-z0-9 _-]+", "", text.strip())
     text = re.sub(r"\s+", " ", text).strip()[:64].strip()
     return text if SLUG_RE.match(text or "") else fallback
+
+
+# ------------------------------------------------------------------ JSON
+
+# Python's json module reads NaN, Infinity and 1e999 and writes them straight
+# back out, and the browser's JSON.parse refuses all three. One such value in a
+# pack.json, a project or config.json made the whole reply unreadable to the
+# editor -- /api/packs and /api/state are read at boot, so a single
+# hand-edited file stopped the program coming up at all. Refusing them where
+# JSON comes in turns that into the "malformed file" every loader already
+# survives, and into a 400 for a request body.
+
+def _no_constant(name):
+    raise ValueError("%s is not a number JSON allows" % name)
+
+
+def _finite(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("%s is too large to be a number" % text[:32])
+    return value
+
+
+def loads(data):
+    """json.loads, refusing the non-finite numbers a browser cannot read."""
+    return json.loads(data, parse_constant=_no_constant, parse_float=_finite)
+
+
+def load(fh):
+    return loads(fh.read())

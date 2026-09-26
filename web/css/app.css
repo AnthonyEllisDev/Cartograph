@@ -140,11 +140,12 @@ input[type=range]::-webkit-slider-thumb {
   background: var(--accent); margin-top: -4.5px; border: 0;
 }
 input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border: 0; border-radius: 50%; background: var(--accent); }
-select, input[type=text], input[type=number] {
+select, input[type=text], input[type=number], textarea {
   width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
   font: inherit; padding: 5px 8px; border-radius: var(--r);
 }
-select:focus, input:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 input[type=color] { width: 100%; height: 26px; padding: 2px; background: var(--panel-2);
   border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
 .check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); cursor: pointer; margin-bottom: 8px; }
@@ -283,6 +284,21 @@ input[type=color] { width: 100%; height: 26px; padding: 2px; background: var(--p
 @media (max-width: 1180px) {
   :root { --rail-w: 268px; --rail-r-w: 224px; }
 }
+
+/* the notes on a notes layer, in key order */
+.note-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 2px; }
+.note-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: var(--r);
+  color: var(--text); font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer;
+}
+.note-row:hover { background: var(--panel-2); border-color: var(--line); }
+.note-row b {
+  flex: none; min-width: 20px; height: 20px; border-radius: 10px; padding: 0 5px;
+  display: inline-grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: var(--accent-wash); color: var(--text);
+}
+.note-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* which layer the current tool writes to */
 .target {

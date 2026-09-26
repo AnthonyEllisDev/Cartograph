@@ -5,14 +5,14 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
 import { clearHistory, history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
 import { extensions } from './extensions.js';
 import { icon } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
+import { TOOLS, currentTool, selectObject, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { $, el, modal, toast } from './util.js';
 
 /* ------------------------------------------------------------------ fields */
@@ -57,6 +57,12 @@ export function field(spec, onChange) {
     // A colour input fires on every tick of a drag inside the picker, which is
     // too often for anything that rebuilds a layer or the panel itself.
     input.addEventListener(spec.commit ? 'change' : 'input', () => onChange(input.value));
+  } else if (spec.type === 'textarea') {
+    // Committed on change, as a text field is: an edit per keystroke would be
+    // an undo step per keystroke.
+    input = el('textarea', { rows: spec.rows || 5 });
+    input.value = spec.value || '';
+    input.addEventListener('change', () => onChange(input.value));
   } else if (spec.type === 'number') {
     input = el('input', { type: 'number', min: spec.min, max: spec.max, step: spec.step, value: spec.value });
     input.addEventListener('change', () => onChange(parseFloat(input.value)));
@@ -599,6 +605,29 @@ function renderLayerProps() {
         + 'Drag a border point with the Select tool to move one, Delete to remove it.'
       : 'Empty. Draw a territory with the Region tool, then name it.' }));
   }
+  if (layer.kind === 'notes') {
+    const redraw = () => { R.invalidate(layer); markDirty(); scheduleAutosave(); };
+    root.appendChild(field({ type: 'range', label: 'Pin size', min: 14, max: 90, step: 1,
+      value: layer.pinSize || NOTE_DEFAULTS.pinSize, suffix: 'px', commit: true },
+      (v) => { layer.pinSize = v; redraw(); }));
+    root.appendChild(field({ type: 'toggle', label: 'Show titles beside the pins', value: !!layer.showTitles },
+      (v) => { layer.showTitles = v; redraw(); }));
+    if (!layer.ops.length) {
+      root.appendChild(el('p', { class: 'empty', text:
+        'No notes yet. The Note tool pins one; hide this layer to export a map for the players.' }));
+    } else {
+      // The key, as it will be exported, and a way back to any entry in it.
+      // Built from text nodes: a title came out of project.json.
+      root.appendChild(el('ol', { class: 'note-list' }, layer.ops.map((item, i) =>
+        el('li', {}, [el('button', {
+          class: 'note-row', type: 'button', 'data-note': String(i + 1),
+          title: 'Select this note',
+          onclick: () => { selectObject(layer, item); R.centreOn(item.x, item.y); },
+        }, [el('b', { text: String(i + 1) }), el('span', { text: item.title || 'Note ' + (i + 1) })])]))));
+      root.appendChild(el('p', { class: 'empty', text:
+        'Numbered in this order. The export can set this key beside the image, or write it as Markdown.' }));
+    }
+  }
   if (layer.kind === 'lights') {
     const relight = () => { R.invalidate(layer); markDirty(); scheduleAutosave(); };
     root.appendChild(field({ type: 'range', label: 'Darkness', min: 0, max: 1, step: 0.02,
@@ -623,6 +652,9 @@ function renderLayerProps() {
     // far apart things are.
     const regrid = () => {
       R.invalidate(layer);
+      // A layer an extension draws may be drawn from the grid -- the bundled
+      // coordinates are -- and it has no other way to hear that it moved.
+      for (const l of app.doc.layers) if (extensions.layerKinds.has(l.kind)) R.invalidate(l);
       if (app.doc.scale) app.doc.scale.cellPx = gridStepPx(app.doc);
       markDirty(); scheduleAutosave();
       renderMapProps();
@@ -750,7 +782,9 @@ export function addPaintLayer() {
 /** Put a new layer under the paths layer — above the ground, below the ink. */
 export function insertLayer(layer) {
   const above = app.doc.layers.findIndex((l) => l.kind === 'paths');
-  const at = above < 0 ? app.doc.layers.length : above;
+  // Notes go on top of everything, the paper included: a pin under the
+  // vignette or the grid is a pin you have to squint at.
+  const at = layer.kind === 'notes' || above < 0 ? app.doc.layers.length : above;
   app.doc.layers.splice(at, 0, layer);
   R.rebuildLayer(layer);
   R.compositeAll(); R.requestDraw();
@@ -906,7 +940,7 @@ export function renderExtensionPanels() {
  */
 const OBJECT_NOUNS = {
   objects: 'stamp', labels: 'label', paths: 'path',
-  regions: 'region', walls: 'wall', lights: 'light',
+  regions: 'region', walls: 'wall', lights: 'light', notes: 'note',
 };
 
 const OBJECT_FIELDS = {
@@ -949,6 +983,11 @@ const OBJECT_FIELDS = {
     { key: 'width', type: 'range', label: 'Border width', min: 1, max: 12, step: 0.5,
       value: item.width || R.REGION_DEFAULTS.width, suffix: 'px', commit: true },
   ],
+  notes: (item) => [
+    { key: 'title', type: 'text', label: 'Title', value: item.title || '' },
+    { key: 'body', type: 'textarea', label: 'Note', value: item.body || '', rows: 6 },
+    { key: 'color', type: 'color', label: 'Pin colour', value: item.color || NOTE_DEFAULTS.color, commit: true },
+  ],
   walls: (item) => [
     { key: 'kind', type: 'select', label: 'Kind', value: item.kind || 'wall',
       options: Object.entries(R.WALL_KINDS).map(([id, k]) => [id, k.label]) },
@@ -975,6 +1014,9 @@ const OBJECT_FIELDS = {
   },
 };
 
+/* The one field per kind that cannot be emptied. */
+const REQUIRED = { labels: 'text', notes: 'title' };
+
 const unitLabel = () => ' ' + ((app.doc && app.doc.scale && app.doc.scale.unit) || 'units');
 
 /** Change one field of the selected item, undoably.
@@ -986,6 +1028,13 @@ const unitLabel = () => ' ' + ((app.doc && app.doc.scale && app.doc.scale.unit) 
  * nothing -- the stack holds 32 entries and a dead one evicts a real step.
  */
 function editObject(layer, item, key, value) {
+  // The tools refuse an empty label, and so does this: a label with no text
+  // has no width to click, so it could not be selected again or deleted.
+  if (REQUIRED[layer.kind] === key && !String(value).trim()) {
+    toast('A ' + OBJECT_NOUNS[layer.kind] + ' needs some text', 'bad');
+    renderSelection();
+    return;
+  }
   const before = JSON.parse(JSON.stringify(item));
   item[key] = value;
   if (JSON.stringify(before) === JSON.stringify(item)) return;

@@ -26,6 +26,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from server.http import Context, serve                     # noqa: E402
+from server import safe as safe_json                        # noqa: E402
 
 APP_NAME = "Cartograph"
 VERSION = "0.1.0"
@@ -47,7 +48,7 @@ def load_config():
     if os.path.isfile(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, encoding="utf-8") as fh:
-                loaded = json.load(fh)
+                loaded = safe_json.load(fh)
             # Valid JSON of the wrong shape, not just unparseable JSON: a file
             # holding 5, null or [1,2] parses cleanly and then raises TypeError
             # out of dict.update, which is not in the net below -- so the one

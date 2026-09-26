@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { app, boot, emit, markDirty, newMap, on, saveProject, scheduleAutosave } from './app.js';
 import { canRedo, canUndo, history, redo, undo } from './history.js';
-import { layerVisible } from './doc.js';
+import { keyMarkdown, layerVisible, noteKey } from './doc.js';
 import * as R from './render.js';
 import { initInput } from './input.js';
 import { extensions, loadExtensions, renderExtensionLayer } from './extensions.js';
@@ -42,7 +42,10 @@ async function start() {
   // Pick up where we left off, if there is anything to pick up.
   const { projects } = await api.projects();
   if (projects.length) await openProject(projects[0].slug);
-  else await newMap({ name: 'Untitled Map' });
+  // openProject reports a map that will not open and carries on, so the
+  // editor came up with no document and threw on the next line. A blank map
+  // is a better welcome than a dead one.
+  if (!app.doc) await newMap({ name: 'Untitled Map' });
 
   $('#hud-size').textContent = `${app.doc.width} × ${app.doc.height}`;
   $('#hud-zoom').textContent = Math.round(R.view.zoom * 100) + '%';
@@ -159,6 +162,13 @@ async function exportDialog() {
     && layerVisible(app.doc, l) && l.ambient > 0);
   const hexGrid = app.doc.layers.find((l) => l.kind === 'grid' && l.type === 'hex');
   const lights = el('input', { type: 'checkbox' }); lights.checked = true;
+  // Only the notes that would be drawn: hiding the notes layer is how a map
+  // goes out to the players with no pins and no key.
+  const key = noteKey(app.doc);
+  const pins = el('input', { type: 'checkbox' }); pins.checked = true;
+  const keyBeside = el('input', { type: 'checkbox' }); keyBeside.checked = true;
+  const keyFile = el('input', { type: 'checkbox' }); keyFile.checked = true;
+  const noteCount = key.reduce((n, sct) => n + sct.entries.length, 0);
   const vtt = el('input', { type: 'checkbox' });
   vtt.checked = !!(walls && walls.ops.length);
 
@@ -170,6 +180,12 @@ async function exportDialog() {
       el('label', { class: 'check' }, [grid, el('span', { text: 'Include the grid' })]),
       el('label', { class: 'check' }, [paper, el('span', { text: 'Include the paper and border' })]),
       lit ? el('label', { class: 'check' }, [lights, el('span', { text: 'Include the lighting' })]) : null,
+      key.length ? el('label', { class: 'check' }, [pins, el('span', {
+        text: `Include the note pins (${noteCount})` })]) : null,
+      key.length ? el('label', { class: 'check' }, [keyBeside, el('span', {
+        text: 'Set the key beside the image' })]) : null,
+      key.length ? el('label', { class: 'check' }, [keyFile, el('span', {
+        text: 'Also write the key as a Markdown file' })]) : null,
       el('label', { class: 'check' }, [download, el('span', { text: 'Also download a copy' })]),
       el('label', { class: 'check' }, [vtt, el('span', {
         text: 'Also write a Universal VTT file' + (walls ? '' : ' (this map has no walls layer)') })]),
@@ -190,21 +206,37 @@ async function exportDialog() {
   });
   if (!go) return;
 
-  const canvas = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked,
-                             paper: paper.checked, lights: lights.checked });
+  let canvas = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked,
+                           paper: paper.checked, lights: lights.checked, notes: pins.checked });
+  if (key.length && keyBeside.checked) canvas = R.withKey(canvas, key, app.doc.name);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   const name = (app.doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
+  let written = null;
   try {
     const res = await api.exportImage(name + '.png', blob);
+    written = res.path;
     toast('Exported to ' + res.path, 'good');
   } catch (err) {
     toast('Export failed: ' + err.message, 'bad');
+  }
+  if (key.length && keyFile.checked) {
+    // Named after the image it goes with, which the server may have numbered
+    // ("map-2.png") to avoid writing over an earlier export.
+    const stem = written ? written.split(/[\\/]/).pop().replace(/\.png$/i, '') : name;
+    try {
+      const res = await api.exportImage(stem + '-key.md',
+        new Blob([keyMarkdown(app.doc)], { type: 'text/markdown' }));
+      toast('Key written to ' + res.path, 'good');
+    } catch (err) {
+      toast('Key export failed: ' + err.message, 'bad');
+    }
   }
   if (vtt.checked) {
     try {
       // The tabletop does its own lighting, so it gets the map unlit and the
       // lights as data — otherwise the two stack and the map comes out washed.
-      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false });
+      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false,
+                               notes: pins.checked });
       const payload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false });
       const res = await api.exportImage(name + '.dd2vtt',
         new Blob([JSON.stringify(payload)], { type: 'application/json' }));

@@ -6,8 +6,9 @@ remember which ones the user has switched off — the loading and the API live i
 the browser, because that is where the editor is.
 """
 
-import json
 import os
+
+from server import safe
 
 MANIFEST = "extension.json"
 
@@ -29,7 +30,7 @@ def index(root, disabled=()):
             continue
         try:
             with open(path, encoding="utf-8") as fh:
-                manifest = json.load(fh)
+                manifest = safe.load(fh)
         except (OSError, ValueError, RecursionError) as exc:
             # RecursionError is not a ValueError; see projects.list_projects.
             entry["error"] = "extension.json: %s" % exc

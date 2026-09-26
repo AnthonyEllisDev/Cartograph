@@ -915,6 +915,231 @@ const undoStep = async () => { await p.evaluate(async () => { (await import('/js
     ghost + ' pixels differ from a rebuild');
 }
 
+/* ========================================================================== *
+ * 2026-09-26: a stroke that outgrew its own size, a seam, and keys that went
+ * to the wrong place.
+ * ========================================================================== */
+
+{
+  await newMap(p, { name: 'Regress Keys', kind: 'region' });
+  await tool('land');
+  await setOpt('Size', '120');
+  // ] during the drag grows the brush setting, not the stroke in hand: a
+  // width past op.size ran outside every box measured from op.size.
+  const a = await M(700, 700), c = await M(1300, 800);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  await p.mouse.move((a.x + c.x) / 2, a.y, { steps: 4 });
+  for (let i = 0; i < 6; i++) await p.keyboard.press(']');
+  await p.mouse.move(c.x, c.y, { steps: 4 });
+  await p.mouse.up();
+  await p.waitForTimeout(700);
+  const grown = await p.evaluate(() => {
+    const land = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    const op = land.ops[land.ops.length - 1];
+    return { size: op.size, widest: Math.max(...(op.widths || [op.size])) };
+  });
+  t('pressing ] mid-stroke leaves the stroke no wider than its own size',
+    grown.widest <= grown.size + 0.01, 'size ' + grown.size + ', widest ' + Math.round(grown.widest));
+
+  // The box a landmass stroke composites has fractional edges -- it is padded
+  // by an ink width of 2.5 -- and a fractional clip half-blends its outline.
+  const seam = await p.evaluate(() => {
+    const R = window.__cg.R;
+    const w = R.view.flat.width, h = R.view.flat.height;
+    const before = R.view.flatCtx.getImageData(0, 0, w, h).data;
+    R.compositeAll();
+    const after = R.view.flatCtx.getImageData(0, 0, w, h).data;
+    let n = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) n++;
+    R.requestDraw();
+    return n;
+  });
+  t('the screen after a landmass stroke matches a full composite, with no seam round the box',
+    seam === 0, seam + ' channel values differ');
+
+  const land = await p.evaluate(async () => {
+    const { undo } = await import('/js/history.js');
+    undo();
+    const R = window.__cg.R;
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    const m = R.maskFor(l).getContext('2d').getImageData(0, 0, 2048, 1536).data;
+    let n = 0;
+    for (let i = 3; i < m.length; i += 4) if (m[i] > 8) n++;
+    return { ops: l.ops.length, n };
+  });
+  t('and undoing it leaves no ghost land in the mask', land.ops === 0 && land.n === 0,
+    land.ops + ' ops, ' + land.n + ' mask pixels');
+
+  // A label on the map, picked up with Select, and its Style menu focused.
+  await p.evaluate(() => {
+    const doc = window.__cg.app.doc;
+    const l = doc.layers.find((x) => x.kind === 'labels');
+    l.ops.push({ id: 't-reg', text: 'Harrowgate', x: 1000, y: 400, size: 40, style: 'settlement' });
+    window.__cg.R.invalidate(l);
+  });
+  await tool('select');
+  await clickAt(1000, 400);
+  const picked = await p.evaluate(() => !document.getElementById('panel-selection').hidden);
+  t('the label is picked up (precondition)', picked);
+  await p.focus('#selection-props select');
+  await p.keyboard.press('Delete');
+  await p.keyboard.press('w');
+  await p.waitForTimeout(250);
+  const kept = await p.evaluate(() => ({
+    n: window.__cg.app.doc.layers.find((x) => x.kind === 'labels').ops.length,
+    tool: window.__cg.app.tool,
+  }));
+  t('Delete in a focused dropdown does not delete the thing selected', kept.n === 1, kept.n + ' labels');
+  t('and typing in one does not pick up another tool', kept.tool === 'select', kept.tool);
+
+  // Its own starting state, set up by a route known to work: if the Delete
+  // above had taken the label, this check would otherwise measure nothing.
+  await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'labels');
+    if (!l.ops.length) {
+      l.ops.push({ id: 't-reg', text: 'Harrowgate', x: 1000, y: 400, size: 40, style: 'settlement' });
+      window.__cg.R.invalidate(l);
+    }
+  });
+  await tool('select');
+  await clickAt(1000, 400);
+  await p.evaluate(() => {
+    const i = document.querySelector('#selection-props input[type=text]');
+    if (!i) return;
+    i.value = '   ';
+    i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await p.waitForTimeout(250);
+  const text = await p.evaluate(() => {
+    const op = window.__cg.app.doc.layers.find((x) => x.kind === 'labels').ops[0];
+    return op ? op.text : 'no label left to check';
+  });
+  t('a label cannot be emptied from the Selected panel into something unclickable',
+    text === 'Harrowgate', JSON.stringify(text));
+
+  // The palette's scale-bar toggle is a setting like the Settings tab's one.
+  await p.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    localStorage.removeItem('cartograph.settings.v1');
+  });
+  await p.keyboard.press('Control+k');
+  await p.waitForTimeout(250);
+  await p.keyboard.type('scale bar');
+  await p.waitForTimeout(200);
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(600);
+  const stored = await p.evaluate(() => {
+    const raw = localStorage.getItem('cartograph.settings.v1');
+    return raw ? JSON.parse(raw).showScaleBar : null;
+  });
+  t('hiding the scale bar from the palette is saved', stored === false, String(stored));
+  await p.keyboard.press('Control+k');
+  await p.waitForTimeout(250);
+  await p.keyboard.type('scale bar');
+  await p.waitForTimeout(200);
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(300);
+
+  // A region drawn after picking a custom colour and then a palette one.
+  await tool('region');
+  await p.click('#tool-options .target button.link');     // add a regions layer
+  await p.waitForTimeout(300);
+  // A colour input reports on `input`, which setOpt does not send.
+  await p.evaluate(() => {
+    const f = Array.from(document.querySelectorAll('#tool-options .field'))
+      .find((x) => x.querySelector('label span') && x.querySelector('label span').textContent === 'Or pick one');
+    const i = f.querySelector('input');
+    i.value = '#00ff00';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await p.waitForTimeout(150);
+  await setOpt('Colour', '#5c7a44');
+  for (const [x, y] of [[300, 1000], [600, 1000], [450, 1250]]) await clickAt(x, y);
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(400);
+  await p.fill('.modal input[type=text]', 'Mossreach');
+  await p.click('.modal .btn-primary');
+  await p.waitForTimeout(500);
+  const colour = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'regions');
+    return l && l.ops.length ? l.ops[l.ops.length - 1].color : null;
+  });
+  t('the region colour menu still works after a custom colour was picked', colour === '#5c7a44', colour);
+
+  // Generate land with the seed box emptied: the preview and the land agree.
+  await tool('land');
+  await p.click('[data-action="generate-land"]');
+  await p.waitForTimeout(500);
+  await p.fill('[data-gen="seed"]', '');
+  await p.waitForTimeout(300);
+  const shots = await p.evaluate(async () => {
+    const c = document.querySelector('.gen-preview');
+    const first = c.toDataURL();
+    const i = document.querySelector('[data-gen="seed"]');
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { same: first === c.toDataURL(), placeholder: i.placeholder };
+  });
+  t('with the seed box empty, the preview holds still', shots.same);
+  await p.click('.modal .btn-primary');
+  await p.waitForTimeout(1500);
+  const seed = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    const op = l.ops.find((o) => o.gen);
+    return op ? op.gen.seed : null;
+  });
+  t('and Generate draws the seed the preview showed', seed === shots.placeholder,
+    seed + ' vs ' + shots.placeholder);
+}
+
+{
+  // A wall half clicked out on one map, and Enter pressed on the next.
+  await newMap(p, { name: 'Regress Carry', kind: 'battle', size: '20x15' });
+  await tool('wall');
+  await clickAt(140, 140);
+  await clickAt(700, 140);
+  await newMap(p, { name: 'Regress Carried', kind: 'battle', size: '20x15' });
+  await tool('wall');
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(300);
+  const walls = await p.evaluate(() =>
+    window.__cg.app.doc.layers.find((x) => x.kind === 'walls').ops.length);
+  t('a wall half drawn on one map does not land on the next one opened', walls === 0, walls + ' walls');
+
+  // The coordinates extension, asked to show its layer on a map without one.
+  const shown = await p.evaluate(async () => {
+    const cmd = window.__cgx.extensions.commands.find((c) => /coordinates/i.test(c.title));
+    if (!cmd) return 'no command';
+    cmd.run();
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'coords');
+    return l ? l.visible : 'no layer';
+  });
+  t('showing grid coordinates on a map without them shows them', shown === true, String(shown));
+
+  // ...and they follow the grid when it changes.
+  const moved = await p.evaluate(async () => {
+    const R = window.__cg.R;
+    const coords = window.__cg.app.doc.layers.find((x) => x.kind === 'coords');
+    const grid = window.__cg.app.doc.layers.find((x) => x.kind === 'grid');
+    const grab = () => R.canvasFor(coords).toDataURL();
+    const before = grab();
+    window.__cg.app.activeLayerId = grid.id;
+    (await import('/js/app.js')).emit('layers');
+    await new Promise((r) => setTimeout(r, 300));
+    const f = Array.from(document.querySelectorAll('#layer-props .field'))
+      .find((x) => /Cell size|Size/.test(x.textContent) && x.querySelector('input[type=range]'));
+    if (!f) return 'no size field';
+    const i = f.querySelector('input[type=range]');
+    i.value = String(Number(i.value) + 30);
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    i.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 400));
+    return before !== grab();
+  });
+  t('grid coordinates follow a change of grid size', moved === true, String(moved));
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

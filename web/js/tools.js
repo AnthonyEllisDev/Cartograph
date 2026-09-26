@@ -7,8 +7,8 @@
  */
 
 import { imageNow, library, warm } from './assets.js';
-import { app, activeLayer, emit, markDirty, scheduleAutosave, setToolSetting, toolSetting } from './app.js';
-import { LAYER_KINDS, gridLayer, gridStepPx, layerVisible, measureBetween } from './doc.js';
+import { app, activeLayer, emit, markDirty, on, scheduleAutosave, setToolSetting, toolSetting } from './app.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, gridLayer, gridStepPx, layerVisible, measureBetween } from './doc.js';
 import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
@@ -321,7 +321,10 @@ define({
   },
   move(pt, ev) {
     if (!live.active) return;
-    const size = S('brush', 'size', 90);
+    // The op's size, not the slider's: [ and ] still work mid-drag, and a
+    // width past op.size runs outside every box measured from it -- clipped
+    // on screen, and on the land layer an undo that left ghost land behind.
+    const size = live.op.size;
     pushPoint(pt, size, dynamicWidth('brush', size, pt, ev));
     paintLive();
   },
@@ -354,7 +357,7 @@ define({
   },
   move(pt, ev) {
     if (!live.active) return;
-    const size = S('erase', 'size', 120);
+    const size = live.op.size;                       // see the brush's move
     pushPoint(pt, size, dynamicWidth('erase', size, pt, ev));
     paintLive();
   },
@@ -407,7 +410,7 @@ define({
   },
   move(pt, ev) {
     if (!live.active) return;
-    const size = S('land', 'size', 260);
+    const size = live.op.size;                       // see the brush's move
     pushPoint(pt, size, dynamicWidth('land', size, pt, ev));
     paintLive();
   },
@@ -830,6 +833,14 @@ define({
     { key: 'width', type: 'range', label: 'Border width', min: 1, max: 14, step: 0.5,
       value: S('region', 'width', R.REGION_DEFAULTS.width), suffix: 'px' },
   ]),
+  // The palette menu and the colour picker are two ways to say one thing, so
+  // whichever was touched last wins. The old rule -- the picker wins unless
+  // it holds exactly the default crimson -- made the menu dead for good the
+  // first time anyone picked a custom colour.
+  onOption(key, value) {
+    setToolSetting('region', key, value);
+    if (key === 'color' || key === 'custom') setToolSetting('region', 'colorFrom', key);
+  },
   state: { points: [] },
   down(pt, ev) {
     const layer = targetLayer(['regions']);
@@ -859,9 +870,7 @@ define({
     if (name === null) return;                       // cancelled, not unnamed
     const item = {
       id: uid('rg'), name, points: pts,
-      color: S('region', 'custom', null) !== R.REGION_DEFAULTS.color
-        ? S('region', 'custom', R.REGION_DEFAULTS.color)
-        : S('region', 'color', R.REGION_DEFAULTS.color),
+      color: regionColour(),
       opacity: S('region', 'opacity', R.REGION_DEFAULTS.opacity),
       border: S('region', 'border', R.REGION_DEFAULTS.border),
       width: S('region', 'width', R.REGION_DEFAULTS.width),
@@ -910,6 +919,16 @@ define({
 
 /** An unnamed region is a perfectly reasonable thing to want, so an empty box
  *  is accepted and only Cancel abandons the outline. */
+function regionColour() {
+  const custom = S('region', 'custom', R.REGION_DEFAULTS.color);
+  const picked = S('region', 'color', R.REGION_DEFAULTS.color);
+  const from = toolSetting('region', 'colorFrom', null);
+  if (from === 'custom') return custom;
+  if (from === 'color') return picked;
+  // Settings saved before colorFrom existed keep the rule they were made under.
+  return custom !== R.REGION_DEFAULTS.color ? custom : picked;
+}
+
 async function askForRegionName() {
   const input = el('input', { type: 'text', placeholder: 'Kingdom, duchy, wood...', value: '' });
   let name = null;
@@ -1345,12 +1364,98 @@ async function askForText(curved) {
   return text;
 }
 
+/* -------------------------------------------------------------- note tool */
+
+/* A numbered pin with a title and a note under it: the room key of a dungeon,
+ * the points of interest on a hex crawl. Click to place one; the Selected
+ * panel edits it afterwards, and the export can set the whole key beside the
+ * picture. */
+
+async function askForNote() {
+  const title = el('input', { type: 'text', placeholder: 'The drowned chapel', value: '' });
+  const body = el('textarea', { rows: 5, placeholder: 'What is here, who is here, what happens.' });
+  let note = null;
+  await modal({
+    title: 'Add a note',
+    body: el('div', {}, [
+      el('div', { class: 'field' }, [el('label', { text: 'Title' }), title]),
+      el('div', { class: 'field' }, [el('label', { text: 'Note' }), body]),
+      el('p', { class: 'muted', text: 'The pin is numbered by its place in the list. Both can be changed later with Select.' }),
+    ]),
+    buttons: [
+      { label: 'Cancel' },
+      { label: 'Add note', class: 'btn-primary',
+        onClick: () => { note = { title: title.value.trim(), body: body.value.trim() }; } },
+    ],
+  });
+  return note;
+}
+
+define({
+  id: 'note',
+  label: 'Note',
+  icon: 'pin',
+  assetKind: null,
+  snaps: true,
+  snapTo: 'centre',
+  wantsHover: true,
+  writesTo: ['notes'],
+  hint: 'Click to pin a numbered note. The export can put the key beside the image.',
+  options: () => ([
+    { key: 'color', type: 'color', label: 'Pin colour', value: S('note', 'color', NOTE_DEFAULTS.color) },
+  ]),
+  state: { hover: null, busy: false },
+  down() {},
+  move(pt) { this.state.hover = pt; R.requestDraw(); },
+  async up(pt) {
+    // One dialog at a time: a second click while it is open would otherwise
+    // queue a second note at the same spot.
+    if (this.state.busy) return;
+    const layer = targetLayer(['notes']);
+    if (!layer) return toast('This map has no notes layer — add one from the Note tool panel', 'bad');
+    this.state.busy = true;
+    let note;
+    try { note = await askForNote(); } finally { this.state.busy = false; }
+    if (!note) return;
+    // The dialog can outlive the map it was opened on.
+    if (!app.doc || !app.doc.layers.includes(layer)) return;
+    const item = {
+      id: uid('n'), x: pt.x, y: pt.y,
+      title: note.title || 'Note ' + (layer.ops.length + 1),
+      body: note.body,
+      color: S('note', 'color', NOTE_DEFAULTS.color),
+    };
+    const before = layer.ops.slice();
+    layer.ops.push(item);
+    const after = layer.ops.slice();
+    R.invalidate(layer);
+    pushEntry({
+      label: 'Note',
+      bytes: 0,
+      undo() { layer.ops = before.slice(); R.invalidate(layer); emit('layers'); },
+      redo() { layer.ops = after.slice(); R.invalidate(layer); emit('layers'); },
+    });
+    markDirty(); scheduleAutosave(); emit('layers');
+  },
+  overlay(ctx) {
+    const at = this.state.hover;
+    const layer = toolTarget(this);
+    if (!at || !layer || this.state.busy) return;
+    const s = R.mapToScreen(at.x, at.y);
+    const size = (layer.pinSize || NOTE_DEFAULTS.pinSize) * R.view.zoom;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    R.drawPin(ctx, s.x, s.y, layer.ops.length + 1, S('note', 'color', NOTE_DEFAULTS.color), size);
+    ctx.restore();
+  },
+});
+
 define({
   id: 'select',
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Click a stamp, path, region, wall, light or label to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it.',
+  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it.',
   options: () => ([]),
   state: { grabbed: null, offset: null, layer: null },
   down(pt) {
@@ -1429,6 +1534,14 @@ define({
         if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
       });
       ctx.stroke();
+    } else if (this.state.layer && this.state.layer.kind === 'notes') {
+      // A pin is drawn centred on its point; the box below is for a stamp,
+      // which stands on it.
+      const s = R.mapToScreen(g.x, g.y);
+      const r = ((this.state.layer.pinSize || NOTE_DEFAULTS.pinSize) / 2) * R.view.zoom + 5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       const s = R.mapToScreen(g.x, g.y);
       ctx.strokeRect(s.x - 14, s.y - 26, 28, 28);
@@ -1479,6 +1592,12 @@ function hitTest(pt) {
         if (Math.abs(pt.x - item.x) < w / 2 && Math.abs(pt.y - item.y) < reach) {
           return { layer, item };
         }
+      }
+    } else if (layer.kind === 'notes') {
+      const reach = (layer.pinSize || NOTE_DEFAULTS.pinSize) / 2 + 4;
+      for (let j = layer.ops.length - 1; j >= 0; j--) {
+        const item = layer.ops[j];
+        if (Math.hypot(item.x - pt.x, item.y - pt.y) < reach) return { layer, item };
       }
     } else if (layer.kind === 'lights') {
       for (let j = layer.ops.length - 1; j >= 0; j--) {
@@ -1543,6 +1662,19 @@ export function selectedObject() {
   return { layer, item: grabbed };
 }
 
+/** Pick up `item` as though it had been clicked with Select -- how the notes
+ *  list in the Layers panel hands a note to the Selected panel. */
+export function selectObject(layer, item) {
+  if (!layer || !layer.ops || !layer.ops.includes(item)) return false;
+  if (app.tool !== 'select') setTool('select');
+  TOOLS.select.state.grabbed = item;
+  TOOLS.select.state.layer = layer;
+  TOOLS.select.state.offset = null;
+  emit('selection');
+  R.requestDraw();
+  return true;
+}
+
 export function clearSelection() {
   TOOLS.select.state.grabbed = null;
   TOOLS.select.state.layer = null;
@@ -1578,5 +1710,18 @@ export function setTool(id) {
   emit('tool');
   R.requestDraw();
 }
+
+/* A path, wall or region half clicked out belongs to the map it was started
+   on. Left in the tool, it carried over into the next map opened or created,
+   and Enter committed the old map's coordinates into the new one. */
+on('document', () => {
+  for (const tool of Object.values(TOOLS)) {
+    if (!tool.state) continue;
+    if (Array.isArray(tool.state.points)) tool.state.points = [];
+    if ('placing' in tool.state) tool.state.placing = null;
+    if ('from' in tool.state) tool.state.from = null;
+    if ('grabbed' in tool.state) { tool.state.grabbed = null; tool.state.layer = null; }
+  }
+});
 
 export { live, endPaint };

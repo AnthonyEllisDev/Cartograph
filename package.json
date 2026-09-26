@@ -13,6 +13,7 @@
     "ext": "node test/ext.mjs",
     "theme": "node test/theme.mjs",
     "pro": "node test/pro.mjs",
+    "notes": "node test/notes.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

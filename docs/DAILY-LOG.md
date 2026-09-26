@@ -5,6 +5,147 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-26 — notes with a key beside the map, and other people's files
+
+Anthony's working copy matched `origin/main` across all 71 tracked source files
+(the `.pyc` files git also tracks were not compared), so this was a feature
+day. The baseline was green: 388 checks across thirteen suites, plus `battle`.
+
+**Review.** Three readers in parallel again -- renderer and generator, server,
+front-end state -- turned up twenty candidates, one already on the known list
+(map-aging's stains) and the rest each reproduced on a running copy before
+anything was changed. Sixteen were fixed. Every fix has a check,
+and every check was run against a pristine clone of `origin/main`: 8 of the 9
+new guard checks and 13 of the 14 new regression checks fail there. The one
+that passes on each is a precondition -- *the editor's own files are left
+alone* beside the sandbox check, and *the label is picked up* before the
+dropdown checks. Two drafts passed on the unfixed tree for the wrong reason and
+were rewritten, not kept: the region-colour check set its colour with a `change`
+event a colour input never hears, and the empty-label check depended on the
+step before it having failed.
+
+**Fixed, server side.**
+
+- *A file in an art pack could drive the whole API.* Pack and map folders were
+  served from the editor's own origin with no sandbox, so an SVG or HTML file
+  with a script in it, opened as a page, ran as the editor: same origin, an
+  Origin the guard accepts. Reproduced end to end: a stamp SVG created a
+  project. `/assets/` and `/projects/` now carry `Content-Security-Policy:
+  sandbox` and `nosniff`; an `<img>` or a canvas ignores both, so the editor's
+  own use is untouched. Extensions are code by design and are left alone.
+- *A NaN anywhere on disk stopped the editor starting.* Python reads `NaN`,
+  `Infinity` and `1e999` and writes them back out; `JSON.parse` refuses all
+  three. One in a `pack.json` took `/api/packs` -- read at boot -- with it; a
+  `width: 1e999` saved with a 200 and then emptied the Projects tab.
+  `safe.loads`/`safe.load` refuse them, every loader and every request body goes
+  through them, and a body that does not parse is now a 400 from one place
+  (`api._body`) rather than a 500 from whichever handler read it.
+- *Listed maps that would not open.* `list_projects` checked less than `read`,
+  so a map with no layers was listed, and when it was the newest the editor
+  reopened it on launch and came up with no document; a folder named `Old Map
+  (copy)` was listed and could be neither opened nor deleted. The list applies
+  `read`'s tests now, `read` requires string layer ids as the save's sweep
+  already did, and boot falls back to a blank map if the reopen fails anyway.
+  That fallback should also cover the hand-off's "deleted last-open map stops
+  the editor booting", but that exact case was not reproduced today.
+- *Importing `tree (1).png` was a 400.* `import_asset` validated the stem with
+  `slug` instead of tidying it with `slugify`.
+- *An export name of 64 four-byte letters was a 500*, past the 255-byte file
+  name limit. Capped by bytes, and the name now goes through `under()` -- the
+  hand-off asked for that on the day `.md` joined the allow-list, which is today.
+
+**Fixed, in the editor.**
+
+- *Pressing ] mid-stroke made the stroke wider than `op.size`*, breaking the
+  invariant every box relies on: clipped on screen, and on the landmass an undo
+  that left 32,931 pixels of ghost land in the mask. `move()` reads `live.op.size`.
+- *A one-pixel seam round every landmass stroke.* The composite box is padded by
+  an ink width of 2.5, and a fractional clip half-blends its outline: 105,786
+  channel values on screen differed from a full composite. `compositeAll` rounds
+  its box out to whole pixels. That box only copies from finished canvases and
+  never reaches `applyStroke`, so it is the safe kind (hand-off section 12).
+- *Keys typed in a focused dropdown went to the tools.* Delete in a label's
+  Style menu deleted the label; "w" to reach Water picked up the Wall tool.
+- *A half-drawn wall, path or region carried over into the next map*, and Enter
+  committed the old map's coordinates into it. Tool state is cleared on
+  `'document'`.
+- *A label emptied in the Selected panel became unclickable* (no text, no hit
+  width). The panel refuses an empty label text, and an empty note title.
+- *The region colour menu went dead* the first time a custom colour was picked.
+  Whichever of the two was touched last now wins; settings from before keep the
+  old rule.
+- *Generate land with the seed box emptied* re-rolled on every preview redraw
+  and committed a third seed nobody had seen. It falls back to one held seed,
+  shown as the placeholder.
+- *The palette's scale-bar toggle was never saved*; the coordinates extension's
+  *Show or hide* command made its layer hidden on first use; and the coordinates
+  did not follow a change of grid size (`regrid` now rebuilds extension layers).
+
+**Written up rather than fixed.**
+
+- *Generate land's Replace keeps every dead op.* Each replace appends a `clear`
+  and the new land, so four replaces left ten ops and 37 kB replayed on every
+  rebuild. Dropping the old ops is safe for undo, but it is a change to
+  yesterday's stated design, so it is left for a day that decides it.
+- *The Fill shape box is smaller than its feather blur* (30 px against about
+  42 px at Feather 1), a faint hard edge. Live and reload agree, so invariant
+  (a) holds; it feeds `applyStroke`, so it is the dangerous kind of box.
+- `tools/import_folder.py --group ../x` joins a CLI argument into a path without
+  `under()`. Local trust only.
+- Git tracks `server/__pycache__/*.pyc` and `tools/__pycache__/*.pyc` despite
+  `.gitignore`. `git rm --cached` them when convenient.
+
+**The feature: notes, with the key beside the map.** Second in line on
+2026-09-25, and the research agreed today: Inkarnate's own feedback board has a
+*Notes export* request, Dungeondraft numbers rooms with the plain text tool, and
+Foundry, Azgaar and LegendKeeper all have pins -- but nobody puts the key on the
+exported picture, and a numbered map without its list is half a thing at the
+table. Rejected today: GM/player export as its own feature (a hidden notes layer
+now does the useful half of it), prefabs and copy/paste (larger, and a change to
+the Select tool), print tiling (a PDF writer, verified by printing), elevation
+(touches coast, shelf and lighting at once), and a dungeon generator.
+
+- A `notes` layer kind; no map kind starts with one, and the Note tool's panel
+  offers to add it, as the Region tool does. It goes on top of the stack, above
+  the paper, because a pin under the vignette is a pin you squint at.
+- A note is `{ id, x, y, title, body, color }`. **The number is not stored**: it
+  is the note's place in its layer, so the pin, the list in the Layers panel and
+  the key cannot disagree, and deleting note 2 renumbers the rest everywhere at
+  once. Each notes layer counts from 1 -- which keeps a layer drawable from that
+  layer alone -- and a map with two gets a heading per layer in the key.
+- The Note tool (N) places a pin through a title-and-note dialog, one undo step.
+  Select picks a pin up by clicking it, drags it and deletes it; the Selected
+  panel edits title, note (a new `textarea` field type) and colour. The Layers
+  panel lists the notes in order, and clicking one selects it and brings it into
+  view if it is off screen. Pin size and *Show titles beside the pins* are
+  layer settings.
+- The export dialog offers, when there are visible notes: *Include the note
+  pins*, *Set the key beside the image*, and *Also write the key as a Markdown
+  file*, named after the image the server actually wrote (`map-2-key.md` beside
+  `map-2.png`). The key strip is measured from the image, so a half-size export
+  gets a half-size key, and a key longer than the map runs on below it. A hidden
+  notes layer is neither drawn nor keyed, and the dialog stops offering it --
+  that is the players' copy.
+- `R.drawPin`, `R.withKey`, `R.centreOn`, `noteKey`, `keyMarkdown` and
+  `NOTE_DEFAULTS` are new exports; `api.tools.selectObject` is new in the
+  extension API (additive; `API_VERSION` stays 1).
+
+**Tests.** A new suite, `test/notes.mjs` (36): the layer and where it goes, the
+dialog and cancel, the pin in its colour, undo and redo, the list and selecting
+from it, Selected-panel edits one undo step at a time, the empty-title refusal,
+moving by the pin, renumbering in the key, the list and the drawn pin, titles
+beside pins, pins left out of an export, the hidden layer leaving the key and
+the dialog, the real export writing a wider PNG and a matching `-key.md`, a key
+that runs below the map, two layers, and the round trip. `guards.mjs` 44 -> 53,
+`regress.mjs` 44 -> 58. Looked at in screenshots: the editor with pins, the
+Selected panel on a note, and an exported key.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 53 guards, 58 regress, 8 labels, 8 brushes, 27 generate, 36 notes --
+447 checks, all passing, plus `battle`, over two full back-to-back rounds.
+
+---
+
 ## 2026-09-25 — land from a seed, and a fill that follows the coast
 
 Anthony's working copy matched `origin/main` across all 69 tracked source files,

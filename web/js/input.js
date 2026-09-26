@@ -94,7 +94,11 @@ export function initInput() {
   }, { passive: false });
 
   window.addEventListener('keydown', (ev) => {
-    if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+    // A dropdown takes keys too: it jumps to the option you type. Without it
+    // here, Delete in a label's Style menu deleted the label, and typing "w"
+    // to reach Water picked up the Wall tool.
+    if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement
+        || ev.target instanceof HTMLSelectElement) return;
     if (ev.code === 'Space' && !state.space) { state.space = true; ev.preventDefault(); return; }
 
     const tool = currentTool();
@@ -113,7 +117,7 @@ export function initInput() {
 
     const shortcuts = {
       b: 'brush', e: 'erase', l: 'land', g: 'scatter', f: 'fill', r: 'shape',
-      s: 'stamp', p: 'path', t: 'label', w: 'wall', m: 'measure', v: 'select', h: 'pan',
+      s: 'stamp', p: 'path', t: 'label', n: 'note', w: 'wall', m: 'measure', v: 'select', h: 'pan',
     };
     if (!ev.ctrlKey && !ev.metaKey && shortcuts[ev.key.toLowerCase()]) {
       setTool(shortcuts[ev.key.toLowerCase()]);

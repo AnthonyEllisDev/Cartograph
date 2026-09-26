@@ -7,7 +7,7 @@
  */
 
 import { imageNow, pattern } from './assets.js';
-import { LAYER_KINDS, gridStepPx, layerAlpha, layerVisible } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, gridStepPx, layerAlpha, layerVisible } from './doc.js';
 import * as hex from './hex.js';
 import * as light from './light.js';
 import { clamp, makeCanvas, rng } from './util.js';
@@ -144,6 +144,18 @@ export function fitView(margin = 28) {
   view.zoom = z;
   view.x = (w - view.doc.width * z) / 2;
   view.y = (h - view.doc.height * z) / 2;
+  requestDraw();
+}
+
+/** Bring a map point into view, if it is not already comfortably in it. A
+ *  view that jumps when what you asked for was already on screen loses your
+ *  place for nothing. */
+export function centreOn(mx, my) {
+  const w = view.canvas.width / view.dpr, h = view.canvas.height / view.dpr;
+  const s = mapToScreen(mx, my);
+  if (s.x > w * 0.1 && s.x < w * 0.9 && s.y > h * 0.1 && s.y < h * 0.9) return;
+  view.x = w / 2 - mx * view.zoom;
+  view.y = h / 2 - my * view.zoom;
   requestDraw();
 }
 
@@ -544,6 +556,7 @@ export function rebuildLayer(layer) {
     case 'walls':   return renderWalls(layer, ctx);
     case 'lights':  return renderLights(layer, ctx);
     case 'labels':  return renderLabels(layer, ctx);
+    case 'notes':   return renderNotes(layer, ctx);
     case 'group':   return undefined;              // a folder draws nothing
     case 'grid':    return renderGrid(layer, ctx);
     case 'paper':   return renderPaper(layer, ctx);
@@ -1454,13 +1467,89 @@ function renderPaper(layer, ctx) {
   }
 }
 
+/* ------------------------------------------------------------------- notes */
+
+/* A numbered pin, drawn the same way on the map and in the exported key so
+ * that "3" in one is plainly "3" in the other. The number is the note's place
+ * in its layer, never a stored field -- see noteKey in doc.js. */
+
+/** Dark or light ink for a number on a pin of this colour. */
+function pinInk(colour) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(colour || '');
+  if (!m) return '#f8f1de';
+  const v = parseInt(m[1], 16);
+  const lum = 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255);
+  return lum > 150 ? '#241c10' : '#f8f1de';
+}
+
+export function drawPin(ctx, x, y, n, colour, size) {
+  const r = size / 2;
+  ctx.save();
+  ctx.shadowColor = 'rgba(20,14,6,.45)';
+  ctx.shadowBlur = r * 0.35;
+  ctx.shadowOffsetY = r * 0.12;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = colour;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  // A pale ring, then a dark hairline outside it: the pin has to read on dark
+  // sea and on pale parchment alike.
+  ctx.lineWidth = Math.max(1.5, r * 0.16);
+  ctx.strokeStyle = '#f4ecd8';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r + ctx.lineWidth / 2, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, r * 0.07);
+  ctx.strokeStyle = 'rgba(36,28,16,.8)';
+  ctx.stroke();
+  const digits = String(n).length;
+  ctx.font = `700 ${Math.round(r * (digits > 2 ? 0.8 : digits > 1 ? 0.95 : 1.15))}px Georgia, "Times New Roman", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = pinInk(colour);
+  ctx.fillText(String(n), x, y + r * 0.06);
+  ctx.restore();
+}
+
+function renderNotes(layer, ctx) {
+  const size = layer.pinSize || NOTE_DEFAULTS.pinSize;
+  layer.ops.forEach((item, i) => {
+    if (!isFinite(item.x) || !isFinite(item.y)) return;
+    const colour = item.color || NOTE_DEFAULTS.color;
+    drawPin(ctx, item.x, item.y, i + 1, colour, size);
+    if (!layer.showTitles || !item.title) return;
+    // The title beside the pin, with the same halo a label has, for a map
+    // that is read on screen rather than beside a printed key.
+    const fs = Math.round(size * 0.62);
+    ctx.save();
+    ctx.font = LABEL_STYLES.settlement.font.replace('%s', fs);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2, fs * 0.2);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(244,236,216,.9)';
+    ctx.strokeText(item.title, item.x + size * 0.72, item.y);
+    ctx.fillStyle = '#3a2c1e';
+    ctx.fillText(item.title, item.x + size * 0.72, item.y);
+    ctx.restore();
+  });
+}
+
+
 /* ------------------------------------------------------------- compositing */
 
 export function compositeAll(box) {
   const ctx = view.flatCtx;
-  const x = box ? box.x : 0, y = box ? box.y : 0;
-  const w = box ? box.x1 - box.x : view.doc.width;
-  const h = box ? box.y1 - box.y : view.doc.height;
+  // Out to whole pixels. A box padded by an ink width of 2.5 has fractional
+  // edges, and a fractional clip and clearRect half-blend the pixels along
+  // them: a one-pixel seam round every landmass stroke that stayed on screen
+  // until something composited the whole map. This box only says what to
+  // redraw from canvases already rendered -- it never reaches applyStroke --
+  // so growing it cannot change what is drawn, only how much is copied.
+  const x = box ? Math.floor(box.x) : 0, y = box ? Math.floor(box.y) : 0;
+  const w = box ? Math.ceil(box.x1) - x : view.doc.width;
+  const h = box ? Math.ceil(box.y1) - y : view.doc.height;
   if (w <= 0 || h <= 0) return;
   ctx.save();
   ctx.beginPath();
@@ -1705,7 +1794,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 /* --------------------------------------------------------------- exporting */
 
-export function flatten({ scale = 1, grid = true, paper = true, lights = true } = {}) {
+export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true } = {}) {
   const w = Math.round(view.doc.width * scale);
   const h = Math.round(view.doc.height * scale);
   const out = makeCanvas(w, h);
@@ -1717,12 +1806,108 @@ export function flatten({ scale = 1, grid = true, paper = true, lights = true } 
     if (layer.kind === 'grid' && !grid) continue;
     if (layer.kind === 'paper' && !paper) continue;
     if (layer.kind === 'lights' && !lights) continue;
+    if (layer.kind === 'notes' && !notes) continue;
     ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
     ctx.drawImage(canvasFor(layer), 0, 0, w, h);
   }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
+  return out;
+}
+
+/* --------------------------------------------------------------- the key */
+
+/* Nobody else puts the key on the picture. A numbered map is half a thing
+ * without the list that says what the numbers are, and "keep the notes in
+ * another file and hope" is how that list goes missing at the table. So the
+ * export can set the key down the right-hand side of the image itself, on
+ * the same parchment, in the same pins. */
+
+/** Break a paragraph into lines that fit `width` in the context's font. */
+function wrapText(ctx, text, width) {
+  const lines = [];
+  for (const para of String(text).split(/\n/)) {
+    const words = para.split(/\s+/).filter(Boolean);
+    if (!words.length) { lines.push(''); continue; }
+    let line = '';
+    for (const word of words) {
+      const next = line ? line + ' ' + word : word;
+      if (line && ctx.measureText(next).width > width) { lines.push(line); line = word; } else line = next;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** `image` with the key beside it, or `image` itself when there is no key.
+ *  Everything is measured from the key's width, which is measured from the
+ *  image, so a half-size export gets a half-size key rather than a squashed
+ *  full-size one. */
+export function withKey(image, sections, title) {
+  if (!sections || !sections.length) return image;
+  const w = image.width, h = image.height;
+  const kw = Math.round(Math.max(260, Math.min(w * 0.34, 900)));
+  const u = kw / 400;                                    // one unit at a 400-px key
+  const pad = 26 * u, pin = 26 * u, gap = 12 * u;
+  const titleFont = `600 ${Math.round(26 * u)}px Georgia, "Times New Roman", serif`;
+  const headFont = `italic 500 ${Math.round(17 * u)}px Georgia, "Times New Roman", serif`;
+  const nameFont = `600 ${Math.round(16 * u)}px Georgia, "Times New Roman", serif`;
+  const bodyFont = `400 ${Math.round(14 * u)}px Georgia, "Times New Roman", serif`;
+  const textX = pad + pin + gap, textW = kw - textX - pad;
+
+  // Lay out first, on a scratch context, so the canvas can be made tall
+  // enough: a long key runs on below the map rather than being cut off.
+  const m = makeCanvas(1, 1).getContext('2d');
+  const blocks = [];
+  let y = pad + 44 * u;
+  for (const section of sections) {
+    if (sections.length > 1) { blocks.push({ kind: 'head', text: section.name, y: y + 18 * u }); y += 34 * u; }
+    for (const e of section.entries) {
+      m.font = nameFont;
+      const names = wrapText(m, e.title, textW);
+      m.font = bodyFont;
+      const body = e.body ? wrapText(m, e.body, textW) : [];
+      const lh = 21 * u, bh = 19 * u;
+      const height = Math.max(pin, names.length * lh + body.length * bh + (body.length ? 4 * u : 0));
+      blocks.push({ kind: 'note', e, names, body, y, lh, bh });
+      y += height + 16 * u;
+    }
+  }
+  const H = Math.max(h, Math.ceil(y + pad));
+
+  const out = makeCanvas(w + kw, H);
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#efe4c8';
+  ctx.fillRect(0, 0, w + kw, H);
+  ctx.drawImage(image, 0, 0);
+  ctx.fillStyle = '#3a2c1e';
+  ctx.fillRect(w, 0, Math.max(1, Math.round(2 * u)), H);
+
+  ctx.save();
+  ctx.translate(w, 0);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#3a2c1e';
+  ctx.font = titleFont;
+  ctx.fillText(title || 'Key', pad, pad + 20 * u, kw - pad * 2);
+  for (const b of blocks) {
+    if (b.kind === 'head') {
+      ctx.font = headFont;
+      ctx.fillStyle = '#6a5638';
+      ctx.fillText(b.text, pad, b.y, kw - pad * 2);
+      continue;
+    }
+    drawPin(ctx, pad + pin / 2, b.y + pin / 2, b.e.n, b.e.color, pin);
+    let ty = b.y + 15 * u;
+    ctx.fillStyle = '#2c2216';
+    ctx.font = nameFont;
+    for (const line of b.names) { ctx.fillText(line, textX, ty); ty += b.lh; }
+    ctx.fillStyle = '#4a3b27';
+    ctx.font = bodyFont;
+    if (b.body.length) ty += 4 * u - (b.lh - b.bh);
+    for (const line of b.body) { ctx.fillText(line, textX, ty); ty += b.bh; }
+  }
+  ctx.restore();
   return out;
 }
 

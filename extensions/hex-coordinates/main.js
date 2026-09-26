@@ -123,8 +123,11 @@ export default function setup(api) {
     id: 'toggle-coords',
     title: 'Show or hide the grid coordinates',
     run() {
+      // Asked for when there is no layer yet, "show or hide" means show: the
+      // layer is made visible, and flipping it straight after hid it again.
+      const existed = !!coordLayer(false);
       const layer = coordLayer(true);
-      layer.visible = !layer.visible;
+      if (existed) layer.visible = !layer.visible;
       R.compositeAll();
       R.requestDraw();
       api.events.emit('layers');

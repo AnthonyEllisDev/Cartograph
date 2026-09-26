@@ -10,6 +10,7 @@ export const ICONS = {
   stamp: P('<path d="M12 3l3 6 6 .8-4.4 4.2 1.1 6L12 17.2 6.3 20l1.1-6L3 9.8 9 9z"/>'),
   path: P('<path d="M4 20c4 0 3-6 7-6s3-8 9-8"/>'),
   region: P('<path d="M4 8l5-4 7 3 4-2v11l-5 4-7-3-4 2z"/><path d="M9 4v11"/><path d="M16 7v11"/>'),
+  pin: P('<path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><path d="M11 7.5l1.4-1v6"/>'),
   text: P('<path d="M5 6h14"/><path d="M12 6v13"/><path d="M8 19h8"/>'),
   select: P('<path d="M5 3l14 8-6 1.6L10.5 19z"/>'),
   pan: P('<path d="M12 3v9"/><path d="M8 8l4-4 4 4"/><path d="M3 12h9"/><path d="M8 8"/><path d="M12 21v-9"/><path d="M16 16l-4 4-4-4"/><path d="M21 12h-9"/>'),

@@ -19,6 +19,7 @@ export const LAYER_KINDS = {
   labels:  { label: 'Labels',   paint: false, icon: 'text'  },
   walls:   { label: 'Walls',    paint: false, icon: 'wall'  },
   lights:  { label: 'Lighting', paint: false, icon: 'light' },
+  notes:   { label: 'Notes',    paint: false, icon: 'pin'   },
   group:   { label: 'Group',    paint: false, icon: 'group' },
   grid:    { label: 'Grid',     paint: false, icon: 'grid'  },
   paper:   { label: 'Paper',    paint: false, icon: 'paper' },
@@ -134,6 +135,7 @@ const LAYER_RECIPES = {
   walls: () => makeLayer('walls'),
   lights: () => makeLayer('lights'),
   labels: () => makeLayer('labels'),
+  notes: () => makeLayer('notes', { pinSize: NOTE_DEFAULTS.pinSize, showTitles: false }),
   grid: () => makeLayer('grid'),
   paper: () => makeLayer('paper'),
 };
@@ -318,4 +320,50 @@ export function referencedAssets(doc) {
 
 export function serialise(doc) {
   return JSON.parse(JSON.stringify(doc));
+}
+
+
+/* ------------------------------------------------------------------- notes */
+
+/* A note is a numbered pin with a title and a body: "3. The drowned chapel --
+   the bell still rings at low tide." The number is not stored. It is the
+   note's place in its layer, so there is nothing to renumber when one is
+   deleted and nothing that can disagree with the order the key is written in.
+   Each notes layer counts from 1, which keeps a layer's pins drawable from
+   that layer alone; a map with two (the GM's and the players', say) gets a
+   heading per layer in the key. */
+
+export const NOTE_DEFAULTS = { color: '#8a3b3b', pinSize: 44 };
+
+/** Every note the key should list: visible layers only, in stack order
+ *  bottom-first, each with its number. The same rule the picture uses, so a
+ *  hidden layer's pins are neither drawn nor keyed. */
+export function noteKey(doc) {
+  const out = [];
+  for (const layer of doc.layers) {
+    if (layer.kind !== 'notes' || !layerVisible(doc, layer)) continue;
+    const entries = (layer.ops || []).map((item, i) => ({
+      n: i + 1,
+      title: String(item.title || '').trim() || 'Note ' + (i + 1),
+      body: String(item.body || '').trim(),
+      color: item.color || NOTE_DEFAULTS.color,
+    }));
+    if (entries.length) out.push({ name: layer.name || 'Notes', entries });
+  }
+  return out;
+}
+
+/** The key as Markdown: readable as it stands, and a heading per note so a
+ *  table of contents falls out of any renderer. */
+export function keyMarkdown(doc) {
+  const sections = noteKey(doc);
+  const lines = ['# ' + (doc.name || 'Map'), ''];
+  for (const section of sections) {
+    if (sections.length > 1) lines.push('## ' + section.name, '');
+    for (const e of section.entries) {
+      lines.push((sections.length > 1 ? '### ' : '## ') + e.n + '. ' + e.title, '');
+      if (e.body) lines.push(e.body, '');
+    }
+  }
+  return lines.join('\n').replace(/\n+$/, '') + '\n';
 }

@@ -487,6 +487,88 @@ try {
   await fetch(`${BASE}/api/projects/${name}`, { method: 'DELETE' });
 }
 
+/* 2026-09-26: other people's files, and numbers a browser cannot read ------- */
+
+{
+  // An art pack is somebody else's work. A script in one of its SVGs, opened
+  // as a page, ran as the editor itself and could drive the whole API.
+  const r = await fetch(`${BASE}/assets/packs/starter/stamps/bridge.svg`);
+  const csp = r.headers.get('content-security-policy') || '';
+  t('a pack file is served sandboxed, so a script inside it cannot run as the editor',
+    r.status === 200 && /\bsandbox\b/.test(csp), r.status + ' ' + (csp || 'no CSP'));
+  t('and is not sniffed into something it does not say it is',
+    r.headers.get('x-content-type-options') === 'nosniff', r.headers.get('x-content-type-options'));
+  const js = await fetch(`${BASE}/js/app.js`);
+  t('while the editor\'s own files are left alone', !js.headers.get('content-security-policy'),
+    js.headers.get('content-security-policy') || 'no CSP');
+}
+
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'assets', 'packs', 'guard-nan');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'pack.json'), '{"name": "Guard NaN", "scale": NaN, "assets": []}');
+  try {
+    const text = await (await fetch(`${BASE}/api/packs`)).text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch (_) { /* the failure being tested */ }
+    t('a NaN in one pack.json leaves /api/packs readable by a browser', !!parsed,
+      parsed ? 'parsed' : 'JSON.parse refused it, and the editor would not start');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const r = await fetch(`${BASE}/api/projects/GuardHuge`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: '{"format":1,"name":"GuardHuge","width":1e999,"height":512,' +
+          '"layers":[{"id":"l-a","kind":"raster","ops":[]}]}',
+  });
+  t('a map with a number too large for JSON is refused rather than saved', r.status === 400, r.status);
+  await fetch(`${BASE}/api/projects/GuardHuge`, { method: 'DELETE' });
+}
+
+{
+  // Listed means openable: the editor reopens the newest map on launch.
+  const made = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'GuardNoLayers', width: 800, height: 600 }),
+  }).then((x) => x.json());
+  const list = await fetch(`${BASE}/api/projects`).then((x) => x.json());
+  const slug = made.project && made.project.slug;
+  t('a map with no layers is not listed as one that can be opened',
+    slug && !list.projects.some((q) => q.slug === slug), slug);
+  if (slug) await fetch(`${BASE}/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+}
+
+{
+  const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
+                          '1f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4d30000000049454e44ae426082', 'hex');
+  const r = await fetch(`${BASE}/api/packs/import?name=${encodeURIComponent('guard tree (1).png')}&kind=stamp&pack=user`,
+    { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png });
+  const body = await r.json().catch(() => ({}));
+  t('importing "tree (1).png", as a browser names a second download, works', r.status === 200,
+    r.status + ' ' + (body.error || (body.asset && body.asset.file)));
+  if (body.asset) {
+    rmSync(join(fileURLToPath(new URL('..', import.meta.url)), 'assets', 'packs', 'user', body.asset.file),
+           { force: true });
+  }
+}
+
+{
+  const long = '\u{1D400}'.repeat(64);
+  const r = await fetch(`${BASE}/api/export?name=${encodeURIComponent(long + '.png')}`,
+    { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: Buffer.from('x') });
+  const body = await r.json().catch(() => ({}));
+  t('an export name of 64 four-byte letters is written, not a 500', r.status === 200,
+    r.status + ' ' + (body.error || ''));
+  if (body.path) rmSync(body.path, { force: true });
+  const md = await fetch(`${BASE}/api/export?name=GuardKey.md`,
+    { method: 'PUT', headers: { 'Content-Type': 'text/markdown' }, body: Buffer.from('# key') });
+  const mdBody = await md.json().catch(() => ({}));
+  t('a map key can be exported as Markdown', md.status === 200 && /GuardKey(-\d+)?\.md$/.test(mdBody.path || ''),
+    mdBody.path || md.status);
+  if (mdBody.path) rmSync(mdBody.path, { force: true });
+}
+
 for (const [status, name, note] of out) {
   console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 }

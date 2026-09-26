@@ -143,7 +143,7 @@ regions layer; pick the tool and the panel offers to add one.
 
 **Label** places text in four cartographic styles. **Select** picks up anything
 you have placed — a stamp, a path, a region by any point on its border, a wall,
-a light or a label. Drag it to move it, Delete to remove it, and change what it
+a light, a label or a note. Drag it to move it, Delete to remove it, and change what it
 is in the **Selected** panel at the top of the right rail: a region's colour,
 fill and border, a road's width, a label's wording and size, a door turned into
 a window, a lamp's reach in feet. Nothing here has to be decided before it is
@@ -209,6 +209,30 @@ are first-class rather than merely drawable:
 The hex layer's *Hex width* is measured corner to corner. The distance the scale
 counts is across the flats, which is shorter — the panel tells you both, because
 a map that quietly measures 15% long is worse than one with no scale at all.
+
+### Notes and the key
+
+**Note** (N) pins a numbered note to the map: a title and as much text as it
+needs under it. The room key of a dungeon, the points of interest on a hex
+crawl, the rumour attached to a village. Pick the tool and its panel offers to
+add a notes layer, which sits on top of everything else so a pin is never under
+the grid or the paper.
+
+- **The number is its place in the list.** Delete note 2 and the old 3 becomes
+  2 — on the pin, in the list and in the key at once, because none of them keeps
+  a number of its own that could disagree. The Notes layer's panel lists them in
+  order, and clicking one selects it.
+- **Select edits them**: title, note and pin colour in the Selected panel, drag
+  to move, Delete to remove, each one a step in the history.
+- **The export sets the key beside the image** — the same pins, numbered the
+  same, on a strip of parchment down the right-hand side — and can also write
+  it as a Markdown file named after the image, `Harbour-key.md` beside
+  `Harbour.png`. A key longer than the map runs on below it rather than being
+  cut off.
+- **Hide the notes layer for the players' copy.** A hidden layer's pins are
+  neither drawn nor keyed, and the export dialog stops offering them. Two notes
+  layers — yours and theirs, say — each count from 1 and get their own heading
+  in the key.
 
 ### Working at scale
 
@@ -297,6 +321,12 @@ because the socket does not care which handler was going to answer. Every path a
 request names — project, pack, asset — is resolved and then checked to be inside
 the folder it belongs to before anything is opened.
 
+**Other people's files run nothing.** Art packs and map folders are served with
+a sandboxing header, so an SVG or an HTML file in a pack you downloaded cannot
+run a script as the editor if it is opened as a page. Numbers JSON cannot
+carry — `NaN`, `Infinity` — are refused on the way in, from a request or from a
+file on disk, rather than written back out in a form the browser cannot read.
+
 **The art is generated, not downloaded.** `tools/terrain.py` and
 `tools/stamps.py` write the whole starter pack from a seed, so there is nothing
 shipped whose licence you have to take on trust, and the pack can be re-rolled.
@@ -344,8 +374,9 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 388 assertions in all: `generate.mjs`
-(seeded land, its round trip, and a fill that follows it), `props.mjs`
+There are narrower scripts beside it, 447 assertions in all: `notes.mjs`
+(numbered notes, their renumbering, and the key beside the image and in
+Markdown), `generate.mjs` (seeded land, its round trip, and a fill that follows it), `props.mjs`
 (changing a thing after it has been drawn), `lighting.mjs`
 (darkness, wall shadows, cone lights and the tabletop lights), `hex.mjs` (hex
 snapping, measurement and both orientations), `labels.mjs` (text along a path),

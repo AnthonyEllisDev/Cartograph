@@ -450,11 +450,16 @@ export async function generateDialog() {
   const preview = el('canvas', { class: 'gen-preview', width: pw, height: ph });
   const redraw = throttleFrame(() => drawPreview(preview, p));
 
-  const seedInput = el('input', { type: 'text', value: p.seed, 'data-gen': 'seed', spellcheck: 'false' });
-  seedInput.addEventListener('input', () => { p.seed = seedInput.value; redraw(); });
+  // An emptied box falls back to one seed held for the dialog, shown as the
+  // placeholder. Left empty, normalise() drew a fresh random seed on every
+  // redraw, so the preview flickered between lands and Generate committed a
+  // third one nobody had seen.
+  const seedInput = el('input', { type: 'text', value: p.seed, placeholder: p.seed,
+                                  'data-gen': 'seed', spellcheck: 'false' });
+  seedInput.addEventListener('input', () => { p.seed = seedInput.value.trim() || seedInput.placeholder; redraw(); });
   const reroll = el('button', {
     class: 'btn', text: 'Re-roll', 'data-gen': 'reroll', type: 'button',
-    onclick: () => { p.seed = seedInput.value = randomSeed(); redraw(); },
+    onclick: () => { p.seed = seedInput.value = seedInput.placeholder = randomSeed(); redraw(); },
   });
 
   const set = (key) => (v) => { p[key] = v; redraw(); };

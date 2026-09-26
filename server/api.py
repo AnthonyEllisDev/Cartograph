@@ -11,12 +11,26 @@ import subprocess
 import sys
 import time
 
-from server import extensions, packs, projects
-from server.safe import Unsafe, slug
+from server import extensions, packs, projects, safe
+from server.safe import Unsafe, slug, under
 
 
 def _json(obj, status=200):
     return status, "application/json; charset=utf-8", json.dumps(obj).encode("utf-8")
+
+
+class BadBody(ValueError):
+    """A request body that is not JSON the editor could have sent."""
+
+
+def _body(req):
+    # One place, so that a body which is not JSON -- or is JSON with a NaN in
+    # it, which Python reads and a browser cannot -- is a 400 everywhere
+    # rather than a 500 from whichever handler happened to parse it.
+    try:
+        return safe.loads(req.body or b"{}")
+    except (ValueError, RecursionError) as exc:
+        raise BadBody(str(exc)) from None
 
 
 def _err(message, status=400):
@@ -75,7 +89,7 @@ def route(req):
             name = slug(path[len("/api/extensions/"):], "extension")
         except Unsafe as exc:
             return _err(exc)
-        body = json.loads(req.body or b"{}")
+        body = _body(req)
         disabled = _disabled(ctx)
         if isinstance(body, dict) and body.get("enabled"):
             disabled.discard(name)
@@ -88,7 +102,7 @@ def route(req):
     if path == "/api/open-folder" and method == "POST":
         # A local program should be able to show you its own folders. Only the
         # four it owns, and only ever a folder.
-        body = json.loads(req.body or b"{}")
+        body = _body(req)
         which = body.get("which") if isinstance(body, dict) else None
         # Only a string can name one of the four. A list or an object reached
         # the dict lookup below and raised "unhashable type" as a 500, where
@@ -126,7 +140,7 @@ def route(req):
         return _json({"ok": True, "projects": projects.list_projects(ctx.projects_dir)})
 
     if path == "/api/projects" and method == "POST":
-        doc = json.loads(req.body or b"{}")
+        doc = _body(req)
         name = projects.unique_slug(ctx.projects_dir, doc.get("name") or "Untitled Map")
         doc["name"] = doc.get("name") or name
         saved = projects.write(ctx.projects_dir, name, doc)
@@ -149,7 +163,7 @@ def route(req):
                 return _err("cannot read project: %s" % exc, 404)
 
         if len(parts) == 1 and method == "PUT":
-            doc = json.loads(req.body or b"{}")
+            doc = _body(req)
             try:
                 saved = projects.write(ctx.projects_dir, name, doc)
             except ValueError as exc:
@@ -194,12 +208,19 @@ def route(req):
 
     if path == "/api/export" and method == "PUT":
         raw = req.query.get("name", ["map.png"])[0]
-        stem = os.path.splitext(os.path.basename(raw))[0][:64] or "map"
-        stem = "".join(c for c in stem if c.isalnum() or c in " _-").strip() or "map"
+        stem = os.path.splitext(os.path.basename(raw))[0][:64]
+        stem = "".join(c for c in stem if c.isalnum() or c in " _-").strip()
+        # Sixty-four characters is not sixty-four bytes. isalnum admits letters
+        # that take four bytes each in UTF-8, and a name of them ran past the
+        # file system's 255-byte limit: a 500 from open(), not a file.
+        while len(stem.encode("utf-8")) > 160:
+            stem = stem[:-1]
+        stem = stem.strip() or "map"
         # Maps go out as pictures; battle maps also go out as data for a
-        # virtual tabletop, which is a JSON file with the walls in it.
+        # virtual tabletop, which is a JSON file with the walls in it; and a
+        # map with notes on it can go out with its key as a Markdown file.
         ext = ".png"
-        for allowed in (".png", ".jpg", ".jpeg", ".webp", ".dd2vtt", ".uvtt", ".json"):
+        for allowed in (".png", ".jpg", ".jpeg", ".webp", ".dd2vtt", ".uvtt", ".json", ".md"):
             if raw.lower().endswith(allowed):
                 ext = allowed
                 break
@@ -207,14 +228,20 @@ def route(req):
         # Claiming the name and opening it have to be one step. This server
         # serves each request on its own thread, so two exports racing for
         # "map.png" both saw it free and one of them lost its bytes.
-        dest = os.path.join(ctx.exports_dir, stem + ext)
+        # Through under(), like every other client-supplied name. The filter
+        # above already closes every escape anyone has found, but that made it
+        # safe by coincidence rather than by proof.
+        try:
+            dest = under(ctx.exports_dir, stem + ext)
+        except Unsafe as exc:
+            return _err(exc)
         n = 1
         while True:
             try:
                 fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 n += 1
-                dest = os.path.join(ctx.exports_dir, "%s-%d%s" % (stem, n, ext))
+                dest = under(ctx.exports_dir, "%s-%d%s" % (stem, n, ext))
                 continue
             with os.fdopen(fd, "wb") as fh:
                 fh.write(req.body)

@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import time
 
+from server import safe
 from server.safe import Unsafe, slug, slugify, under
 
 FORMAT = 1
@@ -51,10 +52,17 @@ def list_projects(root):
             continue
         try:
             with open(meta, encoding="utf-8") as fh:
-                doc = json.load(fh)
+                doc = safe.load(fh)
             # Valid JSON of the wrong shape parses cleanly and then raises on
             # first use, and a folder can go between the listdir and the stat.
             if not isinstance(doc, dict):
+                continue
+            # The same tests read() makes, so nothing is listed that will not
+            # open. A map with no layers was listed, and when it was the newest
+            # the editor tried to reopen it on launch and came up with no
+            # document; a folder named "Old Map (copy)" was listed and could be
+            # neither opened nor deleted, since its name is not a slug.
+            if not _usable(name, doc):
                 continue
             layers = doc.get("layers")
             out.append({
@@ -75,10 +83,20 @@ def list_projects(root):
     return out
 
 
+def _usable(name, doc):
+    try:
+        slug(name, "project")
+    except Unsafe:
+        return False
+    layers = doc.get("layers")
+    return isinstance(layers, list) and any(
+        isinstance(l, dict) and isinstance(l.get("id"), str) and l["id"] for l in layers)
+
+
 def read(root, name):
     with open(_meta_path(root, slug(name, "project")), encoding="utf-8") as fh:
         try:
-            doc = json.load(fh)
+            doc = safe.load(fh)
         except RecursionError:
             raise ValueError("project.json is nested too deeply") from None
     # list_projects already refuses valid JSON of the wrong shape; read did
@@ -89,7 +107,10 @@ def read(root, name):
         raise ValueError("project.json is not an object")
     if not isinstance(doc.get("layers"), list) or not doc["layers"]:
         raise ValueError("project.json has no layers")
-    doc["layers"] = [l for l in doc["layers"] if isinstance(l, dict) and l.get("id")]
+    # A string id, as the save's blob sweep already requires: an id of {} or
+    # 5 was passed through to the editor, which keys its canvases on it.
+    doc["layers"] = [l for l in doc["layers"]
+                     if isinstance(l, dict) and isinstance(l.get("id"), str) and l["id"]]
     if not doc["layers"]:
         raise ValueError("project.json has no usable layers")
     return doc

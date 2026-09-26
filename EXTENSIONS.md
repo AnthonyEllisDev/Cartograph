@@ -203,7 +203,7 @@ api.registerExporter({
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'selection'`, `'library'`, `'dirty'`, `'saved'` |
 | `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
-| `api.tools` | `{ TOOLS, clearSelection, currentTool, selectedObject, setTool }` |
+| `api.tools` | `{ TOOLS, clearSelection, currentTool, selectObject, selectedObject, setTool }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
 | `api.server` | the local HTTP API: `state`, `packs`, `importAsset`, `projects`, `createProject`, `readProject`, `writeProject`, `deleteProject`, `writeLayer`, `writeThumb`, `exportImage`, `openFolder` |
@@ -224,7 +224,10 @@ only Select has a selection. It is checked against the document every time, so
 it never hands back something that has been deleted or undone away.
 `'selection'` fires whenever that answer changes, which is what the properties
 panel in the right rail listens to; `api.tools.clearSelection()` drops it.
-Nothing was removed for this, and `API_VERSION` is still 1.
+`api.tools.selectObject(layer, item)` does the opposite: it picks up the Select
+tool and hands it `item`, as though it had been clicked, and returns `false` if
+`item` is not on `layer`. The notes list in the Layers panel is built on it.
+Nothing was removed for any of this, and `API_VERSION` is still 1.
 
 `api.invalidate` relights for you when the layer you pass is a walls layer, or a
 group holding one, because a wall that moves without its shadow leaves light

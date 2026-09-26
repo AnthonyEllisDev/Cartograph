@@ -6,12 +6,11 @@ build an index from the file names. That is the whole contract, so adding art to
 this program never involves more than copying files in.
 """
 
-import json
 import os
 import time
 
-from server import png
-from server.safe import Unsafe, slug, under
+from server import png, safe
+from server.safe import Unsafe, slug, slugify, under
 
 IMAGE_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".svg": "image/svg+xml", ".gif": "image/gif"}
@@ -68,7 +67,7 @@ def read_pack(pack_dir, pack_id):
     if os.path.isfile(manifest_path):
         try:
             with open(manifest_path, encoding="utf-8") as fh:
-                manifest = json.load(fh)
+                manifest = safe.load(fh)
         except (OSError, ValueError, RecursionError) as exc:
             return {"id": pack_id, "name": pack_id, "error": "pack.json: %s" % exc, "assets": []}
         # Valid JSON is not the same as the right shape. A pack.json holding a
@@ -134,7 +133,10 @@ def import_asset(packs_root, filename, data, kind="stamp", group="imported", pac
         raise Unsafe("unsupported file type: %s" % ext)
     if kind not in ("terrain", "stamp"):
         kind = "stamp"
-    stem = slug(os.path.splitext(os.path.basename(filename))[0], "filename")
+    # slugify, not slug: a file name is something to tidy, not a thing to
+    # refuse. "tree (1).png" is how every browser names a second download of
+    # the same file, and it was a 400 "bad filename" from the Assets tab.
+    stem = slugify(os.path.splitext(os.path.basename(filename))[0], "asset")
     sub = "terrain" if kind == "terrain" else "stamps"
     dest_dir = under(packs_root, pack, sub)
     os.makedirs(dest_dir, exist_ok=True)
