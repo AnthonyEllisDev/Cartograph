@@ -316,6 +316,19 @@ function shapeMask(ctx, op, soft) {
     return;
   } else if (op.shape === 'all') {
     ctx.rect(0, 0, view.doc.width, view.doc.height);
+  } else if (op.rings) {
+    // A generated dungeon floor (dungeon.js): closed rings of cell corners,
+    // filled even-odd as generated land is, so a pillar of rock inside a hall
+    // is a hole and the rock around a dungeon is the frame minus its rings.
+    for (const ring of op.rings) {
+      for (let i = 0; i + 1 < ring.length; i += 2) {
+        if (i === 0) ctx.moveTo(ring[0], ring[1]); else ctx.lineTo(ring[i], ring[i + 1]);
+      }
+      ctx.closePath();
+    }
+    ctx.fill('evenodd');
+    ctx.restore();
+    return;
   } else {
     pts.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
     ctx.closePath();
@@ -1337,17 +1350,18 @@ function pathWalker(points) {
     segs.push({ a, b, len, at: total });
     total += len;
   }
+  // Past either end the walk carries straight on along the end segment. A
+  // name longer than its curve used to stop dead at the ends, and every letter
+  // that did not fit was drawn on top of the last one there.
+  const along = (s, d) => {
+    const t = (d - s.at) / s.len;
+    return { x: s.a.x + (s.b.x - s.a.x) * t, y: s.a.y + (s.b.y - s.a.y) * t };
+  };
   const at = (d) => {
     if (!segs.length) return null;
-    if (d <= 0) return { x: segs[0].a.x, y: segs[0].a.y };
-    for (const s of segs) {
-      if (d <= s.at + s.len) {
-        const t = (d - s.at) / s.len;
-        return { x: s.a.x + (s.b.x - s.a.x) * t, y: s.a.y + (s.b.y - s.a.y) * t };
-      }
-    }
-    const last = segs[segs.length - 1];
-    return { x: last.b.x, y: last.b.y };
+    if (d <= 0) return along(segs[0], d);
+    for (const s of segs) if (d <= s.at + s.len) return along(s, d);
+    return along(segs[segs.length - 1], d);
   };
   return {
     total,
@@ -1356,6 +1370,12 @@ function pathWalker(points) {
      *  from one segment makes every letter jitter wherever a hand-drawn curve
      *  has a kink in it. */
     angleAt(d, span) {
+      // Off the end, the end segment's own heading: clamping both ends of the
+      // span there would measure it backwards.
+      if (d < 0 || d > total) {
+        const s = d < 0 ? segs[0] : segs[segs.length - 1];
+        return s ? Math.atan2(s.b.y - s.a.y, s.b.x - s.a.x) : 0;
+      }
       const a = at(Math.max(0, d - span)), b = at(Math.min(total, d + span));
       return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
     },
@@ -1395,10 +1415,13 @@ function drawSpaced(ctx, spaced, stroke) {
     if (stroke) ctx.strokeText(text, 0, 0); else ctx.fillText(text, 0, 0);
     return;
   }
-  const widths = Array.from(text).map((ch) => ctx.measureText(ch).width);
-  const total = widths.reduce((a, b) => a + b, 0) + px * (text.length - 1);
+  // By code point, as the letters are drawn: text.length counts UTF-16 units,
+  // so a name in astral letters had a gap too many per letter in its width.
+  const chars = Array.from(text);
+  const widths = chars.map((ch) => ctx.measureText(ch).width);
+  const total = widths.reduce((a, b) => a + b, 0) + px * (chars.length - 1);
   let x = -total / 2;
-  Array.from(text).forEach((ch, i) => {
+  chars.forEach((ch, i) => {
     const w = widths[i];
     if (stroke) ctx.strokeText(ch, x + w / 2, 0); else ctx.fillText(ch, x + w / 2, 0);
     x += w + px;
@@ -1562,12 +1585,16 @@ export function compositeAll(box) {
     ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
     const liveHere = view.liveLayer === layer.id && view.live;
-    if (liveHere && view.liveErase) {
+    const liveOp = view.liveErase ? 'destination-out' : (view.liveBlend || 'source-over');
+    if (liveHere && (liveOp !== 'source-over' || ctx.globalAlpha < 1)) {
       // An erase cannot be laid over the layer it is erasing from: source-over
       // does not subtract, so drawing the live canvas on top showed nothing
       // and the eraser appeared to do nothing until the button came up. The
       // box is copied, the stroke is cut out of the copy, and the copy is what
-      // gets drawn.
+      // gets drawn. A brush with a blend mode, or any stroke on a layer below
+      // full opacity, has the same problem in another form -- the stroke is
+      // blended onto (or faded with) the layer only at commit -- and is
+      // previewed the same way.
       // makeCanvas, not scratch: this box is the live repaint box and its
       // size changes every frame, so the pool would mint an entry per frame
       // and evict the coastline's, which are what it exists for.
@@ -1575,7 +1602,7 @@ export function compositeAll(box) {
       const cctx = cut.getContext('2d');
       cctx.drawImage(canvasFor(layer), x, y, w, h, 0, 0, w, h);
       cctx.save();
-      cctx.globalCompositeOperation = 'destination-out';
+      cctx.globalCompositeOperation = liveOp;
       cctx.drawImage(view.live, x, y, w, h, 0, 0, w, h);
       cctx.restore();
       ctx.drawImage(cut, 0, 0, w, h, x, y, w, h);

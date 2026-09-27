@@ -64,7 +64,7 @@ export function initInput() {
 
     R.view.cursor = { x: pt.x, y: pt.y, r: brushRadius() };
     if (state.drag && tool.move) tool.move(pt, ev);
-    else if (tool.move && tool.id === 'path') tool.move(pt, ev);
+    else if (tool.move && tool.wantsHover) tool.move(pt, ev);
     else R.requestDraw();
 
     $('#hud-pos').textContent = `${Math.round(pt.x)}, ${Math.round(pt.y)}`;

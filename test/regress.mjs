@@ -1140,6 +1140,280 @@ const undoStep = async () => { await p.evaluate(async () => { (await import('/js
   t('grid coordinates follow a change of grid size', moved === true, String(moved));
 }
 
+/* 2026-09-27 review ------------------------------------------------------- */
+
+{
+  await newMap(p, { name: 'Regress Light Wedge', kind: 'battle', size: '40x30' });
+
+  // Rays were cast only at wall ends, so a wall running on past the light's
+  // bounding square had no vertex where it met it, and the lit polygon cut
+  // straight across: a dark wedge on the light's own side of the wall. The
+  // same line drawn short or long must light that side identically.
+  const side = (x0, x1) => p.evaluate(([x0, x1]) => {
+    const doc = window.__cg.app.doc, R = window.__cg.R;
+    const lights = doc.layers.find((l) => l.kind === 'lights');
+    const walls = doc.layers.find((l) => l.kind === 'walls');
+    lights.ops = [{ id: 'L', t: 'light', x: 1015, y: 665, bright: 280, dim: 560, color: '#ffffff', intensity: 1, cone: 360, angle: 0 }];
+    lights.ambient = 0.85; lights.visible = true;
+    walls.ops = [{ id: 'W', kind: 'wall', points: [{ x: x0, y: 770 }, { x: x1, y: 770 }] }];
+    R.invalidate(walls);
+    const d = R.canvasFor(lights).getContext('2d').getImageData(0, 0, doc.width, doc.height).data;
+    const out = [];
+    for (let y = 600; y < 766; y += 4) for (let x = 400; x < 1640; x += 4) {
+      if (Math.hypot(x - 1015, y - 665) > 550) continue;
+      out.push(d[(y * doc.width + x) * 4 + 3]);
+    }
+    return out;
+  }, [x0, x1]);
+  const short = await side(500, 1530);
+  const long = await side(0, 2800);
+  let worse = 0;
+  for (let i = 0; i < short.length; i++) if (long[i] - short[i] > 10) worse++;
+  t('a wall running past a light casts no wedge on the lit side', short.length > 1000 && worse === 0,
+    `${worse} of ${short.length} darker`);
+
+  // Two walls crossing in an X, against the same X drawn as four walls that
+  // meet in the middle: nothing marked the crossing as a corner.
+  const cross = (split) => p.evaluate((split) => {
+    const doc = window.__cg.app.doc, R = window.__cg.R;
+    const lights = doc.layers.find((l) => l.kind === 'lights');
+    const walls = doc.layers.find((l) => l.kind === 'walls');
+    lights.ops = [{ id: 'L', t: 'light', x: 900, y: 700, bright: 280, dim: 560, color: '#ffffff', intensity: 1, cone: 360, angle: 0 }];
+    const c = { x: 1100, y: 800 };
+    const ends = [[{ x: 900, y: 1000 }, { x: 1300, y: 600 }], [{ x: 900, y: 600 }, { x: 1300, y: 1000 }]];
+    walls.ops = split
+      ? ends.flatMap(([a, b], i) => [{ id: 'a' + i, kind: 'wall', points: [a, c] }, { id: 'b' + i, kind: 'wall', points: [c, b] }])
+      : ends.map(([a, b], i) => ({ id: 'w' + i, kind: 'wall', points: [a, b] }));
+    R.invalidate(walls);
+    return Array.from(R.canvasFor(lights).getContext('2d').getImageData(600, 400, 800, 800).data.filter((_, i) => i % 4 === 3));
+  }, split);
+  const whole = await cross(false), parts = await cross(true);
+  let off = 0;
+  for (let i = 0; i < whole.length; i++) if (Math.abs(whole[i] - parts[i]) > 20) off++;
+  t('two walls crossing shade the same as four walls meeting', off === 0, off + ' pixels differ');
+}
+
+{
+  await newMap(p, { name: 'Regress Labels', kind: 'region' });
+  // A curved label longer than its curve: every letter past either end was
+  // drawn at the end point, on top of the others.
+  const piled = await p.evaluate(() => {
+    const doc = window.__cg.app.doc, R = window.__cg.R;
+    const labels = doc.layers.find((l) => l.kind === 'labels');
+    const pts = []; for (let i = 0; i <= 10; i++) pts.push({ x: 800 + i * 15, y: 600 + Math.sin(i / 3) * 10 });
+    labels.ops = [{ id: 't1', text: 'The Kingdom of Aldermere', style: 'region', x: 800, y: 600, points: pts }];
+    const seen = new Map();
+    const orig = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (s, x, y, ...r) {
+      const m = this.getTransform();
+      const k = Math.round(m.e) + ',' + Math.round(m.f);
+      seen.set(k, (seen.get(k) || 0) + 1);
+      return orig.call(this, s, x, y, ...r);
+    };
+    try { R.invalidate(labels); } finally { CanvasRenderingContext2D.prototype.fillText = orig; }
+    return Math.max(...seen.values());
+  });
+  t('a label longer than its curve does not pile letters at the ends', piled === 1, 'most at one spot: ' + piled);
+
+  // Letter spacing counted UTF-16 units, so a name in astral letters (the
+  // fraktur people paste in for fantasy names) sat off its anchor.
+  const lean = await p.evaluate(() => {
+    const doc = window.__cg.app.doc, R = window.__cg.R;
+    const labels = doc.layers.find((l) => l.kind === 'labels');
+    const name = '\u{1D504}\u{1D529}\u{1D521}\u{1D522}\u{1D52F}\u{1D52A}\u{1D522}\u{1D52F}\u{1D522}';
+    labels.ops = [{ id: 't2', text: name, style: 'region', x: 1000, y: 700 }];
+    let lo = Infinity, hi = -Infinity;
+    const orig = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (s, x, y, ...r) {
+      const w = this.measureText(s).width;
+      const m = this.getTransform();
+      const cx = m.e + m.a * x;
+      lo = Math.min(lo, cx - w / 2 * m.a); hi = Math.max(hi, cx + w / 2 * m.a);
+      return orig.call(this, s, x, y, ...r);
+    };
+    try { R.invalidate(labels); } finally { CanvasRenderingContext2D.prototype.fillText = orig; }
+    return Math.round((lo + hi) / 2 - 1000);
+  });
+  t('a spaced name in astral letters is centred on its anchor', Math.abs(lean) <= 2, lean + ' px off');
+}
+
+{
+  await newMap(p, { name: 'Regress Live Blend', kind: 'region' });
+  // A brush set to Multiply previewed as Normal and changed on release.
+  await p.evaluate(() => { const t = window.__cg.app.doc.layers.find((l) => l.kind === 'raster'); window.__cg.app.activeLayerId = t.id; });
+  await tool('brush');
+  await p.click('#asset-picker .asset[title="Deep Ocean"]'); await p.waitForTimeout(150);
+  await setOpt('Hardness', 1); await setOpt('Size', 120);
+  const s = await Promise.all([[700, 700], [1300, 700], [1000, 500], [1000, 900]].map(([x, y]) => M(x, y)));
+  await p.mouse.move(s[0].x, s[0].y); await p.mouse.down(); await p.mouse.move(s[1].x, s[1].y, { steps: 8 }); await p.mouse.up();
+  await p.waitForTimeout(600);
+  await p.click('#asset-picker .asset[title="Parchment"]'); await p.waitForTimeout(150);
+  await p.evaluate(() => {
+    const f = Array.from(document.querySelectorAll('#tool-options .field'))
+      .find((x) => x.querySelector('label span') && x.querySelector('label span').textContent === 'Blend');
+    const i = f.querySelector('select'); i.value = 'multiply'; i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await p.waitForTimeout(200);
+  const flatAt = () => p.evaluate(() => Array.from(window.__cg.R.view.flat.getContext('2d').getImageData(1000, 700, 1, 1).data));
+  await p.mouse.move(s[2].x, s[2].y); await p.mouse.down(); await p.mouse.move(s[3].x, s[3].y, { steps: 8 });
+  await p.waitForTimeout(400);
+  const live = await flatAt();
+  await p.mouse.up(); await p.waitForTimeout(700);
+  const done = await flatAt();
+  const gap = Math.max(...live.map((v, i) => Math.abs(v - done[i])));
+  t('a multiply stroke previews as it will commit', gap <= 3, `live ${live} / done ${done}`);
+  await p.evaluate(() => {
+    const f = Array.from(document.querySelectorAll('#tool-options .field'))
+      .find((x) => x.querySelector('label span') && x.querySelector('label span').textContent === 'Blend');
+    const i = f.querySelector('select'); i.value = 'source-over'; i.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+{
+  await newMap(p, { name: 'Regress Hover', kind: 'battle' });
+  // wantsHover was documented and read nowhere: only the Path tool got moves
+  // with no button down, so Wall and Region drew no line to the cursor.
+  await tool('wall');
+  await clickAt(210, 210);
+  const to = await M(700, 500);
+  await p.mouse.move(to.x, to.y, { steps: 3 }); await p.waitForTimeout(150);
+  const hover = await p.evaluate(async () => {
+    const { TOOLS } = await import('/js/tools.js');
+    return TOOLS.wall.state.hover || null;
+  });
+  t('the wall tool follows the cursor between clicks', !!hover && Math.abs(hover.x - 700) < 40, JSON.stringify(hover));
+  await p.keyboard.press('Escape');
+}
+
+{
+  await newMap(p, { name: 'Regress Saved Label', kind: 'region' });
+  // saveProject rightly leaves the map dirty when it changed mid-save, and the
+  // 'saved' handler then wrote "saved" over the label anyway.
+  const label = await p.evaluate(async () => {
+    const A = await import('/js/app.js');
+    const pending = A.saveProject({ silent: true });
+    A.app.doc.name = 'Regress Saved Label, renamed';
+    A.markDirty();
+    await pending;
+    return { dirty: A.app.dirty, label: document.getElementById('save-state').textContent };
+  });
+  t('a save overtaken by an edit does not say "saved"', label.dirty && label.label !== 'saved', JSON.stringify(label));
+}
+
+{
+  await newMap(p, { name: 'Regress Add Group', kind: 'region' });
+  // A new group was inserted inside the run of the group the selection was
+  // in, splitting it: the panel then filed the old group's other member under
+  // the new one.
+  const run = await p.evaluate(async () => {
+    const A = await import('/js/app.js'); const U = await import('/js/ui.js');
+    const doc = A.app.doc;
+    const paint = doc.layers.find((l) => l.kind === 'raster');
+    A.app.activeLayerId = paint.id;
+    U.addGroup();
+    const g1 = doc.layers.find((l) => l.kind === 'group');
+    const other = (await import('/js/doc.js')).makeLayer('raster', { name: 'Other paint' });
+    doc.layers.splice(doc.layers.indexOf(paint), 0, other);
+    other.group = g1.id;
+    A.app.activeLayerId = paint.id;
+    U.addGroup();
+    const ids = doc.layers.map((l) => l.id);
+    const members = doc.layers.map((l, i) => (l.group === g1.id || l.id === g1.id) ? i : -1).filter((i) => i >= 0);
+    const contiguous = members[members.length - 1] - members[0] === members.length - 1;
+    const g2 = doc.layers.find((l) => l.kind === 'group' && l.id !== g1.id);
+    return { contiguous, moved: paint.group === g2.id, n: ids.length };
+  });
+  t('a new group does not split the group it was added from', run.contiguous && run.moved, JSON.stringify(run));
+}
+
+{
+  await newMap(p, { name: 'Regress Notes List', kind: 'region' });
+  // The list in the Layers panel was only rebuilt on 'layers', and neither a
+  // Delete, an edit in the Selected panel nor undo emitted it, so the list
+  // and the key disagreed -- the one thing the notes design promises cannot
+  // happen.
+  await p.evaluate(async () => {
+    const A = await import('/js/app.js'); const D = await import('/js/doc.js');
+    const layer = D.makeLayer('notes', { name: 'Notes' });
+    layer.ops = ['Alpha', 'Beta', 'Gamma'].map((title, i) => ({ id: 'n' + i, x: 400 + i * 200, y: 400, title, body: '', color: '#b3372b' }));
+    A.app.doc.layers.push(layer);
+    A.app.activeLayerId = layer.id;
+    window.__cg.R.invalidate(layer);
+    A.emit('layers');
+  });
+  await tool('select');
+  await p.click('.note-row[data-note="2"]'); await p.waitForTimeout(200);
+  await p.keyboard.press('Delete'); await p.waitForTimeout(300);
+  const agree = () => p.evaluate(async () => {
+    const D = await import('/js/doc.js');
+    const list = Array.from(document.querySelectorAll('.note-row')).map((b) => b.textContent).join('|');
+    const key = D.noteKey(window.__cg.app.doc).flatMap((s) => s.entries.map((e) => e.n + e.title)).join('|');
+    return { list, key };
+  });
+  const a = await agree();
+  t('the notes list follows a Delete', a.list === a.key, JSON.stringify(a));
+  await p.evaluate(async () => { (await import('/js/history.js')).undo(); });
+  await p.waitForTimeout(300);
+  const b2 = await agree();
+  await p.evaluate(async () => { (await import('/js/history.js')).redo(); });
+  await p.waitForTimeout(300);
+  const b3 = await agree();
+  t('...and its undo and redo', b2.list === b2.key && b2.key.includes('Beta') && b3.list === b3.key,
+    JSON.stringify([b2, b3]));
+}
+
+{
+  await newMap(p, { name: 'Regress Tokens', kind: 'battle' });
+  // The next token number came from a counter in the module, so undo, a
+  // reload or another map left it handing out numbers already on the board.
+  const place = async (x, y) => { await clickAt(x, y); await p.waitForTimeout(150); };
+  await tool('battle-tokens:place');
+  await place(245, 245); await place(385, 245);
+  await p.evaluate(async () => { const H = await import('/js/history.js'); H.undo(); H.undo(); });
+  await p.waitForTimeout(300);
+  await place(525, 245);
+  const labels = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'tokens');
+    return l ? l.ops.map((o) => o.label) : null;
+  });
+  t('a token placed after undoing the others is number 1', JSON.stringify(labels) === '["1"]', JSON.stringify(labels));
+}
+
+{
+  // EXTENSIONS.md documents `keys`; the shortcut handler read only `shortcut`.
+  const ran = await p.evaluate(async () => {
+    let n = 0;
+    window.__cgx.extensions.commands.push({ id: 'regress:keys', title: 'Regress keys', keys: 'Ctrl+Shift+Q', run: () => { n++; } });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Q', ctrlKey: true, shiftKey: true, bubbles: true }));
+    const cmds = window.__cgx.extensions.commands;
+    cmds.splice(cmds.findIndex((c) => c.id === 'regress:keys'), 1);
+    return n;
+  });
+  t('an extension command bound with `keys` runs from the keyboard', ran === 1, 'ran ' + ran);
+}
+
+{
+  await newMap(p, { name: 'Regress Modal', kind: 'region' });
+  // modal() replaced an open dialog without settling it, so the Note tool,
+  // waiting on its dialog behind a busy flag, never placed another note after
+  // Ctrl+E had opened Export over it.
+  await p.evaluate(async () => {
+    const A = await import('/js/app.js'); const D = await import('/js/doc.js');
+    A.app.doc.layers.push(D.makeLayer('notes', { name: 'Notes' }));
+    A.emit('layers');
+  });
+  await tool('note');
+  await clickAt(600, 500); await p.waitForSelector('.modal'); await p.waitForTimeout(150);
+  await p.keyboard.press('Control+e'); await p.waitForTimeout(400);
+  // Cancel by its button, not Escape: the first dialog's Escape listener
+  // outlived it and would settle it, hiding the very bug under test.
+  await p.click('.modal .foot .btn:has-text("Cancel")'); await p.waitForTimeout(300);
+  await clickAt(800, 500);
+  const opened = await p.waitForSelector('.modal', { timeout: 2000 }).then(() => true, () => false);
+  if (opened) { await p.keyboard.press('Escape'); await p.waitForTimeout(200); }
+  t('the note tool still opens its dialog after another dialog replaced it', opened);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

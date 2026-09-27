@@ -81,10 +81,31 @@ def _finite(text):
     return value
 
 
+def _finite_int(text):
+    # An integer has no exponent to overflow, so parse_float never sees it --
+    # but 1 followed by 400 zeros is past the largest double, and JSON.parse
+    # reads it as Infinity: a map saved with such a width came back from the
+    # server as Infinity x 1536 and opened blank.
+    value = int(text)
+    try:
+        float(value)
+    except OverflowError:
+        raise ValueError("%s... is too large to be a number" % text[:32]) from None
+    return value
+
+
 def loads(data):
     """json.loads, refusing the non-finite numbers a browser cannot read."""
-    return json.loads(data, parse_constant=_no_constant, parse_float=_finite)
+    return json.loads(data, parse_constant=_no_constant, parse_float=_finite,
+                      parse_int=_finite_int)
 
 
 def load(fh):
-    return loads(fh.read())
+    text = fh.read()
+    # Notepad and PowerShell's Out-File write UTF-8 with a byte-order mark, and
+    # json refuses one in a str: a hand-edited pack.json, extension.json or
+    # project.json was reported broken, and a config.json was discarded and
+    # then overwritten with the defaults at startup.
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return loads(text)

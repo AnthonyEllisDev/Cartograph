@@ -260,10 +260,13 @@ input[type=color] { width: 100%; height: 26px; padding: 2px; background: var(--p
 .modal {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   min-width: 340px; max-width: 560px; box-shadow: 0 24px 60px rgba(0,0,0,.6);
+  /* A dialog taller than the window put its buttons below the fold, with no
+     way to reach them: the body scrolls instead, and the buttons stay put. */
+  max-height: calc(100vh - 24px); display: flex; flex-direction: column;
 }
-.modal h3 { padding: 14px 18px 0; margin: 0; font-size: 12px; }
-.modal .body { padding: 12px 18px 4px; }
-.modal .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px 16px; }
+.modal h3 { padding: 14px 18px 0; margin: 0; font-size: 12px; flex: none; }
+.modal .body { padding: 12px 18px 4px; overflow: auto; min-height: 0; }
+.modal .foot { flex: none; display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px 16px; }
 
 /* ----------------------------------------------------------------- toasts */
 .toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 80;
@@ -458,4 +461,9 @@ body.is-light .asset .cap { background: rgba(0,0,0,.55); }
   border: 1px solid var(--line); border-radius: 6px; image-rendering: auto;
 }
 .gen-seed { display: flex; gap: 6px; }
+/* The dungeon dialog has twice the settings of the land one, so they sit in
+   two columns under a full-width plan rather than running off the window. */
+.gen.dungeon { width: 520px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+.gen.dungeon > .gen-preview, .gen.dungeon > .span { grid-column: 1 / -1; }
+.gen.dungeon > .gen-preview { width: auto; max-width: 100%; margin: 0 auto 12px; }
 .gen-seed input { flex: 1 1 auto; min-width: 0; font-family: var(--mono); }

@@ -5,6 +5,159 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-27 — a dungeon from a seed, and sixteen things the review found
+
+Anthony's working copy matched `origin/main` across all 72 tracked source files
+(the `.pyc` files git also tracks were not compared), so this was a feature day.
+The baseline was green: 447 checks across fourteen suites, plus `battle`.
+
+**Review.** Three readers in parallel -- renderer and lighting, server, front-end
+state -- each reproducing on its own running copy before reporting. Sixteen
+findings, none already on the known list, all reproduced, all fixed. Every fix
+has a check, and every new check was run against a pristine clone of
+`origin/main`: all 4 new guard checks and all 13 new regression checks fail
+there. Two drafts passed on the pristine tree for the wrong reason and were
+rewritten, not kept: the notes-list undo check passed because the list was
+already stale from the step before (it now checks undo *and* redo), and the
+dialog check cancelled Export with Escape -- which the first dialog's leaked
+Escape listener heard, settling it and hiding the very bug under test (it now
+clicks Cancel).
+
+**Fixed, server side.**
+
+- *A whole number too big for a double saved, and the map then opened blank.*
+  The 2026-09-26 guard went through `parse_float`, which never sees an integer;
+  `1` followed by 400 zeros came back to the browser as `Infinity` and the
+  editor showed `Infinity x 1536` on an empty canvas. `safe.loads` checks
+  integers too now.
+- *A byte-order mark broke every JSON file on disk* -- and Notepad and
+  PowerShell's `Out-File` write one, on the platform this is developed on. A
+  `pack.json` or `extension.json` was reported broken, a `project.json` vanished
+  from the Projects tab, and a `config.json` was discarded *and overwritten with
+  the defaults* at startup. `safe.load` strips it.
+- *`POST /api/projects` answered 500 for any body that was not an object*, and
+  for `write()`'s own depth refusal, where `PUT` answers 400. Both are 400 now.
+- *On port 80 every API call from the editor was refused.* The Host set got the
+  bare names a browser sends for the default port; the Origin set did not.
+  Not covered by a check: it needs a privileged port.
+- *A hand-dropped art file called `tree #2.png` never loaded*: its URL was not
+  encoded and the `#` began a fragment. `assets.js` encodes each segment.
+
+**Fixed, in the editor.**
+
+- *A light beside a wall that ran out past its reach lost a wedge of its own
+  side of the room*, and so did a light near two walls crossing: rays were cast
+  only at segment ends. `light.js` clips each wall to the light's bounding
+  square and adds wall crossings as corners. 1,238 of 11,502 probe pixels were
+  wrongly dark before; none after.
+- *A curved label longer than its curve piled its extra letters on the two end
+  points* -- nine glyphs drawn at one spot. `pathWalker` runs on along the end
+  segments.
+- *A brush set to Multiply (or any blend) previewed as Normal and changed on
+  release*, and a stroke on a layer below full opacity previewed wrong too.
+  The live stroke is now blended onto a copy of the layer's box, the route
+  invariant (h) built for the eraser. Measured mid-drag and after release: the
+  same pixel.
+- *Letter spacing counted UTF-16 units*, so a name in the fraktur letters people
+  paste in for fantasy names sat 51 px off its anchor.
+- *`wantsHover` was documented and read nowhere*: only the Path tool got moves
+  with no button down, so Wall and Region drew no line to the cursor between
+  clicks and the Note tool no preview pin. `input.js` reads the flag; Measure
+  lost its, since its `move` would otherwise keep dragging a finished reading.
+- *The top bar said "saved" while the map was not*, when an edit landed during
+  a save.
+- *Adding a group from inside a group split the old group's run*, and left a
+  layer that had just left a hidden group undrawn and unlit.
+- *The numbered notes list went stale* after a Delete, an edit in the Selected
+  panel, or their undo -- the list and the key disagreed, which is the one thing
+  the notes design promises cannot happen.
+- *Battle-token numbers came from a counter in the module*, so undo, a reload
+  or a second map handed out numbers already on the board.
+- *An extension command bound with `keys`*, as `EXTENSIONS.md` says, was shown
+  in the palette and never bound; `map-aging`'s `shortcut` was bound and never
+  shown. Both spellings do both now.
+- *`modal()` replaced an open dialog without settling it*, so the Note tool --
+  waiting on its dialog behind a busy flag -- never placed another note once
+  Ctrl+E had opened Export over it; and every dialog closed by a button left its
+  Escape listener behind. `modal()` settles the dialog it replaces.
+- And one found by today's own test: *a dialog taller than the window put its
+  buttons below the fold* with no way to reach them. `.modal` is capped to the
+  window and its body scrolls.
+
+**Written up rather than fixed.** Two minor ones from reading: a Fill set to
+*Outside the landmass* on a map with no landmass is not rebuilt when a
+landmass layer is later added; and `withKey` gives a note title no `maxWidth`,
+so one very long word runs past the key strip. Also from the server review:
+`load_config` discards a `config.json` it cannot read and startup then rewrites
+it with the defaults, so a typo in a hand-edited file silently costs every
+setting in it.
+
+**The feature: a dungeon from a seed.** First on the hand-off's candidate list
+since 2026-09-24, and today's research agreed: Dungeon Scrawl has a random
+dungeon tool (size, room count and size, straight to winding layouts, door
+density) but no seed and no room numbers; Donjon has seeds and options but is a
+web page; Watabou's one-page dungeons show what a plan plus a numbered key is
+worth. A battle map here still started at a blank floor, and the notes of
+2026-09-26 meant the key was already half built. Rejected today: copy/paste and
+prefabs (next in line -- medium, and a change to the Select tool), GM/player
+export in one go (small, and hiding the notes layer already does half of it),
+print tiling (a PDF writer, verified by printing) and elevation (touches coast,
+shelf and lighting at once).
+
+*Generate dungeon…* sits at the top of the Wall panel and in the palette. A
+dialog with a live plan offers a seed, room count, room size, straight or
+winding corridors, loops, how many doorways get doors, secret doors, the floor
+texture, shading the rock, and numbering the rooms. The decisions worth knowing:
+
+- **Everything is laid out in grid cells and written as ordinary ops.** Rooms
+  are rectangles of cells two apart and one from the frame; a minimum spanning
+  tree joins them and a share of the shortest spare pairs adds loops; each join
+  is carved as a path of cells, and every step from outside a room into one is
+  a doorway. A wall is any edge between an open cell and a closed one, or
+  between a room and a corridor that did not step in there. Collinear edges
+  merge into runs, so a long wall is one op the Select tool picks up whole.
+- **The walls are walls.** They go on the Walls layer as `wall`, `door` and
+  `secret` ops, so they cast shadows, travel into the Universal VTT export as
+  sight lines and portals (checked: one portal per door), and can be selected
+  and edited one at a time. Every one lies on a grid line.
+- **The floor is one shape op on the paint layer**, `shape: 'generated'` with
+  `rings` of cell corners filled even-odd -- the one renderer change, a branch
+  in `shapeMask` mirroring the landmass one. The rock around it is a second op
+  whose rings are the frame plus the floor's, which even-odd turns into
+  everything else. Both are `hardness: 1`, so no blur and nothing for a box to
+  clip. The settings ride on the floor op's `gen`, as generated land's do.
+- **Rooms are numbered from the way in.** The entrance is the room nearest the
+  bottom of the map, the rest breadth first along the corridors, nearest first;
+  each note carries the room's size in map units. The notes are tagged
+  `gen: 'dungeon'`, so generating again replaces them and leaves the user's own.
+- **Secret doors only ever go on a loop's doorway.** A room whose only way in is
+  hidden is a room nobody finds.
+- **One step, undone whole.** Walls, floor, notes, and any layer the dungeon had
+  to add (a notes layer, or a paint layer when none was free) come and go
+  together; a layer taken away keeps its canvases for the redo, as `deleteLayer`
+  does. Walls are invalidated last, so the relight sees them.
+- **Square grids only.** A hex map is told so and nothing changes.
+- No extension API change; `API_VERSION` stays 1.
+
+**Tests.** A new suite, `test/dungeon.mjs` (34): the entry points, the plan in
+the dialog, cancel, determinism, every room reachable, rooms kept apart, every
+wall on a grid line, secret doors only on loops, *open arches only*, a note per
+room with the entrance first, the floor lighter than the shaded rock, a light
+held in by the walls, VTT sight lines and one portal per door, undo taking the
+notes layer away and redo restoring the same pixels, regenerating replacing
+rather than adding while keeping the user's notes, *keep* and *replace* walls,
+the round trip pixel-identical, a map with no paint layer, and the hex refusal.
+`guards.mjs` 53 -> 57, `regress.mjs` 58 -> 71. Looked at in screenshots: the
+dialog at a 1440 x 860 window, the generated map, and the map lit by two torches
+with the walls holding the light in.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 57 guards, 71 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon -- 498 checks, all passing, plus `battle`, over two full back-to-back
+rounds on the finished tree.
+
+---
+
 ## 2026-09-26 — notes with a key beside the map, and other people's files
 
 Anthony's working copy matched `origin/main` across all 71 tracked source files

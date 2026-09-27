@@ -293,5 +293,6 @@ def serve(ctx, host="127.0.0.1", port=0):
     ctx.hosts = {"127.0.0.1:%d" % actual, "localhost:%d" % actual}
     if actual == 80:                         # a browser leaves the default port off
         ctx.hosts |= {"127.0.0.1", "localhost"}
+        ctx.origins |= {"http://127.0.0.1", "http://localhost"}    # and so does Origin
     ctx.bind(httpd)
     return httpd, actual

@@ -62,6 +62,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/hex.js             hex geometry: the one definition of where hexes are
   js/light.js           shadow casting for the lighting layer
   js/generate.js        seeded land: noise, marching squares, the dialog
+  js/dungeon.js         seeded dungeons: rooms, corridors, walls, doors, the key
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
@@ -74,9 +75,10 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       44 more, for the server's guards, over raw sockets
-test/regress.mjs      44 more, for bugs that have been in here once already
+test/guards.mjs       57 more, for the server's guards, over raw sockets
+test/regress.mjs      71 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
+test/dungeon.mjs      34 more, for seeded dungeons
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -170,6 +172,29 @@ five-foot squares, snapping on by default, and a walls layer.
 drawn on the map *and* written into the export as data: tick *Also write a
 Universal VTT file* and you get a `.dd2vtt` next to the PNG, which Foundry,
 Roll20 and the rest import with line of sight and door positions already built.
+
+Or let it start you off: **Generate dungeon…** at the top of the Wall panel
+(and in the command palette) lays out rooms and corridors from a seed on the
+map's own grid, with a plan of it in the dialog as you change the settings —
+how many rooms and how big, straight or winding corridors, how many loops, how
+many doorways get doors, and whether a few of the doors on the loops are
+secret. What it writes is ordinary map, not a picture:
+
+- the walls, doors and secret doors go on the **Walls** layer as walls, so they
+  cast shadows, go to a virtual tabletop as sight lines and doors, and can be
+  selected and changed one at a time like any wall you drew;
+- the floor goes on the **Terrain** paint layer in the texture you pick, with
+  the rock around it shaded, so painting over it works as it always has;
+- and, if you like, every room gets a numbered **note** — *Entrance* first,
+  then the rooms in the order a party would meet them, each with its size —
+  which is the key the export can already set beside the map.
+
+The same seed and settings always give the same dungeon on a map of that size.
+Generating again replaces the dungeon — its floor, its walls and its numbered
+notes, but not notes of your own — and one Ctrl+Z takes the whole thing away.
+A secret door is only ever a second way into somewhere: a room whose only door
+is hidden is a room nobody finds. Dungeons are laid out on square grids; a hex
+map is told so.
 
 ### Lighting for battle maps
 
@@ -374,7 +399,8 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 447 assertions in all: `notes.mjs`
+There are narrower scripts beside it, 498 assertions in all: `dungeon.mjs`
+(seeded dungeons: the layout, the walls as walls, undo and the round trip), `notes.mjs`
 (numbered notes, their renumbering, and the key beside the image and in
 Markdown), `generate.mjs` (seeded land, its round trip, and a fill that follows it), `props.mjs`
 (changing a thing after it has been drawn), `lighting.mjs`

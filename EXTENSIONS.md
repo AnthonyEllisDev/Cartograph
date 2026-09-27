@@ -164,7 +164,10 @@ api.registerPanel({
 ### `api.registerCommand(spec)`
 
 Adds an entry to the command palette (**Ctrl+K**). Give it `keys` and it also
-gets a shortcut.
+gets a shortcut, shown beside it in the palette. (`shortcut` is read as a
+synonym, because the bundled `map-aging` example was written with it; until
+2026-09-27 each spelling worked for only half of that — `keys` was shown and
+never bound, `shortcut` was bound and never shown.)
 
 ```js
 api.registerCommand({

@@ -569,6 +569,55 @@ try {
   if (mdBody.path) rmSync(mdBody.path, { force: true });
 }
 
+/* 2026-09-27 ---------------------------------------------------------------- */
+
+{
+  // parse_float saw decimals only. A whole number past the largest double went
+  // straight through, came back to the browser as Infinity, and the map
+  // opened blank at "Infinity x 1536".
+  const r = await fetch(`${BASE}/api/projects/GuardHugeInt`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: '{"format":1,"name":"GuardHugeInt","width":1' + '0'.repeat(400) + ',"height":512,' +
+          '"layers":[{"id":"l-a","kind":"raster","ops":[]}]}',
+  });
+  t('a whole number too large for a double is refused rather than saved', r.status === 400, r.status);
+  await fetch(`${BASE}/api/projects/GuardHugeInt`, { method: 'DELETE' });
+}
+
+{
+  // Notepad and PowerShell write UTF-8 with a byte-order mark, and a pack.json
+  // saved that way was reported broken.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'assets', 'packs', 'guard-bom');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'pack.json'), '\ufeff{"name": "Guard BOM", "assets": []}');
+  try {
+    const { packs } = await (await fetch(`${BASE}/api/packs`)).json();
+    const pack = packs.find((x) => x.id === 'guard-bom' || x.dir === 'guard-bom');
+    t('a pack.json with a byte-order mark is read', !!pack && !pack.error && pack.name === 'Guard BOM',
+      pack ? (pack.error || pack.name) : 'not listed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // POST parsed its body through _body and then called doc.get on whatever
+  // came back, so any JSON that was not an object was a 500 -- as was
+  // write()'s own refusal of a document nested too deeply, which PUT answers
+  // with a 400.
+  const codes = [];
+  for (const body of ['[]', 'null', '5', '"x"']) {
+    const r = await fetch(`${BASE}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    codes.push(r.status);
+  }
+  t('creating a map from a body that is not an object is a 400', codes.every((c) => c === 400), codes.join(' '));
+  let deep = '{"format":1,"name":"GuardDeepPost","width":64,"height":64,"layers":[{"id":"l-a","kind":"raster","ops":[' +
+    '['.repeat(70) + ']'.repeat(70) + ']}]}';
+  const r = await fetch(`${BASE}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: deep });
+  t('and one nested too deeply is a 400 too', r.status === 400, r.status);
+}
+
 for (const [status, name, note] of out) {
   console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 }

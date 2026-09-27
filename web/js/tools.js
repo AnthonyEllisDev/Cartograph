@@ -13,6 +13,7 @@ import * as hex from './hex.js';
 import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
 import { generateDialog } from './generate.js';
+import { dungeonDialog } from './dungeon.js';
 import { clamp, modal, el, toast, uid } from './util.js';
 
 const BLENDS = [
@@ -54,6 +55,10 @@ function beginPaint(layer, op, kind) {
   // compositeAll cannot lay a subtracting stroke over the layer it subtracts
   // from, so it is told which kind this is.
   R.view.liveErase = !!op.erase;
+  // Nor lay a multiply stroke over it with source-over: the live canvas holds
+  // the stroke drawn plainly, and compositeAll blends it onto a copy of the
+  // layer the way the commit will.
+  R.view.liveBlend = op.blend || 'source-over';
   R.view.liveCtx.clearRect(0, 0, R.view.live.width, R.view.live.height);
 }
 
@@ -75,7 +80,8 @@ function livePaintOp(op) {
 }
 
 function paintLive() {
-  const op = livePaintOp(live.op);
+  let op = livePaintOp(live.op);
+  if (op.blend && op.blend !== 'source-over') op = Object.assign({}, op, { blend: 'source-over' });
   // This box is the whole stroke so far, not the segment just drawn, and the
   // comment below therefore describes an intention rather than the code. It
   // was tried the other way on 2026-09-23 and put back: applyStroke draws the
@@ -125,6 +131,7 @@ function endPaint() {
   live.active = false;
   R.view.liveLayer = null;
   R.view.liveErase = false;
+  R.view.liveBlend = null;
   R.view.liveCtx.clearRect(0, 0, R.view.live.width, R.view.live.height);
 
   if (!op.points.length) { R.compositeAll(); R.requestDraw(); return; }
@@ -1122,6 +1129,9 @@ define({
   assetKind: null,
   writesTo: ['walls'],
   hint: 'Click along a run of wall; Enter finishes it, Esc cancels. Snapping keeps it on the grid.',
+  actions: () => ([
+    { label: 'Generate dungeon…', id: 'generate-dungeon', run: dungeonDialog },
+  ]),
   options: () => ([
     { key: 'kind', type: 'select', label: 'Kind', value: S('wall', 'kind', 'wall'),
       options: [['wall', 'Wall'], ['door', 'Door'], ['secret', 'Secret door'], ['window', 'Window']] },
@@ -1195,7 +1205,6 @@ define({
 define({
   id: 'measure',
   snaps: true,
-  wantsHover: true,
   label: 'Measure',
   icon: 'measure',
   assetKind: null,
@@ -1513,10 +1522,11 @@ define({
     this.state.grabbed = null;
     emit('selection');
     R.invalidate(layer);
+    emit('layers');
     pushEntry({
       label: 'Delete',
-      undo() { layer.ops = before.slice(); R.invalidate(layer); },
-      redo() { layer.ops = after.slice(); R.invalidate(layer); },
+      undo() { layer.ops = before.slice(); R.invalidate(layer); emit('layers'); },
+      redo() { layer.ops = after.slice(); R.invalidate(layer); emit('layers'); },
     });
     markDirty(); scheduleAutosave();
     return true;

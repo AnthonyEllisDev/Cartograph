@@ -55,18 +55,50 @@ function reach(seg, px, py) {
   return Math.hypot(seg.a.x + sx * t - px, seg.a.y + sy * t - py);
 }
 
+/** The part of a segment inside an axis-aligned box (Liang-Barsky), or null. */
+function clip(seg, x0, y0, x1, y1) {
+  const dx = seg.b.x - seg.a.x, dy = seg.b.y - seg.a.y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [seg.a.x - x0, x1 - seg.a.x, seg.a.y - y0, y1 - seg.a.y];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) { if (q[i] < 0) return null; continue; }
+    const t = q[i] / p[i];
+    if (p[i] < 0) { if (t > t1) return null; if (t > t0) t0 = t; } else { if (t < t0) return null; if (t < t1) t1 = t; }
+  }
+  return { a: { x: seg.a.x + dx * t0, y: seg.a.y + dy * t0 }, b: { x: seg.a.x + dx * t1, y: seg.a.y + dy * t1 } };
+}
+
+/** Where two segments cross, or null. */
+function crossing(p, q) {
+  const rx = p.b.x - p.a.x, ry = p.b.y - p.a.y, sx = q.b.x - q.a.x, sy = q.b.y - q.a.y;
+  const det = rx * sy - ry * sx;
+  if (Math.abs(det) < EPS) return null;
+  const qx = q.a.x - p.a.x, qy = q.a.y - p.a.y;
+  const t = (qx * sy - qy * sx) / det, u = (qx * ry - qy * rx) / det;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: p.a.x + rx * t, y: p.a.y + ry * t } : null;
+}
+
 /** The polygon of everything a light at `origin` can see within `radius`.
  *
  * Returns null when nothing is in the way, so the caller can draw a plain
  * circle instead of a 12-sided approximation of one. */
 export function visibility(origin, radius, segments) {
-  const near = [];
-  for (const s of segments) if (reach(s, origin.x, origin.y) <= radius) near.push(s);
-  if (!near.length) return null;
-
   // A bounding square so every ray terminates somewhere. Without it a ray that
   // escapes between two walls has no intersection and the polygon tears open.
   const r = radius * 1.05;
+  // Each wall is clipped to that square first. Rays are cast only at segment
+  // ends, so a wall running out past the square had no vertex where it met
+  // it, and the polygon cut straight across the corner between the square
+  // and the wall -- a dark wedge inside the light's own reach.
+  const near = [];
+  for (const s of segments) {
+    if (reach(s, origin.x, origin.y) > radius) continue;
+    const c = clip(s, origin.x - r, origin.y - r, origin.x + r, origin.y + r);
+    if (c) near.push(c);
+  }
+  if (!near.length) return null;
+
   const box = [
     { x: origin.x - r, y: origin.y - r }, { x: origin.x + r, y: origin.y - r },
     { x: origin.x + r, y: origin.y + r }, { x: origin.x - r, y: origin.y + r },
@@ -76,12 +108,20 @@ export function visibility(origin, radius, segments) {
     { a: box[2], b: box[3] }, { a: box[3], b: box[0] },
   ]);
 
-  const angles = [];
-  for (const s of all) {
-    for (const p of [s.a, s.b]) {
-      const a = Math.atan2(p.y - origin.y, p.x - origin.x);
-      angles.push(a - NUDGE, a, a + NUDGE);
+  // Where two walls cross is a corner of the lit area too, and no segment
+  // end marks it.
+  const corners = [];
+  for (const s of all) corners.push(s.a, s.b);
+  for (let i = 0; i < near.length; i++) {
+    for (let j = i + 1; j < near.length; j++) {
+      const x = crossing(near[i], near[j]);
+      if (x) corners.push(x);
     }
+  }
+  const angles = [];
+  for (const p of corners) {
+    const a = Math.atan2(p.y - origin.y, p.x - origin.x);
+    angles.push(a - NUDGE, a, a + NUDGE);
   }
   angles.sort((x, y) => x - y);
 

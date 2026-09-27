@@ -467,10 +467,23 @@ export function setLayerGroup(layer, groupId) {
 export function addGroup() {
   const group = makeLayer('group', { name: 'Group ' + (app.doc.layers.filter((l) => l.kind === 'group').length + 1) });
   const current = activeLayer();
-  const at = current ? app.doc.layers.indexOf(current) + 1 : app.doc.layers.length;
+  // Above the whole run of any group the selection is in: inserted inside it,
+  // the new group split that run and the panel filed the old members under it.
+  const home = current ? groupOf(app.doc, current) : null;
+  const anchor = home || current;
+  const at = anchor ? app.doc.layers.indexOf(anchor) + 1 : app.doc.layers.length;
   app.doc.layers.splice(at, 0, group);
   R.rebuildLayer(group);
-  if (current && current.kind !== 'group') current.group = group.id;
+  if (current && current.kind !== 'group') {
+    if (home) {
+      app.doc.layers.splice(app.doc.layers.indexOf(current), 1);
+      app.doc.layers.splice(app.doc.layers.indexOf(group), 0, current);
+    }
+    current.group = group.id;
+    // Leaving a hidden group changes what layerVisible says: see render.relight.
+    R.relight(current);
+    R.compositeAll(); R.requestDraw();
+  }
   markDirty(); scheduleAutosave();
   emit('layers');
   setActiveLayer(group.id);
@@ -1049,12 +1062,16 @@ function editObject(layer, item, key, value) {
     // invalidate, not compositeAll: it rebuilds the layer and relights when
     // the thing edited was a wall, which changing a door to a window is.
     R.invalidate(layer);
+    renderLayers();
     renderSelection();
   };
   // No re-render here: the control the user is holding already shows the new
   // value, and rebuilding the panel under a text field takes the focus with
   // it. Undo and redo do rebuild, because they change values nobody typed.
   R.invalidate(layer);
+  // The notes list and the region count in the Layers panel read these ops
+  // too. Not emit('layers'): that rebuilds this panel and takes the focus.
+  renderLayers();
   pushEntry({
     label: 'Edit ' + (OBJECT_NOUNS[layer.kind] || 'object'),
     bytes: 0,

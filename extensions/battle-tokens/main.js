@@ -78,7 +78,16 @@ export default function setup(api) {
   /* ------------------------------------------------------------ the tool */
 
   let settings = { size: 1, color: PALETTE[0][0], label: '', autoNumber: true };
-  let counter = 0;
+
+  /** The lowest number no token on this layer carries. Read from the layer,
+   *  not a counter in this module: a counter outlived undo, reloads and a
+   *  change of map, and handed out numbers already on the board. */
+  function nextNumber(layer) {
+    const used = new Set(layer.ops.map((t) => t.label));
+    let n = 1;
+    while (used.has(String(n))) n++;
+    return String(n);
+  }
 
   api.registerTool({
     id: 'place',
@@ -103,13 +112,12 @@ export default function setup(api) {
       const grid = doc.layers.find((l) => l.kind === 'grid');
       const cell = (grid && grid.size) || (doc.scale && doc.scale.cellPx) || 64;
       const layer = tokenLayer();
-      counter += 1;
       const token = {
         id: util.uid('tok'),
         x: pt.x, y: pt.y,
         radius: (cell * settings.size) / 2 - Math.max(2, cell * 0.04),
         color: settings.color,
-        label: settings.label || (settings.autoNumber ? String(counter) : ''),
+        label: settings.label || (settings.autoNumber ? nextNumber(layer) : ''),
       };
       const before = layer.ops.slice();
       layer.ops.push(token);
@@ -135,7 +143,6 @@ export default function setup(api) {
       if (!layer || !layer.ops.length) return ui.toast('There are no tokens on this map');
       const before = layer.ops.slice();
       layer.ops = [];
-      counter = 0;
       R.invalidate(layer);
       api.history.push({
         label: 'Clear tokens',

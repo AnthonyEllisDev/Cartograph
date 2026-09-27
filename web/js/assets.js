@@ -14,8 +14,12 @@ export const library = {
   groups: { terrain: [], stamp: [] },
 };
 
+// Each segment is encoded: a file dropped into a pack by hand can be called
+// "tree #2.png", and unencoded the "#" began a fragment and the stamp 404'd.
+const segments = (path) => String(path).split('/').map(encodeURIComponent).join('/');
+
 function urlFor(asset) {
-  return `/assets/packs/${asset.pack}/${asset.file}`;
+  return `/assets/packs/${segments(asset.pack)}/${segments(asset.file)}`;
 }
 
 export async function loadLibrary() {

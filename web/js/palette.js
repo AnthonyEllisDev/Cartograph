@@ -10,6 +10,7 @@
 import { app, emit, markDirty, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { extensions } from './extensions.js';
 import { generateDialog } from './generate.js';
+import { dungeonDialog } from './dungeon.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
 import * as R from './render.js';
@@ -40,6 +41,9 @@ const BUILT_IN = [
   { id: 'generate-land', group: 'Map', title: 'Generate land…',
     detail: 'Grow a coastline from a seed onto the Landmass layer',
     run: () => generateDialog() },
+  { id: 'generate-dungeon', group: 'Map', title: 'Generate dungeon…',
+    detail: 'Rooms, corridors, walls and doors from a seed, with the rooms numbered',
+    run: () => dungeonDialog() },
   { id: 'scale-bar', group: 'View', title: 'Show or hide the scale bar',
     run: () => {
       app.settings.showScaleBar = !(app.settings.showScaleBar !== false);
@@ -76,7 +80,7 @@ function collect() {
   for (const cmd of extensions.commands) {
     out.push({
       id: 'ext:' + cmd.id, group: cmd.group || 'Extension', title: cmd.title,
-      detail: cmd.detail || '', keys: cmd.keys,
+      detail: cmd.detail || '', keys: cmd.keys || cmd.shortcut,
       run: () => {
         try { cmd.run(); } catch (err) { toast(String(err.message || err), 'bad'); }
       },
@@ -196,8 +200,10 @@ export function initPalette() {
     if (root) return;
     // extension shortcuts
     for (const cmd of extensions.commands) {
-      if (!cmd.shortcut) continue;
-      if (matches(cmd.shortcut, ev)) {
+      // EXTENSIONS.md documents `keys`; the bundled map-aging uses `shortcut`.
+      const combo = cmd.shortcut || cmd.keys;
+      if (!combo) continue;
+      if (matches(combo, ev)) {
         ev.preventDefault();
         try { cmd.run(); } catch (err) { toast(String(err.message || err), 'bad'); }
         return;

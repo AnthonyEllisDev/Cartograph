@@ -88,8 +88,16 @@ export function toast(message, kind = '') {
 
 /* ------------------------------------------------------------------- modal */
 
+// The dialog on screen, so that a second one can settle it. modal() replaced
+// the first dialog's markup and left its promise pending for ever: the Note
+// tool, waiting on its dialog behind a busy flag, never placed another note
+// once Ctrl+E had opened Export over it. And its Escape listener outlived it,
+// so the next Escape anywhere closed whatever dialog was up by then.
+let openModal = null;
+
 export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   const root = document.getElementById('modal-root');
+  if (openModal) openModal.close(undefined);
   const box = el('div', { class: 'modal' });
   box.appendChild(el('h3', { text: title }));
   const bodyEl = el('div', { class: 'body' });
@@ -98,7 +106,15 @@ export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   const foot = el('div', { class: 'foot' });
   let resolveWith;
   const done = new Promise((res) => { resolveWith = res; });
-  const close = (value) => { root.hidden = true; root.innerHTML = ''; resolveWith(value); };
+  const esc = (e) => { if (e.key === 'Escape') close(undefined); };
+  const handle = { close: (value) => close(value) };
+  function close(value) {
+    if (openModal !== handle) return;
+    openModal = null;
+    document.removeEventListener('keydown', esc);
+    root.hidden = true; root.innerHTML = ''; root.onclick = null;
+    resolveWith(value);
+  }
   for (const b of buttons) {
     foot.appendChild(el('button', {
       class: 'btn ' + (b.class || ''), text: b.label,
@@ -109,10 +125,9 @@ export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   root.innerHTML = '';
   root.appendChild(box);
   root.hidden = false;
+  openModal = handle;
   root.onclick = (e) => { if (e.target === root) close(undefined); };
-  document.addEventListener('keydown', function esc(e) {
-    if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(undefined); }
-  });
+  document.addEventListener('keydown', esc);
   const first = bodyEl.querySelector('input, select, textarea');
   if (first) setTimeout(() => first.focus(), 30);
   return done;

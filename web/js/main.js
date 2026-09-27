@@ -90,7 +90,9 @@ function wireTopbar() {
     state.classList.toggle('is-dirty', dirty);
     state.textContent = dirty ? 'unsaved changes' : (app.slug ? 'saved' : 'not saved yet');
   });
-  on('saved', () => { $('#save-state').textContent = 'saved'; });
+  // saveProject leaves the document dirty when something changed while it was
+  // writing; the label must not say otherwise.
+  on('saved', () => { if (!app.dirty) $('#save-state').textContent = 'saved'; });
   on('autosaved', () => toast('Autosaved', 'good'));
   on('document', () => {
     $('#hud-size').textContent = `${app.doc.width} × ${app.doc.height}`;

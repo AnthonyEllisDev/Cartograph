@@ -141,9 +141,17 @@ def route(req):
 
     if path == "/api/projects" and method == "POST":
         doc = _body(req)
+        # The same refusals the PUT below turns into a 400: a body that is not
+        # an object reached doc.get and was a 500, and so was write()'s own
+        # ValueError for a document nested too deeply.
+        if not isinstance(doc, dict):
+            return _err("document must be an object")
         name = projects.unique_slug(ctx.projects_dir, doc.get("name") or "Untitled Map")
         doc["name"] = doc.get("name") or name
-        saved = projects.write(ctx.projects_dir, name, doc)
+        try:
+            saved = projects.write(ctx.projects_dir, name, doc)
+        except ValueError as exc:
+            return _err(exc)
         return _json({"ok": True, "project": saved})
 
     if path.startswith("/api/projects/"):
