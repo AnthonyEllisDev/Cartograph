@@ -510,7 +510,6 @@ const isDungeonOp = (op) => op && op.gen && (op.gen.kind === 'dungeon' || op.gen
  * have (walls, notes, paint) are added, and the step takes them away again. */
 export function commitDungeon(result, keepWalls) {
   const doc = app.doc;
-  const layersBefore = doc.layers.slice();
   const added = [];
   const need = (kind, make) => {
     let layer = doc.layers.find((l) => l.kind === kind && !l.locked);
@@ -550,27 +549,39 @@ export function commitDungeon(result, keepWalls) {
   // and gets the same ones back on redo: a paint entry made on it afterwards
   // is a closure over that canvas, and would otherwise restore into one that
   // is no longer drawn (see forgetLayer).
+  //
+  // Only the added layers come and go. Restoring a snapshot of the whole
+  // stack threw away any layer added after the dungeon (adding a layer is not
+  // itself an undo step), paint and all, on undo and again on redo.
   const shelved = new Map();
-  const apply = (layers, ops) => {
-    const gone = doc.layers.filter((l) => !layers.includes(l));
-    const back = layers.filter((l) => !doc.layers.includes(l));
-    doc.layers = layers.slice();
-    for (const l of gone) shelved.set(l.id, R.forgetLayer(l.id));
-    for (const l of back) if (shelved.has(l.id)) { R.adoptLayer(shelved.get(l.id)); shelved.delete(l.id); }
+  const addedAt = added.map((l) => [l, layersAfter.indexOf(l)]).sort((a, b) => a[1] - b[1]);
+  const apply = (present, ops) => {
+    if (present) {
+      for (const [l, at] of addedAt) {
+        if (doc.layers.includes(l)) continue;
+        doc.layers.splice(Math.min(at, doc.layers.length), 0, l);
+        if (shelved.has(l.id)) { R.adoptLayer(shelved.get(l.id)); shelved.delete(l.id); }
+      }
+    } else {
+      for (const l of added) if (doc.layers.includes(l)) shelved.set(l.id, R.forgetLayer(l.id));
+      doc.layers = doc.layers.filter((l) => !added.includes(l));
+    }
     for (const l of touched) if (doc.layers.includes(l)) l.ops = ops.get(l).slice();
     // Walls last: invalidate on a walls layer relights, and the light has to
     // be cast against the walls that are there now.
     for (const l of touched) if (doc.layers.includes(l) && l !== walls) R.invalidate(l);
-    if (doc.layers.includes(walls)) R.invalidate(walls);
+    // A walls layer this step added and its undo took away is not there to
+    // invalidate, and its shadows stayed on the lighting.
+    if (doc.layers.includes(walls)) R.invalidate(walls); else R.relightAll();
     R.compositeAll(); R.requestDraw();
     emit('layers');
   };
-  apply(layersAfter, after);
+  apply(true, after);
   pushEntry({
     label: 'Generate dungeon',
     bytes: 0,
-    undo() { apply(layersBefore, before); },
-    redo() { apply(layersAfter, after); },
+    undo() { apply(false, before); },
+    redo() { apply(true, after); },
   });
   markDirty(); scheduleAutosave();
 }

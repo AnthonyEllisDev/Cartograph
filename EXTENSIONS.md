@@ -206,7 +206,7 @@ api.registerExporter({
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'selection'`, `'library'`, `'dirty'`, `'saved'` |
 | `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
-| `api.tools` | `{ TOOLS, clearSelection, currentTool, selectObject, selectedObject, setTool }` |
+| `api.tools` | `{ TOOLS, clearSelection, currentTool, selectObject, selectObjects, selectedObject, selectedObjects, setTool }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
 | `api.server` | the local HTTP API: `state`, `packs`, `importAsset`, `projects`, `createProject`, `readProject`, `writeProject`, `deleteProject`, `writeLayer`, `writeThumb`, `exportImage`, `openFolder` |
@@ -230,6 +230,15 @@ panel in the right rail listens to; `api.tools.clearSelection()` drops it.
 `api.tools.selectObject(layer, item)` does the opposite: it picks up the Select
 tool and hands it `item`, as though it had been clicked, and returns `false` if
 `item` is not on `layer`. The notes list in the Layers panel is built on it.
+
+Select can hold several things at once. `api.tools.selectedObjects()` returns
+every one of them as `{ layer, item }`, the primary first — the one
+`selectedObject()` returns and the Selected panel edits — or an empty list.
+Like `selectedObject()` it is checked every time, and anything whose layer has
+since been locked or hidden drops out, as it does from `selectedObject()`.
+`api.tools.selectObjects(list)` replaces the whole set with a list of
+`{ layer, item }` (the first becomes the primary), skips anything not on its
+layer or on a hidden or locked one, and returns how many it took.
 Nothing was removed for any of this, and `API_VERSION` is still 1.
 
 `api.invalidate` relights for you when the layer you pass is a walls layer, or a

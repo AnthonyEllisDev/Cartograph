@@ -15,7 +15,7 @@ import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
 import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
 import * as R from './render.js';
-import { TOOLS, setTool } from './tools.js';
+import { TOOLS, clearSelection, selectAll, setTool } from './tools.js';
 import { renderAssetPicker, renderToolOptions } from './ui.js';
 import { $, el, modalOpen, toast } from './util.js';
 
@@ -36,15 +36,19 @@ const BUILT_IN = [
     run: () => { if (undo()) { markDirty(); scheduleAutosave(); } } },
   { id: 'redo', group: 'Edit', title: 'Redo', keys: 'Ctrl+Shift+Z',
     run: () => { if (redo()) { markDirty(); scheduleAutosave(); } } },
-  { id: 'copy', group: 'Edit', title: 'Copy the selected thing', keys: 'Ctrl+C', run: () => copySelection() },
-  { id: 'cut', group: 'Edit', title: 'Cut the selected thing', keys: 'Ctrl+X', run: () => cutSelection() },
+  { id: 'select-all', group: 'Edit', title: 'Select everything', keys: 'Ctrl+A',
+    detail: 'Every stamp, path, region, wall, light, label and note on a drawn, unlocked layer',
+    run: () => { if (!selectAll()) toast('Nothing on this map to pick up'); } },
+  { id: 'select-none', group: 'Edit', title: 'Put everything down', keys: 'Esc', run: () => clearSelection() },
+  { id: 'copy', group: 'Edit', title: 'Copy the selection', keys: 'Ctrl+C', run: () => copySelection() },
+  { id: 'cut', group: 'Edit', title: 'Cut the selection', keys: 'Ctrl+X', run: () => cutSelection() },
   { id: 'paste', group: 'Edit', title: 'Paste', keys: 'Ctrl+V',
     detail: 'At the pointer, or a cell on from where it was copied', run: () => paste(null) },
-  { id: 'duplicate', group: 'Edit', title: 'Duplicate the selected thing', keys: 'Ctrl+D',
+  { id: 'duplicate', group: 'Edit', title: 'Duplicate the selection', keys: 'Ctrl+D',
     run: () => duplicateSelection() },
   { id: 'revert-all', group: 'Edit', title: 'Go back to the start of this session',
     detail: 'Undoes everything still in the history',
-    run: () => { jumpTo(0); markDirty(); scheduleAutosave(); R.requestDraw(); } },
+    run: () => { if (jumpTo(0)) { markDirty(); scheduleAutosave(); } R.requestDraw(); } },
   { id: 'generate-land', group: 'Map', title: 'Generate land…',
     detail: 'Grow a coastline from a seed onto the Landmass layer',
     run: () => generateDialog() },
@@ -191,6 +195,16 @@ export function open() {
   input.focus();
 }
 
+/** Whether the palette is up. It sits above the dialog layer, so anything
+ *  that would open a dialog has to ask: Ctrl+E under it opened Export beneath
+ *  the palette, and the next palette command ran behind the waiting dialog. */
+export function paletteOpen() { return !!root; }
+
+function typingIn(t) {
+  return t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
+    || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color', 'button'].includes(t.type));
+}
+
 export function close() {
   if (!root) return;
   root.remove();
@@ -209,6 +223,9 @@ export function initPalette() {
       return;
     }
     if (root) return;
+    // A key typed into a field is the field's. Ctrl+Shift+A in the map's name
+    // box aged the paper underneath it.
+    if (typingIn(ev.target)) return;
     // extension shortcuts
     for (const cmd of extensions.commands) {
       // EXTENSIONS.md documents `keys`; the bundled map-aging uses `shortcut`.

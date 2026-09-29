@@ -12,7 +12,7 @@ import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js'
 import { extensions } from './extensions.js';
 import { icon } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
+import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, selectedObjects, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { copySelection, duplicateSelection } from './clipboard.js';
 import { $, el, modal, toast } from './util.js';
 
@@ -255,14 +255,14 @@ export function renderHistory() {
 
   const base = el('li', {
     class: 'hist' + (cursor === 0 ? ' is-here' : ''),
-    onclick: () => { jumpTo(0); afterJump(); },
+    onclick: () => { if (jumpTo(0)) afterJump(); },
   }, [el('span', { class: 'hist-name', text: 'Opened' })]);
   root.appendChild(base);
 
   entries.forEach((entry, i) => {
     root.appendChild(el('li', {
       class: 'hist' + (i + 1 === cursor ? ' is-here' : '') + (i + 1 > cursor ? ' is-ahead' : ''),
-      onclick: () => { jumpTo(i + 1); afterJump(); },
+      onclick: () => { if (jumpTo(i + 1)) afterJump(); },
     }, [
       el('span', { class: 'hist-name', text: entry.label || 'Edit' }),
       el('span', { class: 'hist-n', text: String(i + 1) }),
@@ -281,8 +281,10 @@ export function renderHistory() {
 }
 
 function afterJump() {
-  // Pairs with markDirty everywhere else: winding the timeline back after the
-  // last autosave had fired left the map dirty with no timer to write it.
+  // Only reached when the jump moved: clicking the row you are already on
+  // marked a freshly saved map dirty. Pairs with markDirty everywhere else:
+  // winding the timeline back after the last autosave had fired left the map
+  // dirty with no timer to write it.
   markDirty(); scheduleAutosave();
   renderHistory();
   renderLayers();
@@ -542,6 +544,8 @@ function renderLayerProps() {
   }));
   root.appendChild(field({ type: 'toggle', label: 'Locked', value: layer.locked }, (v) => {
     layer.locked = v; markDirty(); scheduleAutosave();
+    // The Selected panel stops offering what it can no longer touch.
+    emit('selection');
   }));
 
   if (layer.kind === 'water' || layer.kind === 'floor' || layer.kind === 'land' || layer.kind === 'paper') {
@@ -1087,6 +1091,8 @@ export function renderSelection() {
   const root = $('#selection-props');
   if (!panel || !root) return;
   root.innerHTML = '';
+  const set = selectedObjects();
+  if (set.length > 1) { renderSetSummary(panel, root, set); return; }
   const picked = selectedObject();
   const fields = picked && OBJECT_FIELDS[picked.layer.kind];
   if (!picked || !fields) {
@@ -1103,17 +1109,42 @@ export function renderSelection() {
       editObject(layer, item, spec.key, spec.scale ? v * spec.scale : v);
     }));
   }
-  root.appendChild(el('div', { class: 'tool-actions' }, [
+  root.appendChild(setButtons());
+  root.appendChild(el('p', { class: 'muted small',
+    text: 'Drag it to move it. Ctrl+V pastes a copy at the pointer. Shift-click, or drag a box on empty map, to pick up more than one.' }));
+}
+
+function setButtons() {
+  return el('div', { class: 'tool-actions' }, [
     el('button', { class: 'btn', text: 'Duplicate', title: 'Ctrl+D', 'data-action': 'duplicate',
                    onclick: () => duplicateSelection() }),
     el('button', { class: 'btn', text: 'Copy', title: 'Ctrl+C', 'data-action': 'copy',
                    onclick: () => copySelection() }),
     el('button', { class: 'btn', text: 'Delete', title: 'Delete', 'data-action': 'delete',
                    onclick: () => deleteSelection() }),
-  ]));
-  root.appendChild(el('p', { class: 'muted small',
-    text: 'Drag it to move it. Ctrl+V pastes a copy at the pointer.' }));
+  ]);
 }
+
+/** Several things held at once: what they are, and what can be done to all of
+ *  them. Their fields are not offered, because an edit to "the colour" of a
+ *  wall, a lamp and a stamp has no single meaning; click one on its own to
+ *  edit it. Built from text nodes, as everything that names a layer is. */
+function renderSetSummary(panel, root, set) {
+  panel.hidden = false;
+  const counts = new Map();
+  for (const s of set) {
+    const noun = OBJECT_NOUNS[s.layer.kind] || 'thing';
+    counts.set(noun, (counts.get(noun) || 0) + 1);
+  }
+  const parts = [...counts].map(([noun, n]) => n + ' ' + noun + (n > 1 ? plural(noun) : ''));
+  root.appendChild(el('p', { class: 'muted small', 'data-selection-count': String(set.length),
+    text: set.length + ' things picked up: ' + parts.join(', ') + '.' }));
+  root.appendChild(setButtons());
+  root.appendChild(el('p', { class: 'muted small',
+    text: 'Drag any of them to move them all. Shift-click adds or removes one. To edit one of them, press Escape to put the rest down and click it.' }));
+}
+
+function plural(noun) { return /(s|x|ch|sh)$/.test(noun) ? 'es' : 's'; }
 
 /* ------------------------------------------------------- collapsible panels */
 

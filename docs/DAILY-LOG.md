@@ -5,6 +5,117 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-29 — holding several things at once, and nine things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 76 tracked
+source files (the `.pyc`s were not compared), so this was a feature day. The
+baseline was green: 541 checks across sixteen suites, plus `battle`.
+
+**Review.** Two readers in parallel, each on its own running copy and each
+reproducing before reporting: renderer, lighting and the generators; server and
+front-end state. `node --check` passed on every module, and the non-ASCII grep
+found only em dashes, times, degree and middle-dot signs, ellipses and curly
+quotes in comments and UI strings. Nine front-end defects, none on the known
+list, all reproduced and fixed; two server nits, fixed:
+
+- *Undoing a dungeon took away layers added after it.* `commitDungeon`'s undo
+  restored a snapshot of the whole stack, and adding a layer is not itself an
+  undo step (known, hand-off 13) -- so a paint layer added after generating
+  vanished on undo, paint and all, and redo did not bring it back either. The
+  step now takes away and puts back only the layers it added, at their places.
+- *Undoing a dungeon that had added the walls layer left its shadows behind.*
+  The relight only ran if the walls layer was still in the document. It calls
+  `relightAll()` when it is not.
+- *A paste with the pointer over the grey margin landed off the map* (both
+  readers found it): saved, selected and invisible. The cursor is tracked over
+  the whole canvas; a paste now uses it only when it is over the map.
+- *Something picked up before its layer was locked or hidden could still be
+  deleted, cut or edited.* `hitTest` refused such layers and `selectedObject()`
+  did not. It does now, `selectObject` refuses them, and the Locked toggle
+  emits `'selection'` so the panel steps down.
+- *A pasted or duplicated label was pulled onto the grid*, which the Label tool
+  never does. The paste now reads how to snap off the kind's own tool rather
+  than guessing from the op's shape.
+- *Ctrl+E and Ctrl+N opened their dialogs underneath an open palette*, and the
+  next palette command then ran behind the waiting dialog. `palette.js` exports
+  `paletteOpen()` and `main.js` stands those two down while it is true.
+- *An extension's shortcut fired while typing in a text field* (Ctrl+Shift+A in
+  the map name aged the paper).
+- *"Go back to the start of this session", and clicking the history row you
+  were already on, marked a saved map dirty.* Both now check `jumpTo`'s return.
+- Server: `Content-Length` was parsed with `int()`, which reads `1_0` as ten and
+  takes `+2`; it must be ASCII digits now. And `do_OPTIONS` was the one handler
+  without the Host check; it refuses an unknown Host with 421 like the rest.
+
+Found and not changed: the Select tool's drag is not snapped, so a wall dragged
+on a battle map leaves the grid lines (true before today too; snapping the
+drag's delta is small, but it changes how every move feels, so it wants
+deciding). Also noted, not reproduced: after a space-pan `view.cursor` is not
+updated, so a paste straight after one may use a stale point.
+
+**The feature: a selection set.** First on the hand-off's candidate list since
+yesterday, and today's research agreed: Dungeondraft's Select tool box-selects
+and shift-adds, and "select stamps from different groups" is an open request on
+Inkarnate's board. Not already there (read the code: `state.grabbed` was one
+item); no dependency; squarely a one-person-at-a-desk thing. Rejected today:
+prefabs (they build on this, so they are the natural next day), GM/player
+export in one go, print tiling and elevation (as before).
+
+- **Shift-click** adds a thing or puts it back down and moves nothing. **A box
+  dragged on empty map** picks up what it *wholly* encloses -- touching is not
+  enough, because a region covers half the map and a box drawn round three
+  doors must not pick up the kingdom they are in. Shift and a box adds to the
+  set. A click on empty map puts everything down; so does Escape. Ctrl+A picks
+  up everything on every drawn, unlocked layer, and the palette has both.
+- **The set is not stored twice.** The tool keeps its primary (`grabbed`, what
+  the Selected panel edits and what `selectedObject()` has always returned) and
+  a list of the rest, and `selectedObjects()` is the only reading of it: each
+  thing is checked against the document, its layer's lock and its visibility
+  every time, so an undo, a delete or a lock simply drops it out.
+- **Drag any of it and all of it moves**, each item from its own snapshot plus
+  one delta rather than accumulating per frame, as one `Move` step. Walls are
+  invalidated last so the light is recast against where they are now; moving a
+  wall off a lamp's line lifts its shadow and undo puts it back (measured).
+- **Delete, cut, copy, paste and duplicate take the whole set**, as one step
+  however many layers it spans. The clipboard carries each op's kind, so a room
+  copied with its walls, doors, lamps and furniture pastes each part onto a
+  layer of its own kind; a part with no drawn, unlocked layer to go to is left
+  out with a toast rather than refusing the lot. The set keeps its shape, and
+  the delta is snapped as the first snapping thing in it snaps, so walls stay
+  on grid lines. The first light on an empty lighting layer still turns the
+  night on.
+- **The Selected panel** says what is held ("5 things picked up: 3 walls, 2
+  lights") with Duplicate, Copy and Delete. It offers no fields for a set,
+  deliberately: "the colour" of a wall, a lamp and a stamp has no single
+  meaning. Editing a set is the next step if anyone wants it -- `editObject`
+  applied across it.
+- **Extension API, additive:** `api.tools.selectedObjects()` and
+  `api.tools.selectObjects(list)`. `API_VERSION` stays 1.
+
+**Tests.** A new suite, `test/selection.mjs` (43): building a set by shift-click
+and taking one out; the panel's summary and its lack of fields; the box taking
+the lamp and wall inside it and not the road through it; shift-box adding;
+moving a set as one step with the far ends moved alike, the shadow lifting and
+coming back on undo; the round trip pixel-identical; deleting a set as one step;
+copying a set that spans walls and lighting and pasting it at the pointer,
+shape kept, walls on grid lines, copies held; duplicating a set; a paste with
+the lighting hidden landing its wall only; Ctrl+A; and a lock dropping a wall
+out of the set so Delete takes only the lamp. It throws on a pristine clone,
+which has no `selectedObjects`. `regress.mjs` 75 -> 85: nine new checks, all
+failing on a pristine clone, and one precondition kept deliberately (the
+dungeon's walls do cast shadows, which is what makes "and undo takes them away"
+mean anything). `guards.mjs` 57 -> 59, both new checks failing on a pristine
+clone. Looked at in a screenshot at 1440 x 860 on a generated dungeon: the
+dashed box while dragging, then two rooms' walls and pins ringed and the panel
+reading "14 things picked up: 2 notes, 12 walls".
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 59 guards, 85 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 39 clipboard, 43 selection -- 596 checks, all passing, plus
+`battle`, over two full back-to-back rounds on the finished tree.
+
+---
+
 ## 2026-09-28 — copy and paste, and a dialog that owns the keyboard
 
 Anthony's working copy matched `origin/main` byte for byte across all 74 tracked

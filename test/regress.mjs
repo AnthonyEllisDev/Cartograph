@@ -1467,6 +1467,147 @@ const undoStep = async () => { await p.evaluate(async () => { (await import('/js
   t('the Select tool marks nothing once what it held is undone away', strokes === 0, strokes + ' strokes');
 }
 
+/* ========================================================================== *
+ * 2026-09-29: two readers in parallel again. A dungeon undo that took away
+ * more than it added, a paste off the map, a selection that outlived a lock,
+ * and keys that reached past the palette or into a text field.
+ * ========================================================================== */
+
+{
+  await newMap(p, { name: 'Regress Dungeon Layers', kind: 'battle', size: '40x30' });
+  const r = await p.evaluate(async () => {
+    const D = await import('/js/dungeon.js'); const H = await import('/js/history.js');
+    const Doc = await import('/js/doc.js');
+    const doc = window.__cg.app.doc;
+    D.commitDungeon(D.generateDungeon({ seed: 'later', rooms: 5 }, doc), false);
+    // Adding a layer is not an undo step (known); what it holds must still
+    // survive the dungeon being undone and redone underneath it.
+    const extra = Doc.makeLayer('raster', { name: 'Added later' });
+    doc.layers.push(extra);
+    H.undo();
+    const afterUndo = doc.layers.includes(extra);
+    H.redo();
+    return { afterUndo, afterRedo: doc.layers.includes(extra) };
+  });
+  t('undoing a dungeon keeps a layer added after it', r.afterUndo);
+  t('and so does redoing it', r.afterRedo);
+}
+
+{
+  await newMap(p, { name: 'Regress Dungeon Shadows', kind: 'battle', size: '40x30' });
+  // No walls layer, so the dungeon adds one; a lamp in the middle of the map.
+  await p.evaluate(async () => {
+    const A = await import('/js/app.js');
+    const doc = window.__cg.app.doc;
+    doc.layers = doc.layers.filter((l) => l.kind !== 'walls');
+    const lights = doc.layers.find((l) => l.kind === 'lights');
+    lights.ops.push({ id: 'o-lamp', x: 1400, y: 1050, bright: 700, dim: 1400, color: '#ffd9a0' });
+    lights.ambient = 0.8; lights.visible = true;
+    window.__cg.R.invalidate(lights); window.__cg.R.compositeAll();
+    A.emit('layers');
+  });
+  const dark = () => p.evaluate(() => {
+    const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'lights');
+    const d = window.__cg.R.canvasFor(layer).getContext('2d').getImageData(0, 0, 2800, 2100).data;
+    let s = 0; for (let i = 3; i < d.length; i += 4) s += d[i];
+    return s;
+  });
+  const before = await dark();
+  await p.evaluate(async () => {
+    const D = await import('/js/dungeon.js');
+    D.commitDungeon(D.generateDungeon({ seed: 'shadows', rooms: 6 }, window.__cg.app.doc), false);
+  });
+  const withDungeon = await dark();
+  await p.evaluate(async () => { (await import('/js/history.js')).undo(); });
+  const after = await dark();
+  t('precondition: the dungeon\'s walls cast shadows', withDungeon > before);
+  t('undoing a dungeon that added the walls layer takes its shadows away', after === before,
+    before + ' / ' + withDungeon + ' / ' + after);
+}
+
+{
+  await newMap(p, { name: 'Regress Paste Margin', kind: 'battle', size: '40x30' });
+  await tool('light');
+  await clickAt(315, 315);
+  await tool('select');
+  await clickAt(315, 315);
+  await p.keyboard.press('Control+c');
+  // The canvas left of the map: on the canvas, off the document.
+  const s = await M(-60, 600);
+  await p.mouse.move(s.x, s.y); await p.waitForTimeout(120);
+  await p.keyboard.press('Control+v'); await p.waitForTimeout(250);
+  const lamps = await p.evaluate(() => window.__cg.app.doc.layers.find((l) => l.kind === 'lights').ops
+    .map((o) => [o.x, o.y]));
+  t('a paste with the pointer over the margin lands on the map', lamps.length === 2
+    && lamps[1][0] >= 0 && lamps[1][1] >= 0, JSON.stringify(lamps));
+
+  // Held before its layer was locked: no longer holdable.
+  await clickAt(lamps[0][0], lamps[0][1]);
+  await p.evaluate(() => { window.__cg.app.doc.layers.find((l) => l.kind === 'lights').locked = true; });
+  await p.keyboard.press('Delete'); await p.waitForTimeout(200);
+  const n = await p.evaluate(() => window.__cg.app.doc.layers.find((l) => l.kind === 'lights').ops.length);
+  t('Delete does nothing to a thing whose layer was locked after it was picked up', n === 2, n);
+  await p.evaluate(() => { window.__cg.app.doc.layers.find((l) => l.kind === 'lights').locked = false; });
+}
+
+{
+  await newMap(p, { name: 'Regress Label Copy', kind: 'battle' });
+  const r = await p.evaluate(async () => {
+    const T = await import('/js/tools.js'); const C = await import('/js/clipboard.js');
+    const A = await import('/js/app.js'); const Doc = await import('/js/doc.js');
+    const doc = window.__cg.app.doc;
+    let layer = doc.layers.find((l) => l.kind === 'labels');
+    if (!layer) { layer = Doc.makeLayer('labels'); doc.layers.push(layer); A.emit('layers'); }
+    layer.ops.push({ id: 't-x', text: 'Gate', style: 'settlement', size: 24, x: 1000, y: 1010 });
+    window.__cg.R.invalidate(layer);
+    T.selectObject(layer, layer.ops[0]);
+    C.duplicateSelection();
+    const c = layer.ops[1];
+    return [c.x, c.y];
+  });
+  // The Label tool does not snap, so neither does a copy of a label.
+  t('a duplicated label moves one cell and is not pulled onto the grid', r[0] === 1070 && r[1] === 1080,
+    r.join(','));
+}
+
+{
+  await newMap(p, { name: 'Regress Palette Keys', kind: 'battle' });
+  await p.mouse.click(5, 500);
+  await p.keyboard.press('Control+k'); await p.waitForTimeout(200);
+  await p.keyboard.press('Control+e'); await p.waitForTimeout(300);
+  const st = await p.evaluate(async () => ({
+    modal: (await import('/js/util.js')).modalOpen(),
+    palette: !!document.querySelector('.palette-root'),
+  }));
+  t('Ctrl+E with the palette open does not open Export underneath it', !st.modal, JSON.stringify(st));
+  // Put both away without Escape, whose handling is what differs between the
+  // fixed and the unfixed tree (see the dialog trap in the hand-off).
+  await p.evaluate(async () => (await import('/js/palette.js')).close());
+  if (await p.evaluate(async () => (await import('/js/util.js')).modalOpen())) {
+    await p.click('.modal .btn:not(.btn-primary)'); await p.waitForTimeout(200);
+  }
+
+  const n0 = await p.evaluate(() => window.__cg.history.past.length);
+  await p.click('#project-name');
+  await p.keyboard.press('Control+Shift+A'); await p.waitForTimeout(300);
+  const n1 = await p.evaluate(() => window.__cg.history.past.length);
+  t('an extension\'s shortcut typed into a text field stays in the field', n1 === n0, n0 + ' -> ' + n1);
+  await p.mouse.click(5, 500);
+
+  await p.evaluate(async () => { await (await import('/js/app.js')).saveProject({ silent: true }); });
+  await p.waitForTimeout(400);
+  await p.evaluate(async () => {
+    const H = await import('/js/history.js');
+    while (H.history.past.length) H.history.past.pop();
+    const A = await import('/js/app.js'); A.markDirty(false);
+  });
+  await p.keyboard.press('Control+k'); await p.waitForTimeout(200);
+  await p.keyboard.type('start of this session'); await p.waitForTimeout(150);
+  await p.keyboard.press('Enter'); await p.waitForTimeout(250);
+  const dirty = await p.evaluate(() => window.__cg.app.dirty);
+  t('going back to the start with nothing to undo leaves a saved map saved', dirty === false);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

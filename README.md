@@ -76,11 +76,12 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       57 more, for the server's guards, over raw sockets
-test/regress.mjs      75 more, for bugs that have been in here once already
+test/guards.mjs       59 more, for the server's guards, over raw sockets
+test/regress.mjs      85 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
 test/clipboard.mjs    39 more, for copy, paste and duplicate
+test/selection.mjs    43 more, for holding several things at once
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -165,6 +166,18 @@ map, so a room's worth of furniture carries from one battle map to the next. A
 pasted wall casts shadows at once, a note copied out of a generated dungeon
 becomes your own (regenerating will not sweep it away), and every paste is one
 step in the history.
+
+Select can hold **several things at once**. Shift-click adds one or puts it back
+down; drag a box on empty map to pick up everything the box wholly encloses
+(wholly, so a box round three doors does not pick up the kingdom they stand in),
+and hold Shift while dragging to add to what is already held. Ctrl+A picks up
+everything on the map and Escape puts it all down. Drag any one of them and the
+rest come with it; Delete, cut, copy, paste and duplicate all act on the whole
+set, as one step in the history however many layers it spans — a room's walls,
+its doors, its lamps and its furniture copy and paste together, each part onto
+a layer of its own kind. The Selected panel says what is held; to change one
+thing's colour or wording, press Escape and click it on its own. Something on a layer you then
+lock or hide drops out of what is held.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -327,6 +340,8 @@ table of colours and adding one is a few lines.
 | `Ctrl+S` `Ctrl+E` `Ctrl+N` | Save · Export · New map |
 | `Ctrl+Z` `Ctrl+Shift+Z` | Undo · Redo |
 | `Ctrl+C` `Ctrl+X` `Ctrl+V` `Ctrl+D` | Copy · Cut · Paste · Duplicate |
+| Shift+click, drag on empty map | Add to what Select holds · pick up what a box encloses |
+| `Ctrl+A` `Esc` | Pick up everything · put it all down |
 | Alt (held) | Ignore grid snapping |
 
 ## Extensions
@@ -415,7 +430,9 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 541 assertions in all: `clipboard.mjs`
+There are narrower scripts beside it, 596 assertions in all: `selection.mjs`
+(holding several things: shift-click, the box, moving, deleting and pasting a
+set across layers, a lock dropping one out, and the round trip), `clipboard.mjs`
 (copy, cut, paste and duplicate: where a copy lands, which layer, undo, the
 round trip, and between maps), `dungeon.mjs`
 (seeded dungeons: the layout, the walls as walls, undo and the round trip), `notes.mjs`

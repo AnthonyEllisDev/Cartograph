@@ -130,10 +130,13 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.headers.get("Content-Length")
         if raw is None:
             return 0
-        try:
-            length = int(raw)
-        except (TypeError, ValueError):
+        # int() is more forgiving than HTTP: it takes "1_0", "+2" and " 7 ".
+        # A proxy in front that reads those differently would leave bytes on
+        # the socket that this side thinks are the next request.
+        raw = raw.strip()
+        if not (raw.isascii() and raw.isdigit()):
             return -1
+        length = int(raw)
         # A negative length reaches rfile.read(-1), which blocks until the peer
         # closes and pins the thread for as long as it cares to wait.
         return length if length >= 0 else -1
@@ -158,6 +161,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         # Same reasoning as _refuse: a body here would be left on the socket.
         # A chunked one has no declared length at all, so it is refused first.
+        if not self._host_ok():
+            return self._refuse(421, "unknown host")
         if self.headers.get("Transfer-Encoding"):
             return self._refuse(411, "a length is required")
         if self._body_length() != 0:

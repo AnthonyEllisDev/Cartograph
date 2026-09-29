@@ -232,6 +232,23 @@ try {
     codes[0] === '400' && codes.length === 1, codes.join(' then '));
 }
 
+{
+  // int() reads "1_0" as ten. A proxy in front that reads it as garbage and
+  // passes the two bytes on would leave this side waiting, or desynchronised.
+  const codes = statuses(await raw(
+    `POST /api/projects HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Content-Length: 1_0${CRLF}${CRLF}{}`, 1200));
+  t('a Content-Length that only Python calls a number is refused',
+    codes[0] === '400' && codes.length === 1, codes.join(' then ') || 'the thread is still waiting');
+}
+
+{
+  const codes = statuses(await raw(
+    `OPTIONS /api/state HTTP/1.1${CRLF}Host: evil.example${CRLF}${CRLF}`));
+  t('an OPTIONS for a host we are not is refused like any other request',
+    codes[0] === '421', codes.join(' then '));
+}
+
 /* one bad file must not empty a whole library ------------------------------- */
 
 {

@@ -1464,86 +1464,156 @@ define({
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it, Ctrl+C / Ctrl+V copy and paste it and Ctrl+D duplicates it.',
+  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up; its properties appear in the right rail. Shift-click adds or removes one, and dragging on empty map picks up everything inside the box. Drag any of them to move them all. Delete removes them, Ctrl+C / Ctrl+V copy and paste, Ctrl+D duplicates, Ctrl+A picks up everything and Escape puts it all down.',
   options: () => ([]),
-  state: { grabbed: null, offset: null, layer: null },
-  down(pt) {
+  // `grabbed`/`layer` is the primary: the one the Selected panel edits and the
+  // extension API's selectedObject() reports. `more` is the rest of the set.
+  state: { grabbed: null, layer: null, more: [], marquee: null, moving: null },
+  down(pt, ev) {
     const hit = hitTest(pt);
-    this.state.grabbed = hit ? hit.item : null;
-    this.state.layer = hit ? hit.layer : null;
-    if (hit) {
-      this.state.offset = { x: pt.x - (hit.item.x ?? hit.item.points[0].x), y: pt.y - (hit.item.y ?? hit.item.points[0].y) };
-      this.state.before = JSON.parse(JSON.stringify(hit.item));
+    const shift = !!(ev && ev.shiftKey);
+    this.state.moving = null;
+    this.state.marquee = null;
+    if (hit && shift) {
+      // Shift-click toggles one thing and moves nothing, so a set can be
+      // built up without nudging what is already in it.
+      toggleSelected(hit.layer, hit.item);
+      R.requestDraw();
+      return;
     }
-    emit('selection');
+    if (hit) {
+      // A click on something already in the set keeps the set, so it can be
+      // dragged as a whole; it becomes the primary, which is what a person
+      // clicking it expects the panel to be about.
+      if (isSelected(hit.item)) makePrimary(hit.layer, hit.item);
+      else setSelection([hit]);
+      this.state.moving = { from: pt, items: selectedObjects().map((s) => ({ ...s, before: JSON.parse(JSON.stringify(s.item)) })) };
+    } else {
+      if (!shift) setSelection([]);
+      this.state.marquee = { x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y, add: shift };
+    }
     R.requestDraw();
   },
   move(pt) {
-    const { grabbed, offset, layer } = this.state;
-    if (!grabbed || !offset) return;
-    // One delta applied to everything the item has, because a curved label has
-    // both an anchor and a curve and moving one without the other tears it.
-    const anchor = grabbed.x != null ? grabbed : grabbed.points[0];
-    const dx = pt.x - offset.x - anchor.x;
-    const dy = pt.y - offset.y - anchor.y;
-    if (grabbed.x != null) { grabbed.x += dx; grabbed.y += dy; }
-    if (grabbed.points) for (const p of grabbed.points) { p.x += dx; p.y += dy; }
-    R.invalidate(layer);
+    const { moving, marquee } = this.state;
+    if (marquee) { marquee.x1 = pt.x; marquee.y1 = pt.y; R.requestDraw(); return; }
+    if (!moving) return;
+    // Measured from each thing's own snapshot rather than added up frame by
+    // frame, so a long drag lands exactly where the pointer says and a set
+    // keeps its shape to the pixel.
+    const dx = pt.x - moving.from.x, dy = pt.y - moving.from.y;
+    const layers = new Set();
+    for (const m of moving.items) {
+      // One delta for everything the item has: a curved label has both an
+      // anchor and a curve, and moving one without the other tears it.
+      if (m.item.x != null) { m.item.x = m.before.x + dx; m.item.y = m.before.y + dy; }
+      if (m.item.points) m.item.points.forEach((p, i) => { p.x = m.before.points[i].x + dx; p.y = m.before.points[i].y + dy; });
+      layers.add(m.layer);
+    }
+    invalidateAll(layers);
   },
   up() {
-    const { grabbed, layer, before } = this.state;
-    const after = grabbed && before ? JSON.parse(JSON.stringify(grabbed)) : null;
+    const { moving, marquee } = this.state;
+    this.state.moving = null;
+    this.state.marquee = null;
+    if (marquee) {
+      const w = Math.abs(marquee.x1 - marquee.x0) * R.view.zoom, h = Math.abs(marquee.y1 - marquee.y0) * R.view.zoom;
+      // A click on empty map that barely moved is putting things down, which
+      // down() has already done; a box a few pixels wide is not a request.
+      if (w >= 4 || h >= 4) {
+        const found = insideBox(marquee);
+        setSelection(marquee.add ? selectedObjects().concat(found) : found);
+      }
+      R.requestDraw();
+      return;
+    }
+    if (!moving) return;
+    const changed = moving.items.filter((m) => JSON.stringify(m.before) !== JSON.stringify(m.item));
     // Selecting is not moving. An entry per click filled the 32-slot stack
     // with steps that undid nothing and pushed the real ones off the bottom.
-    if (after && JSON.stringify(before) !== JSON.stringify(after)) {
-      // Deep copies on the way back too: assigning the snapshot's own points
-      // array onto the item let the next drag rewrite a snapshot that the
-      // history was still holding.
-      const put = (snap) => { Object.assign(grabbed, JSON.parse(JSON.stringify(snap))); R.invalidate(layer); };
-      pushEntry({
-        label: 'Move',
-        undo() { put(before); },
-        redo() { put(after); },
-      });
-      markDirty(); scheduleAutosave();
-    }
-    this.state.offset = null;
+    if (!changed.length) return;
+    const steps = changed.map((m) => ({ layer: m.layer, item: m.item, before: m.before, after: JSON.parse(JSON.stringify(m.item)) }));
+    // Deep copies on the way back too: assigning the snapshot's own points
+    // array onto the item let the next drag rewrite a snapshot that the
+    // history was still holding.
+    const put = (which) => {
+      for (const st of steps) Object.assign(st.item, JSON.parse(JSON.stringify(st[which])));
+      invalidateAll(new Set(steps.map((st) => st.layer)));
+    };
+    pushEntry({
+      label: 'Move',
+      undo() { put('before'); },
+      redo() { put('after'); },
+    });
+    markDirty(); scheduleAutosave();
   },
   key(ev) {
-    if (!this.state.grabbed || (ev.key !== 'Delete' && ev.key !== 'Backspace')) return false;
+    if (ev.key === 'Escape') {
+      if (!selectedObjects().length) return false;
+      setSelection([]);
+      return true;
+    }
+    if (ev.key !== 'Delete' && ev.key !== 'Backspace') return false;
+    if (!selectedObjects().length) return false;
     return deleteSelection();
   },
   overlay(ctx) {
-    const g = this.state.grabbed;
     // Checked against the document, as the panel is: undo a paste and the
     // ring went on marking the spot where the copy had been.
-    if (!g || !selectedObject()) return;
-    ctx.save();
-    ctx.strokeStyle = '#d9a441';
-    ctx.lineWidth = 1.5;
-    if (g.points) {
-      ctx.beginPath();
-      g.points.forEach((p, i) => {
-        const s = R.mapToScreen(p.x, p.y);
-        if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-    } else if (this.state.layer && ['notes', 'lights'].includes(this.state.layer.kind)) {
-      // A pin and a light are centred on their point; the box below is for a
-      // stamp, which stands on it. A light's ring is its 16-px grab radius.
-      const s = R.mapToScreen(g.x, g.y);
-      const r = this.state.layer.kind === 'lights' ? 16 * R.view.zoom + 3
-        : ((this.state.layer.pinSize || NOTE_DEFAULTS.pinSize) / 2) * R.view.zoom + 5;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-      ctx.stroke();
-    } else {
-      const s = R.mapToScreen(g.x, g.y);
-      ctx.strokeRect(s.x - 14, s.y - 26, 28, 28);
+    const set = selectedObjects();
+    set.forEach((s, i) => drawRing(ctx, s.layer, s.item, i === 0 && set.length > 1));
+    const m = this.state.marquee;
+    if (m) {
+      const a = R.mapToScreen(Math.min(m.x0, m.x1), Math.min(m.y0, m.y1));
+      const b = R.mapToScreen(Math.max(m.x0, m.x1), Math.max(m.y0, m.y1));
+      ctx.save();
+      ctx.fillStyle = 'rgba(217, 164, 65, 0.10)';
+      ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      ctx.strokeStyle = '#d9a441';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(a.x + 0.5, a.y + 0.5, b.x - a.x, b.y - a.y);
+      ctx.restore();
     }
-    ctx.restore();
   },
 });
+
+/** The selection mark for one thing. The primary of a set of several gets a
+ *  heavier line, so it is clear which one the Selected panel is about. */
+function drawRing(ctx, layer, g, primary) {
+  ctx.save();
+  ctx.strokeStyle = '#d9a441';
+  ctx.lineWidth = primary ? 2.5 : 1.5;
+  if (g.points) {
+    ctx.beginPath();
+    g.points.forEach((p, i) => {
+      const s = R.mapToScreen(p.x, p.y);
+      if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+    });
+    ctx.stroke();
+  } else if (['notes', 'lights'].includes(layer.kind)) {
+    // A pin and a light are centred on their point; the box below is for a
+    // stamp, which stands on it. A light's ring is its 16-px grab radius.
+    const s = R.mapToScreen(g.x, g.y);
+    const r = layer.kind === 'lights' ? 16 * R.view.zoom + 3
+      : ((layer.pinSize || NOTE_DEFAULTS.pinSize) / 2) * R.view.zoom + 5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    const s = R.mapToScreen(g.x, g.y);
+    ctx.strokeRect(s.x - 14, s.y - 26, 28, 28);
+  }
+  ctx.restore();
+}
+
+/** Rebuild each layer once. Walls go last, because invalidating a walls layer
+ *  relights, and the light has to be cast against where the walls are now. */
+function invalidateAll(layers) {
+  const list = [...layers];
+  for (const l of list) if (l.kind !== 'walls') R.invalidate(l);
+  for (const l of list) if (l.kind === 'walls') R.invalidate(l);
+}
 
 define({
   id: 'pan',
@@ -1641,7 +1711,24 @@ function pushPoint(pt, size, width) {
   }
 }
 
-/** What the Select tool is holding, or null.
+/* ------------------------------------------------------------ selection */
+
+// Layer kinds the Select tool can pick things off, as hitTest knows them.
+const SELECTABLE = new Set(['objects', 'labels', 'paths', 'regions', 'walls', 'lights', 'notes']);
+
+/** Whether a held thing can still be held: its layer is in this document, the
+ *  item is still on it, and the layer is drawn and unlocked. hitTest refuses
+ *  hidden and locked layers, and the selection has to agree with it --
+ *  something picked up before its layer was locked or hidden could otherwise
+ *  still be deleted, cut, moved or edited through the Selected panel. */
+function holdable(layer, item) {
+  if (!item || !layer || !app.doc || !app.doc.layers.includes(layer)) return false;
+  if (!layer.ops || !layer.ops.includes(item)) return false;
+  return !layer.locked && layerVisible(app.doc, layer);
+}
+
+/** What the Select tool is holding, or null. With a set picked up, this is
+ *  the primary: the one the Selected panel edits.
  *
  * Checked against the document every time rather than trusted: the layer can
  * be deleted, the item can be undone away, and a panel bound to something that
@@ -1651,55 +1738,151 @@ function pushPoint(pt, size, width) {
 export function selectedObject() {
   if (app.tool !== 'select') return null;
   const { grabbed, layer } = TOOLS.select.state;
-  if (!grabbed || !layer) return null;
-  if (!app.doc || !app.doc.layers.includes(layer)) return null;
-  if (!layer.ops || !layer.ops.includes(grabbed)) return null;
+  if (!holdable(layer, grabbed)) return null;
   return { layer, item: grabbed };
 }
 
-/** Pick up `item` as though it had been clicked with Select -- how the notes
- *  list in the Layers panel hands a note to the Selected panel. */
-export function selectObject(layer, item) {
-  if (!layer || !layer.ops || !layer.ops.includes(item)) return false;
-  if (app.tool !== 'select') setTool('select');
-  TOOLS.select.state.grabbed = item;
-  TOOLS.select.state.layer = layer;
-  TOOLS.select.state.offset = null;
+/** Everything the Select tool is holding, the primary first, each checked as
+ *  selectedObject() checks it. The set is not stored twice: this is the only
+ *  reading of it, and anything no longer on the map simply drops out. */
+export function selectedObjects() {
+  if (app.tool !== 'select') return [];
+  const st = TOOLS.select.state;
+  const out = [];
+  const seen = new Set();
+  const add = (layer, item) => {
+    if (seen.has(item) || !holdable(layer, item)) return;
+    seen.add(item);
+    out.push({ layer, item });
+  };
+  add(st.layer, st.grabbed);
+  for (const m of st.more) add(m.layer, m.item);
+  return out;
+}
+
+function isSelected(item) { return selectedObjects().some((s) => s.item === item); }
+
+/** Replace the whole set. The first entry becomes the primary. */
+export function selectObjects(list) {
+  const ok = [];
+  const seen = new Set();
+  for (const s of list || []) {
+    if (!s || seen.has(s.item) || !holdable(s.layer, s.item)) continue;
+    seen.add(s.item);
+    ok.push({ layer: s.layer, item: s.item });
+  }
+  if (ok.length && app.tool !== 'select') setTool('select');
+  setSelection(ok);
+  return ok.length;
+}
+
+function setSelection(list) {
+  const st = TOOLS.select.state;
+  // A box dragged with Shift over things already held would otherwise list
+  // them twice, and the set would say it held more than it does.
+  const seen = new Set();
+  list = list.filter((s) => !seen.has(s.item) && seen.add(s.item));
+  st.grabbed = list.length ? list[0].item : null;
+  st.layer = list.length ? list[0].layer : null;
+  st.more = list.slice(1).map((s) => ({ layer: s.layer, item: s.item }));
   emit('selection');
   R.requestDraw();
+}
+
+function toggleSelected(layer, item) {
+  const set = selectedObjects();
+  if (set.some((s) => s.item === item)) setSelection(set.filter((s) => s.item !== item));
+  else setSelection(set.concat([{ layer, item }]));
+}
+
+function makePrimary(layer, item) {
+  const set = selectedObjects();
+  setSelection([{ layer, item }].concat(set.filter((s) => s.item !== item)));
+}
+
+/** Where a thing is, as the points a box has to enclose to take it: a stamp,
+ *  light or pin by the spot it stands on, anything drawn by all of its points
+ *  (and a curved label by its anchor as well as its curve). */
+function extentPoints(item) {
+  const pts = item.points && item.points.length ? item.points.slice() : [];
+  if (item.x != null) pts.push({ x: item.x, y: item.y });
+  return pts;
+}
+
+/** Everything a dragged box wholly encloses, on every layer the Select tool
+ *  can pick from. Wholly, not touching: a region covers half the map, and a
+ *  box drawn round three doors must not pick up the kingdom they are in. */
+function insideBox(box) {
+  const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1);
+  const y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
+  const out = [];
+  const doc = app.doc;
+  for (let i = doc.layers.length - 1; i >= 0; i--) {
+    const layer = doc.layers[i];
+    if (!SELECTABLE.has(layer.kind) || !layerVisible(doc, layer) || layer.locked) continue;
+    for (let j = layer.ops.length - 1; j >= 0; j--) {
+      const item = layer.ops[j];
+      const pts = extentPoints(item);
+      if (pts.length && pts.every((p) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1)) {
+        out.push({ layer, item });
+      }
+    }
+  }
+  return out;
+}
+
+/** Pick up everything on every drawn, unlocked layer the Select tool can
+ *  pick from. */
+export function selectAll() {
+  if (!app.doc) return 0;
+  const box = { x0: -Infinity, y0: -Infinity, x1: Infinity, y1: Infinity };
+  return selectObjects(insideBox(box));
+}
+
+/** Pick up `item` as though it had been clicked with Select -- how the notes
+ *  list in the Layers panel hands a note to the Selected panel. Replaces any
+ *  set, as a plain click does. */
+export function selectObject(layer, item) {
+  if (!layer || !layer.ops || !layer.ops.includes(item)) return false;
+  if (layer.locked || !layerVisible(app.doc, layer)) return false;
+  if (app.tool !== 'select') setTool('select');
+  setSelection([{ layer, item }]);
   return true;
 }
 
-/** Take what the Select tool is holding off the map, as one undo step. The
- *  Delete key, the Selected panel's button and Cut all come through here. */
+/** Take what the Select tool is holding off the map, as one undo step
+ *  however many layers the set spans. The Delete key, the Selected panel's
+ *  button and Cut all come through here. */
 export function deleteSelection() {
-  const st = TOOLS.select.state;
-  // selectedObject() checks against the document and st does not: undo the
-  // placement of the thing in hand, press Delete, and a dead entry was pushed
-  // that threw away the redo of it and one of the 32 slots.
-  const picked = selectedObject();
-  if (!picked) { st.grabbed = null; emit('selection'); return false; }
-  const { layer, item } = picked;
-  const before = layer.ops.slice();
-  layer.ops = layer.ops.filter((o) => o !== item);
-  const after = layer.ops.slice();
-  st.grabbed = null;
-  emit('selection');
-  R.invalidate(layer);
+  // selectedObjects() checks against the document and the tool's state does
+  // not: undo the placement of the thing in hand, press Delete, and a dead
+  // entry was pushed that threw away the redo of it and one of the 32 slots.
+  const set = selectedObjects();
+  if (!set.length) { setSelection([]); return false; }
+  const gone = new Set(set.map((s) => s.item));
+  const layers = [...new Set(set.map((s) => s.layer))];
+  const before = new Map(layers.map((l) => [l, l.ops.slice()]));
+  for (const l of layers) l.ops = l.ops.filter((o) => !gone.has(o));
+  const after = new Map(layers.map((l) => [l, l.ops.slice()]));
+  setSelection([]);
+  const apply = (ops) => {
+    for (const l of layers) l.ops = ops.get(l).slice();
+    invalidateAll(layers);
+    emit('layers');
+  };
+  invalidateAll(layers);
   emit('layers');
   pushEntry({
     label: 'Delete',
-    undo() { layer.ops = before.slice(); R.invalidate(layer); emit('layers'); },
-    redo() { layer.ops = after.slice(); R.invalidate(layer); emit('layers'); },
+    undo() { apply(before); },
+    redo() { apply(after); },
   });
   markDirty(); scheduleAutosave();
   return true;
 }
 
 export function clearSelection() {
-  TOOLS.select.state.grabbed = null;
-  TOOLS.select.state.layer = null;
-  emit('selection');
+  setSelection([]);
 }
 
 export function currentTool() { return TOOLS[app.tool] || TOOLS.brush; }
@@ -1742,6 +1925,9 @@ on('document', () => {
     if ('placing' in tool.state) tool.state.placing = null;
     if ('from' in tool.state) tool.state.from = null;
     if ('grabbed' in tool.state) { tool.state.grabbed = null; tool.state.layer = null; }
+    if ('more' in tool.state) tool.state.more = [];
+    if ('marquee' in tool.state) tool.state.marquee = null;
+    if ('moving' in tool.state) tool.state.moving = null;
   }
 });
 

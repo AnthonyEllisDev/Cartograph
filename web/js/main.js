@@ -7,11 +7,12 @@ import { keyMarkdown, layerVisible, noteKey } from './doc.js';
 import * as R from './render.js';
 import { initInput } from './input.js';
 import { extensions, loadExtensions, renderExtensionLayer } from './extensions.js';
-import { initPalette } from './palette.js';
+import { initPalette, paletteOpen } from './palette.js';
 import { initTabs, newMapDialog, openProject, showTab } from './tabs.js';
 import { initUI, renderHistory, renderSelection, renderToolOptions } from './ui.js';
 import { $, el, modal, modalOpen, toast } from './util.js';
 import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
+import { selectAll } from './tools.js';
 
 async function start() {
   R.initRender($('#canvas'));
@@ -111,6 +112,7 @@ function wireTopbar() {
     // Undo and the clipboard act on the map, and a dialog on screen is still
     // waiting on the map as it was when it opened.
     const onMap = !typing && !modalOpen();
+    if (paletteOpen() && (key === 'e' || key === 'n')) { ev.preventDefault(); return; }
     if (key === 's') { ev.preventDefault(); doSave(); }
     else if (key === 'e') { ev.preventDefault(); exportDialog(); }
     else if (key === 'n') { ev.preventDefault(); newMapDialog(); }
@@ -121,6 +123,13 @@ function wireTopbar() {
       if (!onMap) return;
       ev.preventDefault();
       stepHistory(key === 'y' || ev.shiftKey ? redo : undo);
+    }
+    else if (key === 'a') {
+      // Everything on the map, picked up with the Select tool. In a field it
+      // selects the field's text, as it always did.
+      if (!onMap || ev.shiftKey || ev.altKey) return;
+      ev.preventDefault();
+      selectAll();
     }
     else if (key === 'c' || key === 'x' || key === 'v' || key === 'd') {
       // Copy and cut belong to the Select tool. Under any other tool Ctrl+C is

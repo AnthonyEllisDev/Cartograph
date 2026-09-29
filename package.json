@@ -15,6 +15,7 @@
     "pro": "node test/pro.mjs",
     "notes": "node test/notes.mjs",
     "clipboard": "node test/clipboard.mjs",
+    "selection": "node test/selection.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {
