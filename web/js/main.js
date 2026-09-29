@@ -10,7 +10,8 @@ import { extensions, loadExtensions, renderExtensionLayer } from './extensions.j
 import { initPalette } from './palette.js';
 import { initTabs, newMapDialog, openProject, showTab } from './tabs.js';
 import { initUI, renderHistory, renderSelection, renderToolOptions } from './ui.js';
-import { $, el, modal, toast } from './util.js';
+import { $, el, modal, modalOpen, toast } from './util.js';
+import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
 
 async function start() {
   R.initRender($('#canvas'));
@@ -104,6 +105,12 @@ function wireTopbar() {
     const mod = ev.ctrlKey || ev.metaKey;
     if (!mod) return;
     const key = ev.key.toLowerCase();
+    const t = ev.target;
+    const typing = t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
+      || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color', 'button'].includes(t.type));
+    // Undo and the clipboard act on the map, and a dialog on screen is still
+    // waiting on the map as it was when it opened.
+    const onMap = !typing && !modalOpen();
     if (key === 's') { ev.preventDefault(); doSave(); }
     else if (key === 'e') { ev.preventDefault(); exportDialog(); }
     else if (key === 'n') { ev.preventDefault(); newMapDialog(); }
@@ -111,11 +118,21 @@ function wireTopbar() {
       // Inside a text field these belong to the field. Taking them undid a
       // brush stroke while someone was retyping a label, and the history
       // change then rebuilt the Selected panel under them and lost the text.
-      const t = ev.target;
-      if (t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
-          || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color', 'button'].includes(t.type))) return;
+      if (!onMap) return;
       ev.preventDefault();
       stepHistory(key === 'y' || ev.shiftKey ? redo : undo);
+    }
+    else if (key === 'c' || key === 'x' || key === 'v' || key === 'd') {
+      // Copy and cut belong to the Select tool. Under any other tool Ctrl+C is
+      // left to the browser, which may be copying text off a panel; paste and
+      // duplicate pick the Select tool up themselves.
+      if (!onMap || ev.shiftKey || ev.altKey) return;
+      if (key === 'v') { ev.preventDefault(); paste(); return; }
+      if (app.tool !== 'select' && key !== 'd') return;
+      ev.preventDefault();
+      if (key === 'c') copySelection();
+      else if (key === 'x') cutSelection();
+      else duplicateSelection();
     }
   });
 

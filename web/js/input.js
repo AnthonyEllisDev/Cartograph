@@ -8,7 +8,7 @@ import { app, setToolSetting, toolSetting } from './app.js';
 import { snapPoint } from './doc.js';
 import * as R from './render.js';
 import { TOOLS, currentTool, setTool } from './tools.js';
-import { $, clamp } from './util.js';
+import { $, clamp, modalOpen } from './util.js';
 
 const state = { drag: null, space: false, panning: null, lastPoint: null };
 
@@ -99,6 +99,10 @@ export function initInput() {
     // to reach Water picked up the Wall tool.
     if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement
         || ev.target instanceof HTMLSelectElement) return;
+    // Nor do they belong to the map while a dialog is up: after a click on the
+    // dungeon dialog's plan the focus is on the page, and a tool letter swapped
+    // the tool, or Delete removed the selected wall, behind it.
+    if (modalOpen()) return;
     if (ev.code === 'Space' && !state.space) { state.space = true; ev.preventDefault(); return; }
 
     const tool = currentTool();

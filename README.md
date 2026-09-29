@@ -63,6 +63,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/light.js           shadow casting for the lighting layer
   js/generate.js        seeded land: noise, marching squares, the dialog
   js/dungeon.js         seeded dungeons: rooms, corridors, walls, doors, the key
+  js/clipboard.js       copy, cut, paste and duplicate
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
@@ -76,9 +77,10 @@ test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
 test/guards.mjs       57 more, for the server's guards, over raw sockets
-test/regress.mjs      71 more, for bugs that have been in here once already
+test/regress.mjs      75 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
+test/clipboard.mjs    39 more, for copy, paste and duplicate
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -150,6 +152,19 @@ is in the **Selected** panel at the top of the right rail: a region's colour,
 fill and border, a road's width, a label's wording and size, a door turned into
 a window, a lamp's reach in feet. Nothing here has to be decided before it is
 drawn any more, and every change is one step in the history like any other.
+
+What Select is holding can be **copied, cut, pasted and duplicated** — Ctrl+C,
+Ctrl+X, Ctrl+V and Ctrl+D, or the Duplicate and Copy buttons in the Selected
+panel. A paste lands under the pointer, or a cell on from the original when the
+pointer is off the map; a duplicate lands one cell on. Either way it snaps as
+the thing's own tool would, so a door copied off a grid line lands on a grid
+line and a lamp lands in the middle of a cell (or of a hex), and the copy is
+picked up ready to drag. It goes back onto the layer it came from, or onto the
+same kind of layer on another map — the clipboard outlives opening a different
+map, so a room's worth of furniture carries from one battle map to the next. A
+pasted wall casts shadows at once, a note copied out of a generated dungeon
+becomes your own (regenerating will not sweep it away), and every paste is one
+step in the history.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -311,6 +326,7 @@ table of colours and adding one is a few lines.
 | `Ctrl+K` | Command palette |
 | `Ctrl+S` `Ctrl+E` `Ctrl+N` | Save · Export · New map |
 | `Ctrl+Z` `Ctrl+Shift+Z` | Undo · Redo |
+| `Ctrl+C` `Ctrl+X` `Ctrl+V` `Ctrl+D` | Copy · Cut · Paste · Duplicate |
 | Alt (held) | Ignore grid snapping |
 
 ## Extensions
@@ -399,7 +415,9 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 498 assertions in all: `dungeon.mjs`
+There are narrower scripts beside it, 541 assertions in all: `clipboard.mjs`
+(copy, cut, paste and duplicate: where a copy lands, which layer, undo, the
+round trip, and between maps), `dungeon.mjs`
 (seeded dungeons: the layout, the walls as walls, undo and the round trip), `notes.mjs`
 (numbered notes, their renumbering, and the key beside the image and in
 Markdown), `generate.mjs` (seeded land, its round trip, and a fill that follows it), `props.mjs`

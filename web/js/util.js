@@ -95,6 +95,11 @@ export function toast(message, kind = '') {
 // so the next Escape anywhere closed whatever dialog was up by then.
 let openModal = null;
 
+/** Whether a dialog is up. Keys the editor binds globally -- undo, the tool
+ *  letters, Delete, the palette -- act on the map behind it otherwise, while
+ *  the dialog is still waiting on a document it may no longer describe. */
+export const modalOpen = () => openModal !== null;
+
 export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   const root = document.getElementById('modal-root');
   if (openModal) openModal.close(undefined);

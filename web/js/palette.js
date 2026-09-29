@@ -13,10 +13,11 @@ import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
+import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
 import * as R from './render.js';
 import { TOOLS, setTool } from './tools.js';
 import { renderAssetPicker, renderToolOptions } from './ui.js';
-import { $, el, toast } from './util.js';
+import { $, el, modalOpen, toast } from './util.js';
 
 let root = null;
 let items = [];
@@ -35,6 +36,12 @@ const BUILT_IN = [
     run: () => { if (undo()) { markDirty(); scheduleAutosave(); } } },
   { id: 'redo', group: 'Edit', title: 'Redo', keys: 'Ctrl+Shift+Z',
     run: () => { if (redo()) { markDirty(); scheduleAutosave(); } } },
+  { id: 'copy', group: 'Edit', title: 'Copy the selected thing', keys: 'Ctrl+C', run: () => copySelection() },
+  { id: 'cut', group: 'Edit', title: 'Cut the selected thing', keys: 'Ctrl+X', run: () => cutSelection() },
+  { id: 'paste', group: 'Edit', title: 'Paste', keys: 'Ctrl+V',
+    detail: 'At the pointer, or a cell on from where it was copied', run: () => paste(null) },
+  { id: 'duplicate', group: 'Edit', title: 'Duplicate the selected thing', keys: 'Ctrl+D',
+    run: () => duplicateSelection() },
   { id: 'revert-all', group: 'Edit', title: 'Go back to the start of this session',
     detail: 'Undoes everything still in the history',
     run: () => { jumpTo(0); markDirty(); scheduleAutosave(); R.requestDraw(); } },
@@ -192,6 +199,10 @@ export function close() {
 
 export function initPalette() {
   window.addEventListener('keydown', (ev) => {
+    // A dialog on screen owns the keyboard. The palette used to open over it
+    // (it sits above the dialog), take its focus, run Undo underneath it, and
+    // then the Escape that closed the palette cancelled the dialog as well.
+    if (modalOpen()) return;
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k') {
       ev.preventDefault();
       if (root) close(); else open();

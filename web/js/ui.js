@@ -12,7 +12,8 @@ import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js'
 import { extensions } from './extensions.js';
 import { icon } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, selectObject, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
+import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
+import { copySelection, duplicateSelection } from './clipboard.js';
 import { $, el, modal, toast } from './util.js';
 
 /* ------------------------------------------------------------------ fields */
@@ -1102,8 +1103,16 @@ export function renderSelection() {
       editObject(layer, item, spec.key, spec.scale ? v * spec.scale : v);
     }));
   }
+  root.appendChild(el('div', { class: 'tool-actions' }, [
+    el('button', { class: 'btn', text: 'Duplicate', title: 'Ctrl+D', 'data-action': 'duplicate',
+                   onclick: () => duplicateSelection() }),
+    el('button', { class: 'btn', text: 'Copy', title: 'Ctrl+C', 'data-action': 'copy',
+                   onclick: () => copySelection() }),
+    el('button', { class: 'btn', text: 'Delete', title: 'Delete', 'data-action': 'delete',
+                   onclick: () => deleteSelection() }),
+  ]));
   root.appendChild(el('p', { class: 'muted small',
-    text: 'Drag it to move it. Delete removes it.' }));
+    text: 'Drag it to move it. Ctrl+V pastes a copy at the pointer.' }));
 }
 
 /* ------------------------------------------------------- collapsible panels */

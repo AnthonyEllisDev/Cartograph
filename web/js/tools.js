@@ -1464,7 +1464,7 @@ define({
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it.',
+  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up. Its properties appear in the right rail; drag it to move it, Delete removes it, Ctrl+C / Ctrl+V copy and paste it and Ctrl+D duplicates it.',
   options: () => ([]),
   state: { grabbed: null, offset: null, layer: null },
   down(pt) {
@@ -1510,30 +1510,14 @@ define({
     this.state.offset = null;
   },
   key(ev) {
-    const { grabbed, layer } = this.state;
-    if (!grabbed || (ev.key !== 'Delete' && ev.key !== 'Backspace')) return false;
-    // selectedObject() checks against the document and this did not: undo the
-    // placement of the thing in hand, press Delete, and a dead entry was pushed
-    // that threw away the redo of it and one of the 32 slots.
-    if (!selectedObject()) { this.state.grabbed = null; emit('selection'); return false; }
-    const before = layer.ops.slice();
-    layer.ops = layer.ops.filter((o) => o !== grabbed);
-    const after = layer.ops.slice();
-    this.state.grabbed = null;
-    emit('selection');
-    R.invalidate(layer);
-    emit('layers');
-    pushEntry({
-      label: 'Delete',
-      undo() { layer.ops = before.slice(); R.invalidate(layer); emit('layers'); },
-      redo() { layer.ops = after.slice(); R.invalidate(layer); emit('layers'); },
-    });
-    markDirty(); scheduleAutosave();
-    return true;
+    if (!this.state.grabbed || (ev.key !== 'Delete' && ev.key !== 'Backspace')) return false;
+    return deleteSelection();
   },
   overlay(ctx) {
     const g = this.state.grabbed;
-    if (!g) return;
+    // Checked against the document, as the panel is: undo a paste and the
+    // ring went on marking the spot where the copy had been.
+    if (!g || !selectedObject()) return;
     ctx.save();
     ctx.strokeStyle = '#d9a441';
     ctx.lineWidth = 1.5;
@@ -1544,11 +1528,12 @@ define({
         if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
       });
       ctx.stroke();
-    } else if (this.state.layer && this.state.layer.kind === 'notes') {
-      // A pin is drawn centred on its point; the box below is for a stamp,
-      // which stands on it.
+    } else if (this.state.layer && ['notes', 'lights'].includes(this.state.layer.kind)) {
+      // A pin and a light are centred on their point; the box below is for a
+      // stamp, which stands on it. A light's ring is its 16-px grab radius.
       const s = R.mapToScreen(g.x, g.y);
-      const r = ((this.state.layer.pinSize || NOTE_DEFAULTS.pinSize) / 2) * R.view.zoom + 5;
+      const r = this.state.layer.kind === 'lights' ? 16 * R.view.zoom + 3
+        : ((this.state.layer.pinSize || NOTE_DEFAULTS.pinSize) / 2) * R.view.zoom + 5;
       ctx.beginPath();
       ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
       ctx.stroke();
@@ -1682,6 +1667,32 @@ export function selectObject(layer, item) {
   TOOLS.select.state.offset = null;
   emit('selection');
   R.requestDraw();
+  return true;
+}
+
+/** Take what the Select tool is holding off the map, as one undo step. The
+ *  Delete key, the Selected panel's button and Cut all come through here. */
+export function deleteSelection() {
+  const st = TOOLS.select.state;
+  // selectedObject() checks against the document and st does not: undo the
+  // placement of the thing in hand, press Delete, and a dead entry was pushed
+  // that threw away the redo of it and one of the 32 slots.
+  const picked = selectedObject();
+  if (!picked) { st.grabbed = null; emit('selection'); return false; }
+  const { layer, item } = picked;
+  const before = layer.ops.slice();
+  layer.ops = layer.ops.filter((o) => o !== item);
+  const after = layer.ops.slice();
+  st.grabbed = null;
+  emit('selection');
+  R.invalidate(layer);
+  emit('layers');
+  pushEntry({
+    label: 'Delete',
+    undo() { layer.ops = before.slice(); R.invalidate(layer); emit('layers'); },
+    redo() { layer.ops = after.slice(); R.invalidate(layer); emit('layers'); },
+  });
+  markDirty(); scheduleAutosave();
   return true;
 }
 

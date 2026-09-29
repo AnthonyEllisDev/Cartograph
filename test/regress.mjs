@@ -1414,6 +1414,59 @@ const undoStep = async () => { await p.evaluate(async () => { (await import('/js
   t('the note tool still opens its dialog after another dialog replaced it', opened);
 }
 
+{
+  // A dialog on screen owns the keyboard. The palette opened over the dungeon
+  // dialog (it sits above it) and took its focus; Ctrl+Z after ticking one of
+  // the dialog's boxes undid a wall behind it, and after a click on the plan a
+  // tool letter changed the tool behind it.
+  await newMap(p, { name: 'Regress Dialog Keys', kind: 'battle' });
+  await tool('wall');
+  await clickAt(210, 210); await clickAt(490, 210);
+  await p.keyboard.press('Enter'); await p.waitForTimeout(300);
+  const wallsBefore = await p.evaluate(() => window.__cg.app.doc.layers.find((l) => l.kind === 'walls').ops.length);
+  await p.click('[data-action="generate-dungeon"]');
+  await p.waitForSelector('.modal'); await p.waitForTimeout(300);
+  await p.keyboard.press('Control+k'); await p.waitForTimeout(250);
+  const paletteUp = await p.evaluate(() => !!document.querySelector('.palette-root'));
+  t('the palette does not open over a dialog', !paletteUp);
+  // Put away if it did, so the checks below measure the keys and not the palette.
+  if (paletteUp) { await p.keyboard.press('Control+k'); await p.waitForTimeout(150); }
+  await p.click('.modal input[type=checkbox] >> nth=0'); await p.waitForTimeout(150);
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(250);
+  await p.click('.modal h3'); await p.waitForTimeout(100);
+  await p.keyboard.press('s'); await p.waitForTimeout(150);
+  const after = await p.evaluate(() => ({
+    walls: window.__cg.app.doc.layers.find((l) => l.kind === 'walls').ops.length,
+    tool: window.__cg.app.tool,
+    open: !!document.querySelector('#modal-root:not([hidden]) .modal'),
+  }));
+  t('Ctrl+Z inside a dialog does not undo the map behind it',
+    wallsBefore === 1 && after.walls === wallsBefore, wallsBefore + ' -> ' + after.walls);
+  t('and a tool letter does not change the tool behind it', after.tool === 'wall' && after.open, after.tool);
+  await p.click('.modal .foot .btn:has-text("Cancel")'); await p.waitForTimeout(250);
+}
+
+{
+  // The Select tool's ring was drawn from what it held, not checked against
+  // the document: undo the placing of the thing in hand and the ring stayed,
+  // marking a spot where nothing was.
+  await newMap(p, { name: 'Regress Ghost Ring', kind: 'battle' });
+  await tool('light');
+  await clickAt(385, 385);
+  const strokes = await p.evaluate(async () => {
+    const T = await import('/js/tools.js'); const H = await import('/js/history.js');
+    const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'lights');
+    T.selectObject(layer, layer.ops[0]);
+    H.undo();
+    let n = 0;
+    const spy = new Proxy({}, { get: (_, k) => (k === 'stroke' || k === 'strokeRect' ? () => { n++; } : () => {}),
+                                set: () => true });
+    T.TOOLS.select.overlay(spy);
+    return n;
+  });
+  t('the Select tool marks nothing once what it held is undone away', strokes === 0, strokes + ' strokes');
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

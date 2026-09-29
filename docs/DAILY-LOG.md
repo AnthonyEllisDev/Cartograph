@@ -5,6 +5,123 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-28 — copy and paste, and a dialog that owns the keyboard
+
+Anthony's working copy matched `origin/main` byte for byte across all 74 tracked
+files other than the `.pyc`s (sizes matched for those too), so this was a
+feature day. The baseline was green: 498 checks across fifteen suites, plus
+`battle`.
+
+**Review.** Two readers in parallel -- renderer, lighting and the generators;
+server and front-end state -- each on its own running copy, plus `node --check`
+on every module and a non-ASCII grep (clean: every hit is an em dash, a times
+sign or a degree sign in a comment or a UI string). The server came back with
+nothing new. What was found:
+
+- *The command palette opened over a dialog, and a dialog did not own the
+  keyboard.* `.palette-root` sits above `.modal-root`, and nothing in
+  `initPalette` asked whether a dialog was up, so Ctrl+K inside Generate land or
+  Generate dungeon opened the palette on top, took the focus out of the seed
+  box, and would run Undo (or anything else) against the map the dialog was
+  still waiting on; the Escape that closed the palette then cancelled the
+  dialog too. The same family, one level down: with the focus on one of the
+  dialog's checkboxes Ctrl+Z undid the map behind it (`main.js` only exempts
+  text fields), and after a click on the dialog's plan a tool letter changed
+  the tool and Delete removed the selected thing behind it. `util.js` now
+  exports `modalOpen()`, and the palette, extension shortcuts, the tool keys in
+  `input.js`, and undo/redo and the new clipboard keys in `main.js` all stand
+  down while it is true. Three checks in `regress.mjs`; all three fail on a
+  pristine clone.
+- *The Select tool's ring outlived what it held.* The overlay drew from
+  `state.grabbed` without asking `selectedObject()`, so undoing the placing of
+  the thing in hand left a ring marking where nothing was. Found in today's
+  screenshot, not by reading. One check in `regress.mjs`, which fails on a
+  pristine clone. A light's selection mark is also a ring round its grab radius
+  now rather than the box a stamp gets, which was drawn off to one side of it.
+- *Layer adds and reorders are not undoable* -- reproduced again and already
+  on the known list (hand-off section 13), so not re-reported as new and not
+  fixed today.
+- Suspected and not reproduced: a straight corridor in `dungeon.js` passing
+  through a third room it was not joining (it would still be a valid dungeon);
+  `dungeon.floorLayer()` is exported and unused.
+
+**The feature: copy, cut, paste and duplicate.** Next in line on the hand-off's
+candidate list since 2026-09-24, and today's research agreed: Dungeondraft's
+select tool copies, pastes and saves selections as prefabs, Inkarnate copies
+and pastes stamps, and Cartograph had no way at all to make a second of
+anything except drawing it again and setting every property by hand -- which
+the properties panel had made more noticeable, not less. It passes all three
+tests: not already there (read the code: no clipboard, no Ctrl+C binding
+anywhere), no dependency, and it is exactly the desk-and-one-person kind of
+thing. Rejected today: GM/player export in one go (small, and hiding the notes
+layer already gives the players' copy), print tiling (needs a PDF writer
+verified by printing), elevation (touches coast, shelf and lighting at once),
+and prefabs-to-disk (tomorrow's half of this -- see below).
+
+`web/js/clipboard.js`, wired to Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D, to four
+palette commands, and to Duplicate / Copy / Delete buttons in the Selected
+panel. The decisions:
+
+- **A copy is a deep copy of the op; a paste is an ordinary op** on a layer of
+  the same kind, with a fresh id from the prefix its tool mints. Nothing below
+  this module learned anything new, which is why the round trip is
+  pixel-identical without a line of renderer change.
+- **Where it lands.** Under the pointer if the pointer is on the map (the
+  thing's bounding box is centred there), otherwise a cell on from the
+  original, one cell further for each paste in a row. A duplicate is always a
+  cell on. The anchor is then **snapped as the thing's own tool snaps** --
+  centres for stamps, lights and notes, corners for walls, paths and regions --
+  so a door copied off a grid line lands on one, and on a hex map a copy lands
+  on the hex lattice rather than a square step off it.
+- **Which layer.** The one it came from if this map still has it, then the
+  active layer, then the topmost of that kind -- each only if drawn and
+  unlocked. A map with none says so and writes nothing.
+- **The clipboard outlives changing maps**, deliberately: carrying furniture
+  from one battle map to the next is the point. It does not survive a reload,
+  and nothing goes to the system clipboard (reading it back needs a permission
+  prompt, and no other program can use a map op).
+- **One undo step each**, and the copy is picked up so it can be dragged
+  straight into place. Cut is Copy plus the Select tool's own Delete, factored
+  out of its `key()` into `deleteSelection()` so the Delete key, the panel
+  button and Cut are one route.
+- **A pasted wall relights**: the paste goes through `R.invalidate`, so a wall
+  pasted between a lamp and the floor shades it at once and undoing it lifts
+  the shadow (measured). The first light pasted onto an empty lighting layer
+  turns the night on, as the Light tool's first light does, and undo turns it
+  back off.
+- **A copy is the user's own**: `gen` is dropped, so a note copied out of a
+  generated dungeon is not swept away when the dungeon is regenerated.
+- Keys typed into a field stay the field's -- Ctrl+C in the note's title box
+  copies text. Ctrl+C with nothing picked up is left to the browser.
+- No extension API change; `API_VERSION` stays 1.
+
+**What remains of it**, for a later day: a selection *set* (shift-click or a
+marquee) so several things copy at once -- the clipboard is already a list of
+entries so that it pastes through the same code -- and then prefabs, a
+selection saved as a JSON file in a `prefabs/` folder beside `assets/`, which
+wants an endpoint through `safe.py`. Also worth knowing: a wall is still picked
+up by its end points only (hand-off 6a), so copying one means clicking an end.
+
+**Tests.** A new suite, `test/clipboard.mjs` (39): nothing to paste, the door
+copied and pasted under the pointer on grid lines with its own id, one undo
+step and the copy in hand, the pasted wall shading a lit floor and its undo
+lifting it, duplicate one cell on in a cell centre with the clipboard left
+alone, the panel's Duplicate and Delete, cut then pasting off the map stepping
+each copy on, a generated note losing its tag, the reload pixel-identical, a
+lamp carried to another map turning its night on (and undo turning it off), a
+map with no such layer refusing, a hex duplicate landing on the lattice, and
+the clipboard keys inside a text field. `regress.mjs` 71 -> 75, all four new
+checks failing on a pristine clone. Looked at in a screenshot at 1440 x 860: a
+walled room, a pasted wall beside it, the Selected panel's new buttons, and --
+the reason the ring fix exists -- the ghost ring after undoing a duplicate.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 57 guards, 75 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 39 clipboard -- 541 checks, all passing, plus `battle`, over two
+full back-to-back rounds on the finished tree.
+
+---
+
 ## 2026-09-27 — a dungeon from a seed, and sixteen things the review found
 
 Anthony's working copy matched `origin/main` across all 72 tracked source files
