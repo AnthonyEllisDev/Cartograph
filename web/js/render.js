@@ -1586,7 +1586,8 @@ export function compositeAll(box) {
     ctx.globalCompositeOperation = layer.blend || 'source-over';
     const liveHere = view.liveLayer === layer.id && view.live;
     const liveOp = view.liveErase ? 'destination-out' : (view.liveBlend || 'source-over');
-    if (liveHere && (liveOp !== 'source-over' || ctx.globalAlpha < 1)) {
+    const layerBlends = (layer.blend || 'source-over') !== 'source-over';
+    if (liveHere && (liveOp !== 'source-over' || ctx.globalAlpha < 1 || layerBlends)) {
       // An erase cannot be laid over the layer it is erasing from: source-over
       // does not subtract, so drawing the live canvas on top showed nothing
       // and the eraser appeared to do nothing until the button came up. The
@@ -1594,7 +1595,10 @@ export function compositeAll(box) {
       // gets drawn. A brush with a blend mode, or any stroke on a layer below
       // full opacity, has the same problem in another form -- the stroke is
       // blended onto (or faded with) the layer only at commit -- and is
-      // previewed the same way.
+      // previewed the same way. So is any stroke on a layer that is itself
+      // set to Multiply or the like: drawn separately, the stroke was blended
+      // with the map once and the layer under it again, and the preview came
+      // out darker than the stroke that landed.
       // makeCanvas, not scratch: this box is the live repaint box and its
       // size changes every frame, so the pool would mint an entry per frame
       // and evict the coastline's, which are what it exists for.

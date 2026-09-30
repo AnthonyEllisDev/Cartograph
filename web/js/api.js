@@ -47,5 +47,11 @@ export const api = {
   writeThumb: (slug, blob) =>
     put(`/api/projects/${encodeURIComponent(slug)}/thumb`, blob, 'image/png'),
 
+  prefabs: () => jsonFetch('/api/prefabs'),
+  savePrefab: (prefab) => jsonFetch('/api/prefabs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prefab),
+  }),
+  deletePrefab: (slug) => jsonFetch(`/api/prefabs/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+
   exportImage: (name, blob) => put(`/api/export?name=${encodeURIComponent(name)}`, blob, blob.type),
 };

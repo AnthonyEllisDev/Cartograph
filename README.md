@@ -50,6 +50,7 @@ server/               the local HTTP server and file API (standard library only)
   http.py               transport, static files, the security guards
   api.py                the JSON endpoints
   projects.py           reading and writing maps
+  prefabs.py            reading and writing prefabs
   packs.py              indexing asset folders
   png.py                a PNG writer in eighty lines of zlib
   safe.py               every client-supplied path goes through here
@@ -64,11 +65,13 @@ web/                  the editor itself — plain ES modules, no build step
   js/generate.js        seeded land: noise, marching squares, the dialog
   js/dungeon.js         seeded dungeons: rooms, corridors, walls, doors, the key
   js/clipboard.js       copy, cut, paste and duplicate
+  js/prefabs.js         sets saved to put down on any map
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
 projects/             your maps, one folder each
 exports/              PNGs you export
+prefabs/              sets of things you saved to reuse, one JSON file each
 extensions/           extensions; one folder each, loaded at startup
   battle-tokens/        worked example: a tool and a layer kind
   hex-coordinates/      worked example: a generated layer and a side panel
@@ -76,12 +79,13 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       59 more, for the server's guards, over raw sockets
-test/regress.mjs      85 more, for bugs that have been in here once already
+test/guards.mjs       60 more, for the server's guards, over raw sockets
+test/regress.mjs      95 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
+test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -178,6 +182,22 @@ its doors, its lamps and its furniture copy and paste together, each part onto
 a layer of its own kind. The Selected panel says what is held; to change one
 thing's colour or wording, press Escape and click it on its own. Something on a layer you then
 lock or hide drops out of what is held.
+
+Whatever Select holds can be **saved as a prefab** — *Save as prefab…* in the
+Selected panel, *Save selection…* in the Select tool's panel, or the palette —
+and put down again on any map, next week or on a friend's copy of the program. A
+prefab is one readable JSON file in `prefabs/` beside the program, so it can be
+copied, backed up and handed over like a map. The Select tool's panel lists them
+as chips: click one to put it down in the middle of the view, picked up and ready
+to drag into place; the × deletes the file, after asking. Putting one down is a
+paste in every way that matters — one step in the history, each part onto a
+layer of its own kind, walls snapped to the grid and casting shadows at once, the
+first lamp turning the night on — and every prefab is also in the command palette
+as *Place …*. A part with no layer of its kind on the new map (a note on a map
+with no notes layer, say) is left out with a message, as a paste leaves it out.
+Things go down at the size they were drawn: a prefab saved on a 70-px grid and
+put down on a 100-px one says so, because its walls will not sit on the new
+grid's lines.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -430,7 +450,10 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 596 assertions in all: `selection.mjs`
+There are narrower scripts beside it, 648 assertions in all: `prefabs.mjs`
+(saving a set, the file on disk, putting it down on another map as one step
+with its shape kept and its walls on the grid, the round trip, names shown as
+text, and the server refusing what could not be placed), `selection.mjs`
 (holding several things: shift-click, the box, moving, deleting and pasting a
 set across layers, a lock dropping one out, and the round trip), `clipboard.mjs`
 (copy, cut, paste and duplicate: where a copy lands, which layer, undo, the

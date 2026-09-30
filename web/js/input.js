@@ -6,6 +6,7 @@
 
 import { app, setToolSetting, toolSetting } from './app.js';
 import { snapPoint } from './doc.js';
+import { paletteOpen } from './palette.js';
 import * as R from './render.js';
 import { TOOLS, currentTool, setTool } from './tools.js';
 import { $, clamp, modalOpen } from './util.js';
@@ -103,6 +104,10 @@ export function initInput() {
     // dungeon dialog's plan the focus is on the page, and a tool letter swapped
     // the tool, or Delete removed the selected wall, behind it.
     if (modalOpen()) return;
+    // The command palette is the same: click its "Nothing matches" line and
+    // the focus leaves its box, and Delete then took the selected stamp off
+    // the map behind it, or a letter swapped the tool.
+    if (paletteOpen()) return;
     if (ev.code === 'Space' && !state.space) { state.space = true; ev.preventDefault(); return; }
 
     const tool = currentTool();

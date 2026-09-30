@@ -221,6 +221,29 @@ export function paste(at = R.view.cursor) {
   return place(clip.entries, clip.kinds, clip.layerIds, { to, steps: clip.pastes, label: 'Paste' });
 }
 
+/* ----------------------------------------------------------------- prefabs */
+
+/** What the Select tool is holding, as a prefab: the clipboard's own shape,
+ *  deep-copied, with no layer ids -- those name layers on this map and mean
+ *  nothing on the next one. Null when nothing that can be carried is held. */
+export function selectionAsSet() {
+  const set = copyable();
+  if (!set.length) return null;
+  return {
+    entries: set.map((s) => JSON.parse(JSON.stringify(s.item))),
+    kinds: set.map((s) => s.layer.kind),
+  };
+}
+
+/** Put a saved set down as one undo step, centred at `at` (map pixels) and
+ *  snapped as a paste is, with the copies picked up so they can be dragged
+ *  straight into place. The same `place()` a paste goes through, so every rule
+ *  a paste keeps -- a layer of each part's own kind, walls relit last, the
+ *  first light turning the night on -- a prefab keeps too. */
+export function placeSet(entries, kinds, at, label = 'Place prefab') {
+  return place(entries, kinds, kinds.map(() => null), { to: onMap(at), steps: 0, label });
+}
+
 /** A copy of what is in hand, a cell on, without touching the clipboard. */
 export function duplicateSelection() {
   const set = copyable();

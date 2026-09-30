@@ -3,7 +3,7 @@
    renderer able to stay ignorant of each other. */
 
 import { api } from './api.js';
-import { loadLibrary, warm } from './assets.js';
+import { library, loadLibrary, warm } from './assets.js';
 import { newDocument, referencedAssets, serialise, findLayer, kindOf, LAYER_KINDS } from './doc.js';
 import { clearHistory } from './history.js';
 import * as R from './render.js';
@@ -97,6 +97,11 @@ export function markDirty(flag = true) {
 }
 
 export async function openDocument(doc, slug) {
+  // A layer with no ops list is readable JSON the server lets through, and
+  // every renderer walks layer.ops: a notes layer without one threw out of
+  // setDocument after app.doc had already been switched, so the editor showed
+  // "Could not open" while Ctrl+S saved the broken map over the name.
+  for (const l of doc.layers || []) if (!Array.isArray(l.ops)) l.ops = [];
   app.doc = doc;
   app.slug = slug || doc.slug || null;
   await warm(referencedAssets(doc));
@@ -162,15 +167,24 @@ export async function saveProject({ silent = false } = {}) {
   return app.slug;
 }
 
+/* Autosave is a deadline set by the first edit after a save, not a debounce.
+ * It was a debounce -- every edit restarted the clock -- so it only saved
+ * after the given number of seconds with no edits at all, and someone who
+ * painted a stroke every minute for an hour with a 90-second setting was never
+ * saved once. "Autosave every 90 seconds" now means that. */
 let autosaveTimer = 0;
 export function scheduleAutosave() {
-  clearTimeout(autosaveTimer);
-  if (!app.settings.autosave) return;
+  if (!app.settings.autosave) { clearTimeout(autosaveTimer); autosaveTimer = 0; return; }
+  if (autosaveTimer) return;
   autosaveTimer = setTimeout(async () => {
+    autosaveTimer = 0;
     if (!app.dirty || !app.doc) return;
     try {
       await saveProject({ silent: true });
       emit('autosaved');
+      // Anything drawn while the save was in flight is not in it, and the
+      // edit that made it arrived while this deadline was still pending.
+      if (app.dirty) scheduleAutosave();
     } catch (err) {
       toast('Autosave failed: ' + err.message, 'bad');
     }
@@ -184,5 +198,8 @@ export async function boot() {
   applyLook(app.settings);
   app.server = await api.state();
   await loadLibrary();
+  // The texture and stamp picked last session come back as settings, not as
+  // decoded images; decode them now so the first stroke is not flat grey.
+  warm([app.settings.activeTexture, app.settings.activeStamp].filter((id) => id && library.byId.has(id)));
   emit('library');
 }

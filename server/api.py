@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from server import extensions, packs, projects, safe
+from server import extensions, packs, prefabs, projects, safe
 from server.safe import Unsafe, slug, under
 
 
@@ -76,6 +76,7 @@ def route(req):
                 "projects": ctx.projects_dir,
                 "packs": ctx.packs_dir,
                 "exports": ctx.exports_dir,
+                "prefabs": ctx.prefabs_dir,
             },
             "config": ctx.config,
             "started": ctx.started,
@@ -112,7 +113,7 @@ def route(req):
         target = {
             "packs": ctx.packs_dir, "projects": ctx.projects_dir,
             "exports": ctx.exports_dir, "extensions": ctx.extensions_dir,
-            "root": ctx.root,
+            "prefabs": ctx.prefabs_dir, "root": ctx.root,
         }.get(which)
         if not target:
             return _err("unknown folder")
@@ -213,6 +214,27 @@ def route(req):
             return _json({"ok": True, "path": rel, "bytes": len(req.body)})
 
         return _err("no such endpoint", 404)
+
+    # Prefabs: sets of things saved off one map to put down on another. The
+    # folder is never served as static files, so nothing in it can run as a
+    # page; the files only ever reach the editor as JSON through here, after
+    # prefabs.check has proved the editor can place them.
+    if path == "/api/prefabs" and method == "GET":
+        return _json({"ok": True, "prefabs": prefabs.list_prefabs(ctx.prefabs_dir)})
+
+    if path == "/api/prefabs" and method == "POST":
+        try:
+            saved = prefabs.write(ctx.prefabs_dir, _body(req))
+        except (Unsafe, ValueError) as exc:
+            return _err(exc)
+        return _json({"ok": True, "prefab": saved})
+
+    if path.startswith("/api/prefabs/") and method == "DELETE":
+        try:
+            prefabs.delete(ctx.prefabs_dir, path[len("/api/prefabs/"):])
+        except Unsafe as exc:
+            return _err(exc, 404)
+        return _json({"ok": True})
 
     if path == "/api/export" and method == "PUT":
         raw = req.query.get("name", ["map.png"])[0]

@@ -30,7 +30,7 @@ import { gridLayer, gridStepPx, makeLayer, NOTE_DEFAULTS } from './doc.js';
 import { pushEntry } from './history.js';
 import * as R from './render.js';
 import { field } from './ui.js';
-import { library } from './assets.js';
+import { library, warm } from './assets.js';
 import { el, hashString, makeCanvas, modal, rng, throttleFrame, toast, uid } from './util.js';
 
 
@@ -691,6 +691,10 @@ export async function dungeonDialog() {
   if (!go) return;
   if (app.doc !== doc) return;   // the dialog outlived the map it was opened on
   const params = normalise(p);
+  // Picked from a menu, so nothing has decoded it; a floor laid with an
+  // undecoded texture was flat grey until the map was reopened.
+  await warm([params.tex]);
+  if (app.doc !== doc) return;
   lastParams = Object.assign({}, params, { seed: '' });
   const result = generateDungeon(params, doc);
   if (!result || !result.floor) return toast('No room fitted on this map -- try smaller rooms', 'bad');

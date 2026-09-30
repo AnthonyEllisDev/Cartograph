@@ -111,7 +111,7 @@ function wireTopbar() {
       || (t instanceof HTMLInputElement && !['range', 'checkbox', 'color', 'button'].includes(t.type));
     // Undo and the clipboard act on the map, and a dialog on screen is still
     // waiting on the map as it was when it opened.
-    const onMap = !typing && !modalOpen();
+    const onMap = !typing && !modalOpen() && !paletteOpen();
     if (paletteOpen() && (key === 'e' || key === 'n')) { ev.preventDefault(); return; }
     if (key === 's') { ev.preventDefault(); doSave(); }
     else if (key === 'e') { ev.preventDefault(); exportDialog(); }

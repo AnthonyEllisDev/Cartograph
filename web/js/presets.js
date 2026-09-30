@@ -10,6 +10,7 @@
  */
 
 import { app, saveSettings, setToolSetting } from './app.js';
+import { warm } from './assets.js';
 import { TOOLS } from './tools.js';
 
 const ASSET_KEY = { terrain: 'activeTexture', stamp: 'activeStamp' };
@@ -60,6 +61,7 @@ export function applyPreset(id) {
     else setToolSetting(preset.tool, key, value);
   }
   if (preset.asset) {
+    warm([preset.asset]);
     if (tool.assetTarget === 'layer' && tool.applyAsset) tool.applyAsset(preset.asset);
     else if (ASSET_KEY[tool.assetKind]) app.settings[ASSET_KEY[tool.assetKind]] = preset.asset;
   }

@@ -32,6 +32,14 @@ export const LAYER_KINDS = {
  *  extension that has been removed from the folder altogether. Every
  *  unguarded LAYER_KINDS[l.kind] was a throw on opening that map, which is
  *  also the state in which the user most needs to reach the layer. */
+/** What one op on a layer of each object kind is called, in the Selected
+ *  panel's summary of a set and in a prefab's description. One table, so the
+ *  two cannot come to call the same thing different names. */
+export const OBJECT_NOUNS = {
+  objects: 'stamp', labels: 'label', paths: 'path',
+  regions: 'region', walls: 'wall', lights: 'light', notes: 'note',
+};
+
 export function kindOf(layer) {
   return LAYER_KINDS[layer && layer.kind] || { label: (layer && layer.kind) || 'layer',
                                                paint: false, icon: 'group' };

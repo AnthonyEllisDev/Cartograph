@@ -5,7 +5,7 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, NOTE_DEFAULTS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, OBJECT_NOUNS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
 import { clearHistory, history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
@@ -14,6 +14,7 @@ import { icon } from './icons.js';
 import * as R from './render.js';
 import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, selectedObjects, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { copySelection, duplicateSelection } from './clipboard.js';
+import { loadPrefabs, prefabStrip, saveSelectionAsPrefab } from './prefabs.js';
 import { $, el, modal, toast } from './util.js';
 
 /* ------------------------------------------------------------------ fields */
@@ -163,6 +164,9 @@ export function renderToolOptions() {
   }
   if (specs.length && tool.hint) panel.appendChild(el('p', { class: 'empty', text: tool.hint }));
   if (specs.length) panel.appendChild(presetStrip(tool));
+  // Prefabs sit with the Select tool: it is the tool that picks a set up to
+  // save, and the one in hand after one is put down.
+  if (tool.id === 'select') panel.appendChild(prefabStrip({ canSave: selectedObjects().length > 0 }));
   root.appendChild(panel);
 }
 
@@ -956,11 +960,6 @@ export function renderExtensionPanels() {
  * on every tick of a drag inside the picker, and an undo entry that hands the
  * item back the snapshot's own arrays -- are one fix each rather than six.
  */
-const OBJECT_NOUNS = {
-  objects: 'stamp', labels: 'label', paths: 'path',
-  regions: 'region', walls: 'wall', lights: 'light', notes: 'note',
-};
-
 const OBJECT_FIELDS = {
   objects: (item) => [
     { key: 'scale', type: 'range', label: 'Size', min: 0.1, max: 4, step: 0.05,
@@ -1122,6 +1121,9 @@ function setButtons() {
                    onclick: () => copySelection() }),
     el('button', { class: 'btn', text: 'Delete', title: 'Delete', 'data-action': 'delete',
                    onclick: () => deleteSelection() }),
+    el('button', { class: 'btn', text: 'Save as prefab…', 'data-action': 'save-prefab',
+                   title: 'Keep this set in the prefabs folder, to put down on any map',
+                   onclick: () => saveSelectionAsPrefab() }),
   ]);
 }
 
@@ -1176,8 +1178,18 @@ export function initUI() {
   renderAssetPicker();
   renderHistory();
   renderSelection();
-  on('tool', () => { renderToolbar(); renderToolOptions(); renderAssetPicker(); renderSelection(); });
-  on('selection', renderSelection);
+  on('tool', () => {
+    renderToolbar(); renderToolOptions(); renderAssetPicker(); renderSelection();
+    // Re-read the folder each time the Select tool is picked up, so a prefab
+    // file dropped in by hand appears without a rescan button to find.
+    if (currentTool().id === 'select') loadPrefabs();
+  });
+  on('selection', () => {
+    renderSelection();
+    // The Prefabs strip's Save link follows whether anything is held.
+    if (currentTool().id === 'select') renderToolOptions();
+  });
+  on('prefabs', () => { if (currentTool().id === 'select') renderToolOptions(); });
   // The selection can be undone away or have its layer deleted under it, so
   // the panel is rebuilt whenever either could have happened.
   on('layers', () => { renderLayers(); renderMapProps(); renderToolOptions(); renderExtensionPanels(); renderSelection(); });
@@ -1187,4 +1199,5 @@ export function initUI() {
   on('library', () => renderAssetPicker());
   $('#btn-add-layer').addEventListener('click', addLayerClicked);
   initPanels();
+  loadPrefabs();
 }

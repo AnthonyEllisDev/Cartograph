@@ -111,7 +111,10 @@ export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   const foot = el('div', { class: 'foot' });
   let resolveWith;
   const done = new Promise((res) => { resolveWith = res; });
-  const esc = (e) => { if (e.key === 'Escape') close(undefined); };
+  // Stopped here, on the document, so it never reaches the editor's own
+  // handler on the window: the Escape that closed the dialog also threw away
+  // the wall half drawn behind it, or put down everything the Select tool held.
+  const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(undefined); } };
   const handle = { close: (value) => close(value) };
   function close(value) {
     if (openModal !== handle) return;

@@ -5,6 +5,136 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-09-30 — prefabs, and nine things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 75 tracked
+source files (the `.pyc`s and the two screenshots were not compared), so this
+was a feature day. The baseline was green: 596 checks across seventeen suites,
+plus `battle`. (The scheduled prompt's expected counts are older than the
+suites: `pro.mjs` has 25, not 24, and there are eight suites it does not list.)
+
+**Review.** Two readers in parallel, reading only, with every finding then
+reproduced here before it was fixed: renderer, lighting and generators; server
+and front-end state. `node --check` passed on every module, and the non-ASCII
+grep found nothing outside comments and UI strings. Nine defects fixed, each
+with a check that fails on a pristine clone:
+
+- *Undoing a landmass stroke after changing the coast brought the old look
+  back.* The undo restores a pixel snapshot drawn in the ink colour, shelf
+  width and texture of the moment; change any of them, undo, and that
+  rectangle kept the old look while the rest of the map (and a reload) had the
+  new one -- 54,870 pixels off a rebuild. The entry remembers the look it was
+  drawn in and calls `repaintLand` on undo and redo when it has moved on; when
+  it has not, the snapshot is exact and nothing slower runs.
+- *A texture nothing had decoded painted flat grey.* Only a click in the picker
+  decoded one, so the texture remembered from last session, a preset's, and the
+  dungeon dialog's Floor all painted `#888` while the op saved the name, and the
+  map reopened textured (44,504 pixels). Boot decodes the remembered texture and
+  stamp, a preset decodes its asset, the dungeon dialog awaits its floor, and
+  `requireAsset` starts a decode and rebuilds the layer when it lands.
+- *A stroke on a Multiply layer previewed darker than it landed*: the live
+  canvas was blended with the map and the layer under it separately. A layer
+  whose own blend is not Normal now takes the copy-and-composite path of
+  invariant (h).
+- *Ctrl+Z in the middle of dragging a duplicate* pushed a `Move` for a copy no
+  longer on the map and threw its redo away. The Select tool's `up()` drops
+  items that have left the map and puts them back where they were, so the redo
+  restores them there.
+- *Keys reached the map behind the command palette* once its box lost focus --
+  Delete took the held stamp, a letter swapped the tool. `input.js` and
+  `main.js` stand down while `paletteOpen()`.
+- *The Escape that closed a dialog also reached the tool*, throwing away a wall
+  half drawn behind the dungeon dialog. The dialog's listener stops it.
+- *Autosave never fired during steady work.* It was a debounce: every edit
+  restarted the clock, so a stroke a minute with a 90-second setting was never
+  saved. It is a deadline set by the first edit after a save now, re-armed if
+  more arrived while the save was in flight.
+- *A map with a layer missing its `ops` list* threw out of `setDocument` after
+  `app.doc` had switched: "Could not open" on screen, and Ctrl+S then saved the
+  broken map over the name. `openDocument` gives such a layer an empty list.
+- Server: a `Content-Length` of 5,000 digits passed the digit check and made
+  `int()` itself raise (Python's 4,300-digit guard), killing the handler with no
+  reply. Anything over 18 digits is refused with a 400.
+
+Found and not changed, written up in the hand-off: `api.registerExporter` is
+documented and does nothing -- the Export dialog never reads
+`extensions.exporters` (making it work is a feature, not a patch); Fill *Inside
+/ Outside the landmass* ignores Feather (live and reload agree, and fixing it
+changes how every saved fill of that kind looks, so it wants deciding); a
+failure inside `setDocument` for any *other* reason still leaves the editor half
+switched (only the reproduced trigger is fixed); `layer.__maskVersion` is
+written into `project.json` and never read; the palette's Save and a project
+card's Delete show nothing when they fail; `newMap` marks the map dirty without
+arming autosave, which may be deliberate (a new map is not on disk until first
+saved, and every suite relies on that).
+
+**The feature: prefabs.** Next on the hand-off's list since the selection set
+landed, and still the gap today's look at Dungeondraft, Inkarnate and Dungeon
+Scrawl found: Dungeondraft saves a selection as a prefab and places it from a
+tab, and nothing in Cartograph outlived the page. Not already there (no
+`prefab` anywhere in the code); standard library and a JSON file, nothing
+fetched; and a folder of reusable rooms is squarely a one-person-at-a-desk
+thing. Rejected today: editing a set (smaller, and less asked for), GM/player
+export in one go, print tiling and elevation, as before.
+
+- **Save as prefab…** in the Selected panel (one thing or a set), *Save
+  selection…* in the Select tool's panel, and the palette. The name is asked
+  for; the file is `prefabs/<name>.json` beside the program -- the clipboard's
+  own `{entries, kinds}`, deep-copied, with no layer ids (they name layers on
+  the old map), plus the grid step it was drawn on and the map kind. A second
+  prefab of the same name gets a number rather than replacing the first.
+- **Putting one down** is a chip in the Select tool's panel, or *Place …* in the
+  palette. It goes through the clipboard's own `place()`, so it is a paste in
+  every way that matters: one undo step, each part onto a layer of its own kind,
+  walls snapped to the grid and relit, the first lamp turning the night on,
+  fresh ids, and the copies picked up ready to drag. It lands in the middle of
+  the view -- the button is in the rail, so the pointer is nowhere useful. A
+  prefab saved on a different grid size says so, because its walls will not
+  sit on the new lines. **The x on a chip deletes the file, after asking**;
+  copies already placed stay.
+- **Server**: `server/prefabs.py`, with `GET`/`POST /api/prefabs` and `DELETE
+  /api/prefabs/<name>`. Names go through `slugify`/`slug`/`under`, files through
+  `safe.load`, and `check()` refuses what the editor could not place -- a kind
+  that is not an object kind, an entry with no position, a point that is not a
+  finite number, mismatched lists, anything deeper than `MAX_DEPTH`, over 2 MB,
+  or over 2,000 things. A broken file in the folder is skipped, never allowed to
+  empty the list. The folder is never served statically, so nothing in it can
+  run as a page. The name is claimed with a hard link from a private temp file,
+  so two saves racing for one name cannot lose one. `prefabs/` is in
+  `.gitignore`, like `projects/`.
+- `OBJECT_NOUNS` moved from `ui.js` to `doc.js` so the set summary and a
+  prefab's description cannot come to call one thing two names. No extension API
+  change.
+
+What is left, for a later day: rotating and mirroring a prefab as it goes down
+(Dungeondraft has both); adding a layer the new map lacks (a note in a prefab
+put on a map with no notes layer is left out with a message, as a paste does);
+and scaling between grid sizes.
+
+**Tests.** A new suite, `test/prefabs.mjs` (41): the strip and its disabled
+Save link; saving from the Selected panel; the file on disk; placing on a second
+map as one step, picked up, shape kept, walls on grid lines, fresh ids, centred
+on the view, the night turned on; undo and redo; placing from the palette; the
+round trip pixel-identical; a same-name save getting a number; a name full of
+markup shown as text; seven malformed bodies refused, a foreign Origin refused,
+a delete naming a path out of the folder refused, a broken file skipped; and
+delete asking first. It throws on a pristine clone, which has no strip. It names
+every prefab it saves with a run tag and removes them in a `finally`.
+`regress.mjs` 85 -> 95: nine new checks, all failing on a pristine clone, and
+one precondition kept deliberately (the active texture really is undecoded,
+which is what makes "and it is not left grey" mean anything). `guards.mjs` 59
+-> 60, failing on a pristine clone. Looked at in screenshots at 1440 x 860: the
+save dialog over a generated dungeon ("86 things (9 notes, 77 walls)"), and the
+same dungeon put down on a fresh battle map from its chip, walls on the grid and
+held, with the nine notes left out and the toast saying so.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 60 guards, 95 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 39 clipboard, 43 selection, 41 prefabs -- 648 checks, all passing,
+plus `battle`, over two full back-to-back rounds on the finished tree.
+
+---
+
 ## 2026-09-29 — holding several things at once, and nine things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 76 tracked

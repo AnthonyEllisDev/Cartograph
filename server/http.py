@@ -45,6 +45,7 @@ class Context(object):
         self.projects_dir = os.path.join(root, "projects")
         self.exports_dir = os.path.join(root, "exports")
         self.extensions_dir = os.path.join(root, "extensions")
+        self.prefabs_dir = os.path.join(root, "prefabs")
         self.save_config = lambda: None
         self.started = time.time()
         self.origins = set()
@@ -134,7 +135,11 @@ class Handler(BaseHTTPRequestHandler):
         # A proxy in front that reads those differently would leave bytes on
         # the socket that this side thinks are the next request.
         raw = raw.strip()
-        if not (raw.isascii() and raw.isdigit()):
+        # And a length past 4,300 digits makes int() itself raise ValueError
+        # (Python's guard against quadratic parsing), which escaped from here
+        # and killed the handler without a byte of reply. Eighteen digits is
+        # already far past MAX_BODY; anything longer is not a real length.
+        if not (raw.isascii() and raw.isdigit()) or len(raw) > 18:
             return -1
         length = int(raw)
         # A negative length reaches rfile.read(-1), which blocks until the peer

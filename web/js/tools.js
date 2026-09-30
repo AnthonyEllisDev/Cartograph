@@ -125,6 +125,12 @@ function paintLive() {
   R.requestDraw();
 }
 
+/** Everything about a landmass's look that a stroke's pixels bake in and a
+ *  repaint from the mask would change. */
+function landStyle(layer) {
+  return JSON.stringify([layer.coast || null, layer.texture || null, layer.scale || 1, layer.color || null]);
+}
+
 function endPaint() {
   if (!live.active) return;
   const { layer, op } = live;
@@ -159,6 +165,14 @@ function endPaint() {
     // A terrain fill bound to the landmass follows the new mask; if there is
     // one, it can have changed anywhere, so the whole map is composited.
     const landed = () => { R.compositeAll(R.followLand() ? undefined : box); R.requestDraw(); };
+    // The snapshot is pixels drawn in the coast colours, shelf width and
+    // ground texture of the moment. Change any of them and then undo, and the
+    // restored rectangle kept the old look while the rest of the map took the
+    // new one -- and a reload drew the new one everywhere. When the look has
+    // moved on, the land is repainted from the (restored) mask as a colour
+    // change would repaint it; when it has not, the snapshot is exact and fast.
+    const style = landStyle(layer);
+    const restyle = () => { if (landStyle(layer) !== style) R.repaintLand(layer); };
     R.applyLandOp(layer, op);
     layer.ops.push(op);
     R.paintLand(layer, canvas.getContext('2d'), box, raw);
@@ -171,12 +185,16 @@ function endPaint() {
         restore(mask, beforeMask);
         const i = layer.ops.indexOf(op); if (i >= 0) layer.ops.splice(i, 1);
         R.invalidateCoast(layer, raw);
+        restyle();
         landed();
       },
       redo() {
         R.applyLandOp(layer, op);
         layer.ops.push(op);
         R.paintLand(layer, canvas.getContext('2d'), box, raw);
+        // The box above was padded for the shelf as it was; a wider one now
+        // reaches past it.
+        restyle();
         landed();
       },
     });
@@ -286,8 +304,21 @@ function targetLayer(kinds) {
   return found || null;
 }
 
-function requireAsset(kind) {
+function requireAsset(kind, layer) {
   const id = app.settings[kind === 'terrain' ? 'activeTexture' : 'activeStamp'];
+  // Only a click in the picker decoded a texture, and a stroke laid down with
+  // one not yet decoded fell back to flat grey -- while the op saved its name,
+  // so the same map reopened textured. The texture remembered from the last
+  // session, a preset's, and the dungeon's floor all reached here undecoded.
+  // Start the decode now and rebuild the layer once it lands, as the Stamp
+  // tool does for a variant.
+  if (id && kind === 'terrain' && layer && !imageNow(id)) {
+    warm([id]).then(() => {
+      if (app.doc && app.doc.layers.includes(layer) && layer.ops.some((o) => o.tex === id)) {
+        R.invalidate(layer);
+      }
+    });
+  }
   return id || null;
 }
 
@@ -316,7 +347,7 @@ define({
     beginDynamics();
     const layer = targetLayer(['raster']);
     if (!layer) return toast('The terrain brush needs a paint layer — add one with + in the Layers panel', 'bad');
-    const tex = requireAsset('terrain');
+    const tex = requireAsset('terrain', layer);
     if (!tex) return toast('Pick a terrain texture first', 'bad');
     beginPaint(layer, {
       t: 'stroke', tex, scale: S('brush', 'texScale', 1),
@@ -503,7 +534,7 @@ define({
   down(pt) {
     const layer = targetLayer(['raster']);
     if (!layer) return toast('The scatter brush needs a paint layer', 'bad');
-    const tex = requireAsset('terrain');
+    const tex = requireAsset('terrain', layer);
     if (!tex) return toast('Pick a terrain texture first', 'bad');
     beginPaint(layer, {
       t: 'stroke', mode: 'dabs', tex, scale: S('scatter', 'texScale', 1),
@@ -589,7 +620,7 @@ define({
   commit(region, points) {
     const layer = targetLayer(['raster']);
     if (!layer) return toast('The fill tool needs a paint layer', 'bad');
-    const tex = requireAsset('terrain');
+    const tex = requireAsset('terrain', layer);
     if (!tex) return toast('Pick a terrain texture first', 'bad');
     const op = {
       t: 'stroke', mode: 'shape', shape: region, tex,
@@ -660,7 +691,7 @@ define({
   down(pt) {
     const layer = targetLayer(['raster']);
     if (!layer) return toast('The shape tool needs a paint layer', 'bad');
-    const tex = requireAsset('terrain');
+    const tex = requireAsset('terrain', layer);
     if (!tex) return toast('Pick a terrain texture first', 'bad');
     beginPaint(layer, {
       t: 'stroke', mode: 'shape', shape: S('shape', 'shape', 'rect'), tex,
@@ -1528,7 +1559,13 @@ define({
       return;
     }
     if (!moving) return;
-    const changed = moving.items.filter((m) => JSON.stringify(m.before) !== JSON.stringify(m.item));
+    // Ctrl+Z mid-drag can undo the very thing being dragged (a duplicate made
+    // a moment before). It is off the map now; put it back where it was, so a
+    // redo restores it there, and push no Move for it -- that entry undid
+    // nothing and threw the redo away.
+    const gone = moving.items.filter((m) => !app.doc.layers.includes(m.layer) || !m.layer.ops.includes(m.item));
+    for (const m of gone) Object.assign(m.item, JSON.parse(JSON.stringify(m.before)));
+    const changed = moving.items.filter((m) => !gone.includes(m) && JSON.stringify(m.before) !== JSON.stringify(m.item));
     // Selecting is not moving. An entry per click filled the 32-slot stack
     // with steps that undid nothing and pushed the real ones off the bottom.
     if (!changed.length) return;

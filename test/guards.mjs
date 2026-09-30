@@ -91,6 +91,17 @@ const smuggled = `GET /api/state HTTP/1.1${CRLF}Host: x${CRLF}${CRLF}`;
 }
 
 {
+  // Past 4,300 digits int() itself raises (Python's guard against quadratic
+  // parsing), and that escaped the length check and killed the handler with
+  // not a byte written back.
+  const text = await raw(
+    `POST /api/state HTTP/1.1${CRLF}Host: ${hostname}:${port}${CRLF}` +
+    `Content-Length: ${'9'.repeat(5000)}${CRLF}${CRLF}`);
+  t('a Content-Length thousands of digits long is answered, not died on',
+    statuses(text)[0] === '400', statuses(text).join(' then ') || 'no reply at all');
+}
+
+{
   // A negative length used to reach rfile.read(-1), which blocks until the
   // peer closes -- a thread held for as long as the caller cared to wait.
   const text = await raw(

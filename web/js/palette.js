@@ -13,6 +13,7 @@ import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
+import { describeKinds, placePrefab, prefabs, saveSelectionAsPrefab } from './prefabs.js';
 import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
 import * as R from './render.js';
 import { TOOLS, clearSelection, selectAll, setTool } from './tools.js';
@@ -46,6 +47,9 @@ const BUILT_IN = [
     detail: 'At the pointer, or a cell on from where it was copied', run: () => paste(null) },
   { id: 'duplicate', group: 'Edit', title: 'Duplicate the selection', keys: 'Ctrl+D',
     run: () => duplicateSelection() },
+  { id: 'save-prefab', group: 'Edit', title: 'Save the selection as a prefab…',
+    detail: 'Keep what the Select tool is holding, to put down on any map',
+    run: () => saveSelectionAsPrefab() },
   { id: 'revert-all', group: 'Edit', title: 'Go back to the start of this session',
     detail: 'Undoes everything still in the history',
     run: () => { if (jumpTo(0)) { markDirty(); scheduleAutosave(); } R.requestDraw(); } },
@@ -86,6 +90,13 @@ function collect() {
         applyPreset(preset.id);
         renderToolOptions(); renderAssetPicker(); R.requestDraw();
       },
+    });
+  }
+  for (const prefab of prefabs()) {
+    out.push({
+      id: 'prefab:' + prefab.slug, group: 'Prefab', title: 'Place ' + prefab.name,
+      detail: describeKinds(prefab.kinds),
+      run: () => placePrefab(prefab.slug),
     });
   }
   for (const cmd of extensions.commands) {

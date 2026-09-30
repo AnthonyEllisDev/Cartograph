@@ -1608,6 +1608,194 @@ const undoStep = async () => { await p.evaluate(async () => { (await import('/js
   t('going back to the start with nothing to undo leaves a saved map saved', dirty === false);
 }
 
+/* ========================================================================== *
+ * 2026-09-30: nine found by review.
+ * ========================================================================== */
+
+const drag2 = async (from, to, steps = 10) => {
+  const a = await M(...from), z = await M(...to);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  for (let i = 1; i <= steps; i++) await p.mouse.move(a.x + (z.x - a.x) * i / steps, a.y + (z.y - a.y) * i / steps);
+  await p.mouse.up(); await p.waitForTimeout(250);
+};
+/** How many pixels of the flattened map differ between now and a full
+ *  rebuild of every layer from its ops -- what a reload would draw. */
+const driftFromRebuild = (decode = []) => p.evaluate(async (ids) => {
+  const R = window.__cg.R;
+  // A reload decodes every texture the map names before it draws.
+  await (await import('/js/assets.js')).warm(ids);
+  const grab = () => R.flatten({ scale: 1, grid: false, paper: false }).getContext('2d')
+    .getImageData(0, 0, window.__cg.app.doc.width, window.__cg.app.doc.height).data;
+  const now = grab();
+  R.setDocument(window.__cg.app.doc);
+  const then = grab();
+  let n = 0;
+  for (let i = 0; i < now.length; i += 4) {
+    if (Math.abs(now[i] - then[i]) + Math.abs(now[i + 1] - then[i + 1]) + Math.abs(now[i + 2] - then[i + 2]) > 6) n++;
+  }
+  return n;
+}, decode);
+
+{
+  // Landmass undo after a coast change. The undo restored a pixel snapshot
+  // drawn in the old ink colour; the rest of the map, and a reload, had the new.
+  await newMap(p, { name: 'Restyled Shore', kind: 'region' });
+  await tool('land');
+  await drag2([500, 500], [700, 520]);
+  await drag2([650, 480], [860, 560]);
+  await p.evaluate(() => {
+    const land = window.__cg.app.doc.layers.find((l) => l.kind === 'land');
+    land.coast = Object.assign({}, land.coast, { inkColor: '#ff0000' });
+    window.__cg.R.repaintLand(land);
+  });
+  await p.evaluate(async () => (await import('/js/history.js')).undo());
+  await p.waitForTimeout(300);
+  const n = await driftFromRebuild();
+  t('undoing a landmass stroke after changing the ink colour matches a reload', n === 0, n + ' pixels differ');
+}
+
+{
+  // A texture nothing had decoded yet painted flat grey, while the op saved
+  // its name and the reopened map was textured.
+  await newMap(p, { name: 'Undecoded Sand', kind: 'region' });
+  const fresh = await p.evaluate(async () => {
+    const As = await import('/js/assets.js');
+    const pick = ['starter/tundra', 'starter/snow', 'starter/ash', 'starter/swamp']
+      .find((id) => As.library.byId.has(id) && !As.imageNow(id));
+    if (pick) window.__cg.app.settings.activeTexture = pick;
+    return pick || null;
+  });
+  t('(precondition) a texture that nothing has decoded is the active one', !!fresh, fresh);
+  await tool('brush');
+  await drag2([900, 700], [1200, 760]);
+  await p.waitForTimeout(700);
+  const n = await driftFromRebuild([fresh]);
+  t('a stroke with an undecoded texture is not left flat grey', n === 0, n + ' pixels differ from a reload');
+}
+
+{
+  // A layer set to Multiply: the live stroke was multiplied on top of the
+  // already-multiplied layer, and lightened the moment the button came up.
+  await newMap(p, { name: 'Multiplied Ground', kind: 'region' });
+  await tool('brush');
+  await p.click('#asset-picker .asset[title="Rock"]').catch(() => p.click('#asset-picker .asset'));
+  await p.waitForTimeout(300);
+  await p.evaluate(() => {
+    const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'raster');
+    layer.blend = 'multiply';
+    window.__cg.R.compositeAll();
+  });
+  await drag2([700, 700], [1100, 700]);
+  const a = await M(800, 690), z = await M(1000, 710);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  for (let i = 1; i <= 10; i++) await p.mouse.move(a.x + (z.x - a.x) * i / 10, a.y + (z.y - a.y) * i / 10);
+  await p.waitForTimeout(150);
+  const sample = () => p.evaluate(() => {
+    const d = window.__cg.R.view.flat.getContext('2d').getImageData(900, 700, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  });
+  const live = await sample();
+  await p.mouse.up(); await p.waitForTimeout(300);
+  const done = await sample();
+  const diff = Math.abs(live[0] - done[0]) + Math.abs(live[1] - done[1]) + Math.abs(live[2] - done[2]);
+  t('a stroke on a Multiply layer previews as it lands', diff <= 6, live.join(',') + ' -> ' + done.join(','));
+}
+
+{
+  // Ctrl+Z in the middle of dragging a duplicate: a Move was pushed for the
+  // copy that was no longer on the map, and the redo of it was thrown away.
+  await newMap(p, { name: 'Undone Mid-drag', kind: 'battle' });
+  await tool('light');
+  await clickAt(385, 385);
+  await tool('select');
+  await clickAt(385, 385);
+  await p.keyboard.press('Control+d'); await p.waitForTimeout(300);
+  const copy = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights'); const o = l.ops[1]; return [o.x, o.y];
+  });
+  const a = await M(copy[0], copy[1]);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  await p.mouse.move(a.x + 20, a.y + 10); await p.mouse.move(a.x + 40, a.y + 20);
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(200);
+  await p.mouse.move(a.x + 60, a.y + 30); await p.mouse.up(); await p.waitForTimeout(250);
+  const st = await p.evaluate(() => ({
+    last: (window.__cg.history.past[window.__cg.history.past.length - 1] || {}).label,
+    future: window.__cg.history.future.length,
+  }));
+  t('undoing a duplicate mid-drag pushes no Move for it and keeps its redo',
+    st.last !== 'Move' && st.future >= 1, JSON.stringify(st));
+  await p.evaluate(async () => (await import('/js/history.js')).redo());
+  await p.waitForTimeout(200);
+  const back = await p.evaluate(() => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'lights');
+    return l.ops.length === 2 ? [l.ops[1].x, l.ops[1].y] : null;
+  });
+  t('and the redo puts the copy back where it was duplicated to',
+    back && back[0] === copy[0] && back[1] === copy[1], JSON.stringify(back) + ' vs ' + copy.join(','));
+
+  // The palette open with the focus out of its box: Delete removed the thing
+  // held behind it.
+  await clickAt(385, 385);
+  const held0 = await p.evaluate(() => window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops.length);
+  await p.keyboard.press('Control+k'); await p.waitForTimeout(200);
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  await p.keyboard.press('Delete'); await p.waitForTimeout(200);
+  await p.keyboard.press('w'); await p.waitForTimeout(150);
+  const st2 = await p.evaluate(() => ({
+    n: window.__cg.app.doc.layers.find((x) => x.kind === 'lights').ops.length, tool: window.__cg.app.tool,
+  }));
+  t('with the palette open, Delete and tool letters do not reach the map', st2.n === held0 && st2.tool === 'select',
+    JSON.stringify(st2));
+  await p.evaluate(async () => (await import('/js/palette.js')).close());
+
+  // Escape that closes a dialog also threw away the wall half drawn behind it.
+  await tool('wall');
+  await clickAt(140, 140); await clickAt(420, 140);
+  await p.evaluate(async () => { (await import('/js/dungeon.js')).dungeonDialog(); });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  await p.keyboard.press('Escape'); await p.waitForTimeout(250);
+  const st3 = await p.evaluate(async () => ({
+    modal: (await import('/js/util.js')).modalOpen(),
+    points: (await import('/js/tools.js')).TOOLS.wall.state.points.length,
+  }));
+  t('Escape closes the dialog and leaves the wall being drawn alone', !st3.modal && st3.points === 2,
+    JSON.stringify(st3));
+  await p.keyboard.press('Escape'); await p.waitForTimeout(150);
+}
+
+{
+  // Autosave was a debounce: every edit restarted the clock, so steady work
+  // was never saved. Each call now keeps a deadline that is already set.
+  const armed = await p.evaluate(async () => {
+    const A = await import('/js/app.js');
+    const was = window.__cg.app.settings.autosave;
+    window.__cg.app.settings.autosave = true;
+    const real = window.setTimeout;
+    let n = 0;
+    window.setTimeout = (fn, ms, ...rest) => { if (ms >= 15000) n++; return real(fn, ms, ...rest); };
+    try { A.scheduleAutosave(); A.scheduleAutosave(); A.scheduleAutosave(); } finally { window.setTimeout = real; }
+    window.__cg.app.settings.autosave = was;
+    return n;
+  });
+  t('autosave keeps its deadline rather than restarting it on every edit', armed <= 1, armed + ' timers started');
+}
+
+{
+  // A layer with no ops list is readable JSON the server passes through; it
+  // threw out of setDocument after app.doc had already switched.
+  const r = await p.evaluate(async () => {
+    const A = await import('/js/app.js');
+    const doc = { format: 1, kind: 'region', name: 'Opsless', width: 512, height: 512,
+      scale: { unit: 'mi', perCell: 10, cellPx: 96 }, snap: 'off', view: { x: 0, y: 0, zoom: 0 },
+      layers: [{ id: 'l-p', kind: 'paper', name: 'Paper', visible: true, opacity: 1 },
+               { id: 'l-n', kind: 'notes', name: 'Notes', visible: true, opacity: 1 }] };
+    try { await A.openDocument(doc, null); } catch (err) { return 'threw: ' + err.message; }
+    return window.__cg.app.doc.layers.every((l) => Array.isArray(l.ops)) ? 'ok' : 'no ops';
+  });
+  t('a map with a layer missing its ops list opens', r === 'ok', r);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

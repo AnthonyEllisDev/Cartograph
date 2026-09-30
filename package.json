@@ -16,6 +16,7 @@
     "notes": "node test/notes.mjs",
     "clipboard": "node test/clipboard.mjs",
     "selection": "node test/selection.mjs",
+    "prefabs": "node test/prefabs.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {
