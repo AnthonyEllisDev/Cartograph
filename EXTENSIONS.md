@@ -206,7 +206,7 @@ api.registerExporter({
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'selection'`, `'library'`, `'dirty'`, `'saved'` |
 | `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
-| `api.tools` | `{ TOOLS, clearSelection, currentTool, selectObject, selectObjects, selectedObject, selectedObjects, setTool }` |
+| `api.tools` | `{ TOOLS, clearSelection, currentTool, mirrorSelection, selectObject, selectObjects, selectedObject, selectedObjects, setTool, turnSelection }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
 | `api.server` | the local HTTP API: `state`, `packs`, `importAsset`, `projects`, `createProject`, `readProject`, `writeProject`, `deleteProject`, `writeLayer`, `writeThumb`, `exportImage`, `openFolder` |
@@ -239,6 +239,12 @@ since been locked or hidden drops out, as it does from `selectedObject()`.
 `api.tools.selectObjects(list)` replaces the whole set with a list of
 `{ layer, item }` (the first becomes the primary), skips anything not on its
 layer or on a hidden or locked one, and returns how many it took.
+`api.tools.turnSelection(dir)` turns whatever is held one step clockwise
+(`dir` 1) or anticlockwise (-1) -- a quarter turn, or a sixth on a hex map --
+and `api.tools.mirrorSelection(axis)` mirrors it, `'x'` left to right and `'y'`
+top to bottom. Each is one undo step and returns `false` when nothing is held.
+Both move `x`/`y` and every point in `points`, so an extension layer kind the
+Select tool could one day pick up turns for free if it keeps to those fields.
 Nothing was removed for any of this, and `API_VERSION` is still 1.
 
 `api.invalidate` relights for you when the layer you pass is a walls layer, or a

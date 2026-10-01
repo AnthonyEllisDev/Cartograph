@@ -21,6 +21,7 @@ import { pushEntry, restore, snapshot } from './history.js';
 import { icon, ICONS } from './icons.js';
 import * as R from './render.js';
 import { TOOLS, clearSelection, currentTool, selectObject, selectObjects, selectedObject, selectedObjects, setTool } from './tools.js';
+import { mirrorSelection, turnSelection } from './transform.js';
 import { clamp, el, hashString, modal, rng, toast, uid } from './util.js';
 
 export const API_VERSION = 1;
@@ -109,7 +110,7 @@ function makeApi(manifest) {
 
     events: { on, emit },
     render: R,
-    tools: { TOOLS, clearSelection, currentTool, selectObject, selectObjects, selectedObject, selectedObjects, setTool },
+    tools: { TOOLS, clearSelection, currentTool, mirrorSelection, selectObject, selectObjects, selectedObject, selectedObjects, setTool, turnSelection },
     assets: { library, image, imageNow, pattern, warm },
     history: { push: pushEntry, snapshot, restore },
     server: serverApi,
@@ -228,6 +229,17 @@ export async function loadOne(manifest) {
     manifest.error = `needs extension API ${manifest.apiVersion}; this build provides ${API_VERSION}`;
     return false;
   }
+  // Everything an extension registers is filed under its id, so a second
+  // start under the same id overwrote the record of the first, and what the
+  // first had registered could never be taken out again. Copying a folder to
+  // change it is the obvious way to start writing one, and leaves two
+  // manifests with one id.
+  const prior = extensions.loaded.get(manifest.id);
+  if (prior && prior.manifest.dir !== manifest.dir) {
+    manifest.error = `the extension in "${prior.manifest.dir}" already uses the id "${manifest.id}"; give this one its own`;
+    return false;
+  }
+  if (prior) unloadExtension(manifest.id);
   // A cache-busting query so turning an extension off, editing it and turning
   // it back on runs the file on disk rather than the one already imported.
   const href = `/extensions/${encodeURIComponent(manifest.dir)}/${manifest.main}?v=${Date.now()}`;
@@ -265,7 +277,18 @@ export function renderExtensionLayer(layer, ctx) {
  *
  * Needing a page reload for this was the last thing in the program that made
  * you restart it to change your mind. */
-export async function setExtensionEnabled(id, enabled) {
+let toggling = Promise.resolve();
+
+export function setExtensionEnabled(id, enabled) {
+  // One at a time. On then off before the import had finished left it
+  // running -- the unload found nothing loaded yet and the load finished
+  // afterwards -- and two ons at once registered everything twice.
+  const run = toggling.then(() => toggle(id, enabled), () => toggle(id, enabled));
+  toggling = run.catch(() => {});
+  return run;
+}
+
+async function toggle(id, enabled) {
   await serverApi.setExtensionEnabled(id, enabled);
   const manifest = extensions.list.find((m) => m.id === id);
   if (!manifest) return false;

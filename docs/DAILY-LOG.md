@@ -5,6 +5,144 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-01 — turning a set round, and eight things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 80
+tracked source files (the two screenshots were not compared), so this was a
+feature day. The baseline was green: 648 checks across eighteen suites, plus
+`battle`. (`npm install playwright` rewrote `package.json` here too, as the
+hand-off warns; it was put back before comparing.)
+
+**Review.** Two readers in parallel, reading only, each with a private copy on
+its own port and told to reproduce before reporting: renderer, lighting,
+clipboard, prefabs and generators; server and front-end state. `node --check`
+passed on every module, and the non-ASCII grep found nothing outside comments
+and UI strings. Eight defects fixed, each with a check that fails on a
+pristine clone:
+
+- *Undoing a landmass stroke after narrowing the shelf left a band of the old
+  shelf* -- a gap in yesterday's fix. The undo puts back pixels drawn under the
+  wide shelf, and `repaintLand` then cleared only as far as the narrow one
+  reaches, because narrowing it had already lowered `coastReach`. 38,817 pixels
+  off a rebuild. The entry now tells `repaintLand` how far its snapshot can have
+  painted (`reachThen`); that box only clears and re-tints, so it is the safe
+  kind (§12).
+- *Paste, duplicate and prefab placement could take walls off the grid.*
+  `offsetFor` snapped the first snapping thing in the set and moved the rest by
+  the same amount, which keeps the rest on the lines only if that one was on
+  them: a lamp Alt-placed off centre carried a copied wall half a cell off, and
+  on a hex map a corner moved onto a different kind of corner took half a path
+  off the lattice. The delta is now the difference of two cell centres
+  (`latticePoint` in `doc.js`), a translation of the grid onto itself on square
+  and hex grids alike. A consequence: on *Half* snapping a paste now moves by
+  whole cells, and something placed off the grid with Alt stays off it by the
+  same amount, as it would if dragged.
+- *Undoing a move could bring back an edit undone during the drag.* The Move
+  entry restored whole snapshots taken when the button went down; Ctrl+Z
+  mid-drag undoing *Lit* left the light dark again after the Move was undone,
+  with no step left to relight it. The entry now holds positions only
+  (`placeOf`/`setPlace`).
+- *A save of a new map wrote its slug onto whichever map was open when the
+  reply came back* -- open another map while the first save of a new one is in
+  flight and the opened map took the new one's folder, and its next save
+  overwrote the new map. Data loss, reproduced end to end. `saveProject` now
+  holds on to the document it was called for and touches nothing else after an
+  await.
+- *Two saves at once on a new map made two folders* (Ctrl+S twice, or Ctrl+S on
+  an autosave). Saves now run one at a time; one asked for while another is in
+  flight waits for it, and a save with nothing in flight still snapshots there
+  and then, which `regress.mjs` checks.
+- *Turning an extension on then off before its import finished left it on, and
+  two ons at once registered it twice*, the first set never removable.
+  `setExtensionEnabled` runs one toggle at a time, and `loadOne` unloads an id
+  that is already loaded before loading it again. API-level only -- the
+  checkbox round trip on loopback is too fast to hit it by clicking.
+- *Two extension folders with one id* -- a copied folder -- both loaded and the
+  second overwrote the first's record, leaving its commands in the palette for
+  good. The second is refused with a message naming the first.
+- Server: a prefab saved as `Hall.JSON` by hand was listed and then refused on
+  delete (a 404 on a case-sensitive file system), and a folder named
+  `Hall.json` was a 500 on delete. The delete finds the file by the rule the
+  list uses, and refuses a folder with a 404.
+
+Found and not changed: nothing new beyond what the hand-off already lists. Ctrl+S,
+Ctrl+E and Ctrl+N still act while a dialog is up; E and N replace the dialog
+and settle its promise, so it was judged benign.
+
+**The feature: turning and mirroring a set.** The hand-off's first prefab
+"next step", taken further: Dungeondraft turns and mirrors a selection from its
+Select tool and Dungeon Scrawl added the same, and in Cartograph a prefab came
+down facing the way it was saved with no way to turn it, nor any set. Not
+already there (no rotation of anything but a stamp's own tilt), nothing beyond
+arithmetic, and squarely a one-person-at-a-desk thing. Rejected today: editing a
+set's fields (smaller and less asked for), GM/player export in one go, making
+`registerExporter` do something, print tiling and elevation.
+
+- **R** turns what Select holds clockwise, **Shift+R** anticlockwise -- only with
+  something held; otherwise R is the Shape tool as before. *Turn left*, *Turn
+  right*, *Mirror* and *Flip* are in the Selected panel (one thing or a set) and
+  the palette. `web/js/transform.js`.
+- **The grid decides the turn.** A square grid maps onto itself only under
+  quarter turns about a corner or a cell centre, a hex grid under sixth turns
+  about a hex centre; mirrors likewise. The pivot is the middle of the set's box
+  moved to the nearest such point, a lone stamp, lamp or pin turns where it
+  stands, and with snapping off the set turns about its own middle. Turned
+  points within a hair of a lattice point are put exactly on it (`settle`), so a
+  dozen turns do not walk a wall end off the corner the Wall tool snaps to.
+- **The same pivot for consecutive turns of the same set.** A box that is not
+  square changes shape under a quarter turn, so a pivot worked out afresh made R
+  then Shift+R land a cell away from the start. The last pivot is reused while
+  the set is the same things, untouched since; four quarter turns, six sixths
+  and two mirrors land exactly home. A stamp's angle is folded onto exact
+  multiples of pi/12 for the same reason.
+- **What turns.** Every `x`/`y` and every point; a stamp's `rot` (and `flip` on a
+  mirror -- across the horizontal it is also turned half round); a cone light's
+  `angle`. A straight label keeps reading left to right and only its anchor
+  moves; a curved one follows its curve.
+- One undo step, deep copies both ways, keys the snapshot lacked taken off
+  (undoing a mirror leaves no `flip: false` behind); walls invalidated last,
+  through `invalidateAll` (now exported from `tools.js`), so a turned wall
+  relights.
+- **A turned stamp is clicked where it is drawn**: the Select hit test and its
+  ring work in the stamp's own rotated frame. The Selected panel's stamp slider
+  is now *Turn*, the whole circle, rather than *Tilt* at +/-0.8 -- a turned
+  stamp would otherwise have shown pinned at the end and been unturned by a
+  touch. That also affects a stamp's tilt set by hand.
+- Extension API, additive: `api.tools.turnSelection(dir)` and
+  `api.tools.mirrorSelection(axis)`. `API_VERSION` stays 1.
+
+What is left, for a later day: turning by any angle (a stamp could, walls could
+not); turning *while placing* a prefab rather than after; rescaling prefabs
+between grid sizes.
+
+**Tests.** A new suite, `test/transform.mjs` (43): a room on a battle map turned
+by key, by button and back -- walls on grid lines and their lengths kept, the
+cone and the stamp turned with them, Shift+R undoing R exactly, four turns home,
+undo and redo exact, Mirror and Flip with no stray `flip` left by an undo, a
+lone wall turned off a lamp's line lifting its shadow, a turned stamp clicked
+where it is drawn and not where it stood, R with nothing held still picking the
+Shape tool, the round trip pixel-identical, and on a hex map a path along hex
+edges kept on hex corners through sixth turns, a mirror and a flip. It throws on
+a pristine clone, which has no `transform.js`. `regress.mjs` 95 -> 107: twelve
+new checks, eleven failing on a pristine clone and one precondition kept
+deliberately (unticking *Lit* really does put the light out, which is what makes
+"and undoing the move does not bring it back" mean anything). `guards.mjs` 60 ->
+63, two failing on a pristine clone and one precondition (the prefab really was
+saved). Looked at in screenshots at 1440 x 860: a walled room with a door, a
+cone lamp and two stamps held and turned -- walls on the grid, the cone now
+facing south and clipped by the walls, the stamps on their sides inside turned
+rings -- and the panel's buttons, which first came out as three and an orphan
+and are now two pairs.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 63 guards, 107 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 39 clipboard, 43 selection, 41 prefabs, 43 transform -- 706 checks,
+all passing, plus `battle`, over two full back-to-back rounds on the finished
+tree. In this container the suites need `CG_CHROME` pointed at
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, as the hand-off says.
+
+---
+
 ## 2026-09-30 — prefabs, and nine things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 75 tracked

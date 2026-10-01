@@ -189,8 +189,23 @@ def write(root, body):
 
 
 def delete(root, name):
-    path = under(root, slug(name, "prefab") + ".json")
+    # Found by the rule the list uses, extension in any case: "Hall.JSON",
+    # dropped in by hand, was listed and then refused as no such prefab.
+    wanted = slug(name, "prefab")
+    fname = wanted + ".json"
+    try:
+        for entry in os.listdir(root):
+            stem, ext = os.path.splitext(entry)
+            if stem == wanted and ext.lower() == ".json":
+                fname = entry
+                break
+    except OSError:
+        pass
+    path = under(root, fname)
     try:
         os.remove(path)
     except FileNotFoundError:
         raise Unsafe("no such prefab: %r" % name) from None
+    except OSError:
+        # A folder named like a prefab is not one, and was a 500.
+        raise Unsafe("not a prefab file: %r" % name) from None

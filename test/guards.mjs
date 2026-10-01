@@ -9,7 +9,7 @@
  */
 
 import net from 'node:net';
-import { mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { base } from './browser.mjs';
@@ -644,6 +644,41 @@ try {
     '['.repeat(70) + ']'.repeat(70) + ']}]}';
   const r = await fetch(`${BASE}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: deep });
   t('and one nested too deeply is a 400 too', r.status === 400, r.status);
+}
+
+/* 2026-10-01 ---------------------------------------------------------------- */
+
+{
+  // The list took a prefab's extension in any case and the delete looked for
+  // ".json" only, so "Hall.JSON" dropped in by hand was listed and could not
+  // be deleted. And a folder named like a prefab was a 500 on delete.
+  const jr = async (method, path, body) => {
+    const res = await fetch(BASE + path, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'prefabs');
+  const made = await jr('POST', '/api/prefabs', { name: 'GuardUpper', cell: 70, mapKind: 'battle',
+    kinds: ['walls'], entries: [{ id: 'w-g', kind: 'wall', points: [{ x: 0, y: 0 }, { x: 70, y: 0 }] }] });
+  const slugMade = made.body && made.body.prefab && made.body.prefab.slug;
+  const lower = join(dir, slugMade + '.json'), upper = join(dir, slugMade + '.JSON');
+  const box = join(dir, 'GuardBox.json');
+  try {
+    t('precondition: a prefab is saved', made.status === 200 && existsSync(lower), made.status);
+    renameSync(lower, upper);
+    const listed = (await jr('GET', '/api/prefabs')).body.prefabs.some((x) => x.slug === slugMade);
+    const del = await jr('DELETE', '/api/prefabs/' + encodeURIComponent(slugMade));
+    t('a prefab saved as .JSON by hand is listed and can be deleted',
+      listed && del.status === 200 && !existsSync(upper), listed + ' ' + del.status);
+    mkdirSync(box, { recursive: true });
+    const dirDel = await jr('DELETE', '/api/prefabs/GuardBox');
+    t('deleting a folder named like a prefab is refused, not a 500', dirDel.status === 404, dirDel.status);
+  } finally {
+    rmSync(upper, { force: true });
+    rmSync(lower, { force: true });
+    rmSync(box, { recursive: true, force: true });
+  }
 }
 
 for (const [status, name, note] of out) {

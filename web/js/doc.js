@@ -200,6 +200,16 @@ export function snapPoint(doc, pt, prefer = 'corner') {
   };
 }
 
+/** The nearest point of the grid's own lattice, whatever the snap setting:
+ *  a cell centre or a corner, on a square grid or a hex one. A move by the
+ *  difference of two cell centres is a translation of the grid onto itself,
+ *  which is what keeps a whole set on the lines -- snapping one thing in it
+ *  and moving the rest by the same amount only does that if the one thing
+ *  was on the lattice to begin with. */
+export function latticePoint(doc, pt, prefer = 'centre') {
+  return snapPoint({ ...doc, snap: 'grid' }, pt, prefer);
+}
+
 /* ---------------------------------------------------------------- groups */
 
 /* Membership is an id on the member, not a list on the group.

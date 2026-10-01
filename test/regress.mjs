@@ -8,6 +8,8 @@
  * source could change by a route that never told the derived value about it.
  */
 
+import { cpSync, rmSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { launch, base, ready, newMap } from './browser.mjs';
 
 const out = [];
@@ -1794,6 +1796,240 @@ const driftFromRebuild = (decode = []) => p.evaluate(async (ids) => {
     return window.__cg.app.doc.layers.every((l) => Array.isArray(l.ops)) ? 'ok' : 'no ops';
   });
   t('a map with a layer missing its ops list opens', r === 'ok', r);
+}
+
+/* ==========================================================================
+ * 2026-10-01
+ * ========================================================================== */
+
+{
+  // Undoing a landmass stroke after the shelf was narrowed: the snapshot put
+  // back pixels drawn under the old, wide shelf, and the repaint that follows
+  // cleared only as far as the new narrow one reaches -- a band of the old
+  // shelf left round the coast that a reload does not draw.
+  await newMap(p, { name: 'Narrowed Shelf', kind: 'region' });
+  const layerVsRebuild = () => p.evaluate(() => {
+    const { app, R } = window.__cg; const l = app.doc.layers.find((x) => x.kind === 'land');
+    const c = R.canvasFor(l);
+    const a = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    R.rebuildLayer(l);
+    const z = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < a.length; i += 4) {
+      if (Math.abs(a[i] - z[i]) > 2 || Math.abs(a[i + 1] - z[i + 1]) > 2
+          || Math.abs(a[i + 2] - z[i + 2]) > 2 || Math.abs(a[i + 3] - z[i + 3]) > 2) n++;
+    }
+    R.compositeAll(); return n;
+  });
+  const shelf = (f) => p.evaluate((fields) => {
+    const l = window.__cg.app.doc.layers.find((x) => x.kind === 'land');
+    Object.assign(l.coast, fields); window.__cg.R.repaintLand(l);
+  }, f);
+  const stroke = async (pts) => {
+    const s0 = await M(...pts[0]); await p.mouse.move(s0.x, s0.y); await p.mouse.down();
+    for (const q of pts.slice(1)) { const s = await M(...q); await p.mouse.move(s.x, s.y, { steps: 6 }); }
+    await p.mouse.up(); await p.waitForTimeout(300);
+  };
+  await shelf({ shallow: true, shallowWidth: 120 });
+  await tool('land');
+  await stroke([[600, 600], [800, 650]]);
+  await stroke([[1000, 700], [1100, 720]]);
+  await shelf({ shallowWidth: 4 });
+  await p.evaluate(async () => (await import('/js/history.js')).undo());
+  await p.waitForTimeout(300);
+  const off = await layerVsRebuild();
+  t('undoing a land stroke after narrowing the shelf leaves no band of the old shelf', off === 0, off + ' px off a rebuild');
+}
+
+{
+  // Paste and duplicate snapped the lead thing in a set and moved the rest by
+  // the same amount, which keeps the rest on the grid only if the lead was on
+  // it: a light Alt-placed off a cell centre carried a copied wall half a
+  // cell off the lines.
+  await newMap(p, { name: 'Off-centre Lamp', kind: 'battle', size: '40x30' });
+  await p.evaluate(async () => {
+    const D = await import('/js/doc.js');
+    const A = await import('/js/app.js');
+    const doc = window.__cg.app.doc;
+    if (!doc.layers.some((l) => l.kind === 'lights')) doc.layers.push(D.makeLayer('lights'));
+    doc.layers.find((l) => l.kind === 'lights').ops.push({ id: 'o-alt', x: 700, y: 560, bright: 140, dim: 280, color: '#ffd28a', cone: 360, angle: 0 });
+    doc.layers.find((l) => l.kind === 'walls').ops.push({ id: 'w-alt', kind: 'wall', points: [{ x: 560, y: 700 }, { x: 840, y: 700 }] });
+    for (const l of doc.layers) window.__cg.R.invalidate(l);
+    A.emit('layers');
+  });
+  await tool('select');
+  await p.evaluate(async () => {
+    const T = await import('/js/tools.js');
+    const doc = window.__cg.app.doc;
+    const lamp = doc.layers.find((l) => l.kind === 'lights');
+    const walls = doc.layers.find((l) => l.kind === 'walls');
+    // The lamp first, so it is the thing the old code snapped.
+    T.selectObjects([{ layer: lamp, item: lamp.ops[0] }, { layer: walls, item: walls.ops[0] }]);
+  });
+  await p.keyboard.press('Control+d'); await p.waitForTimeout(300);
+  const copy = await p.evaluate(() => window.__cg.app.doc.layers.find((l) => l.kind === 'walls').ops[1]);
+  t('a set duplicated with an off-centre lamp in the lead keeps its wall on the grid lines',
+    copy && copy.points.every((q) => q.x % 70 === 0 && q.y % 70 === 0), copy && JSON.stringify(copy.points));
+
+  // On a hex map a corner moved onto a different kind of corner is not a move
+  // of the grid onto itself, and half of a duplicated path came off it.
+  await newMap(p, { name: 'Hex Duplicates', kind: 'hex' });
+  const worst = await p.evaluate(async () => {
+    const D = await import('/js/doc.js');
+    const H = await import('/js/hex.js');
+    const A = await import('/js/app.js');
+    const T = await import('/js/tools.js');
+    const C = await import('/js/clipboard.js');
+    const doc = window.__cg.app.doc;
+    if (!doc.layers.some((l) => l.kind === 'paths')) doc.layers.push(D.makeLayer('paths'));
+    const paths = doc.layers.find((l) => l.kind === 'paths');
+    paths.ops.push({ id: 'p-hex', style: 'road', width: 6, color: '#8a6a44',
+      points: H.corners(D.gridLayer(doc), 3, 3).slice(0, 4).map((q) => ({ x: q.x, y: q.y })) });
+    A.emit('layers');
+    T.setTool('select');
+    let w = 0;
+    for (let i = 0; i < 3; i++) {
+      T.selectObjects([{ layer: paths, item: paths.ops[paths.ops.length - 1] }]);
+      C.duplicateSelection();
+    }
+    for (const op of paths.ops) for (const q of op.points) {
+      const s = D.snapPoint({ ...doc, snap: 'grid' }, q, 'corner');
+      w = Math.max(w, Math.hypot(s.x - q.x, s.y - q.y));
+    }
+    return w;
+  });
+  t('a path duplicated three times on a hex map stays on hex corners', worst < 1e-6, worst);
+}
+
+{
+  // A Move entry restored whole snapshots taken when the drag began. Ctrl+Z
+  // mid-drag could undo an edit made to the thing being dragged, and undoing
+  // the Move then put the undone edit back with no step left to remove it.
+  await newMap(p, { name: 'Edited Mid-drag', kind: 'battle', size: '40x30' });
+  await tool('light');
+  await clickAt(735, 595);
+  await tool('select');
+  await clickAt(735, 595);
+  await p.evaluate(() => {
+    const lab = [...document.querySelectorAll('#selection-props label')].find((l) => /Lit/.test(l.textContent));
+    lab.querySelector('input').click();
+  });
+  await p.waitForTimeout(200);
+  const lit = () => p.evaluate(() => window.__cg.app.doc.layers.find((l) => l.kind === 'lights').ops[0].on !== false);
+  const pre = !(await lit());
+  const a = await M(735, 595), z = await M(875, 595);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  await p.mouse.move(a.x + 30, a.y, { steps: 3 });
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(200);
+  await p.mouse.move(z.x, z.y, { steps: 3 }); await p.mouse.up(); await p.waitForTimeout(250);
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(250);
+  const st = await p.evaluate(() => {
+    const o = window.__cg.app.doc.layers.find((l) => l.kind === 'lights').ops[0];
+    return { x: o.x, on: o.on };
+  });
+  t('precondition: unticking Lit put the light out', pre);
+  t('undoing a move does not bring back an edit undone during the drag', st.on !== false && st.x === 735,
+    JSON.stringify(st));
+}
+
+{
+  // A save of a map not yet on disk wrote its new slug onto whichever map was
+  // open when the reply came back; that map's next save then overwrote the
+  // new one's folder. And two saves at once created two folders.
+  const tag = 'R' + Date.now().toString(36);
+  const made = [];
+  try {
+    await newMap(p, { name: 'Race B ' + tag, kind: 'region' });
+    const bslug = await p.evaluate(async () => (await import('/js/app.js')).saveProject({ silent: true }));
+    made.push(bslug);
+    await newMap(p, { name: 'Race A ' + tag, kind: 'region' });
+    await p.route('**/api/projects', async (route) => {
+      if (route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 1200));
+      await route.continue();
+    });
+    await p.evaluate(() => { import('/js/app.js').then((A) => { window.__raceSave = A.saveProject({ silent: true }); }); });
+    await p.waitForTimeout(150);
+    await p.evaluate(async (s) => (await import('/js/tabs.js')).openProject(s), bslug);
+    const aslug = await p.evaluate(() => window.__raceSave);
+    await p.unroute('**/api/projects');
+    made.push(aslug);
+    const open = await p.evaluate(() => ({ slug: window.__cg.app.slug, name: window.__cg.app.doc.name }));
+    t('a save still in flight when another map is opened does not rename the map opened',
+      open.slug === bslug && open.name === 'Race B ' + tag, JSON.stringify(open));
+    await p.evaluate(async () => (await import('/js/app.js')).saveProject({ silent: true }));
+    const onDisk = await p.evaluate(async (s) => (await (await fetch('/api/projects/' + encodeURIComponent(s))).json()), aslug);
+    const docA = onDisk.project || onDisk.doc || onDisk;
+    t('and saving the opened map leaves the new one\'s folder holding the new one',
+      docA && docA.name === 'Race A ' + tag, docA && docA.name);
+
+    await newMap(p, { name: 'Twice ' + tag, kind: 'region' });
+    const both = await p.evaluate(async () => {
+      const A = await import('/js/app.js');
+      return Promise.all([A.saveProject({ silent: true }), A.saveProject({ silent: true })]);
+    });
+    made.push(...both);
+    const list = await p.evaluate(async () => (await (await fetch('/api/projects')).json()).projects.map((x) => x.slug));
+    const twins = list.filter((s) => s.startsWith('Twice ' + tag));
+    t('two saves at once of a new map make one folder, not two', twins.length === 1 && both[0] === both[1],
+      JSON.stringify(twins));
+  } finally {
+    await p.unroute('**/api/projects').catch(() => {});
+    await p.evaluate(async (slugs) => {
+      for (const s of new Set(slugs)) if (s) await fetch('/api/projects/' + encodeURIComponent(s), { method: 'DELETE' });
+    }, made);
+    await newMap(p, { name: 'After the Race', kind: 'region' });
+  }
+}
+
+{
+  // Turning an extension on and then off before its import had finished left
+  // it running; two ons at once registered everything twice, and the first
+  // set could never be taken out.
+  const st = await p.evaluate(async () => {
+    const E = await import('/js/extensions.js');
+    const count = () => E.extensions.commands.filter((c) => c.extension === 'map-aging').length;
+    await E.setExtensionEnabled('map-aging', true);
+    const n0 = count();
+    await Promise.all([E.setExtensionEnabled('map-aging', true), E.setExtensionEnabled('map-aging', false)]);
+    const offAfterRace = { loaded: E.extensions.loaded.has('map-aging'), n: count() };
+    await Promise.all([E.setExtensionEnabled('map-aging', true), E.setExtensionEnabled('map-aging', true)]);
+    const twiceOn = count();
+    await E.setExtensionEnabled('map-aging', false);
+    const offAfter = count();
+    await E.setExtensionEnabled('map-aging', true);
+    return { n0, offAfterRace, twiceOn, offAfter };
+  });
+  t('an extension turned on then off at once ends up off', !st.offAfterRace.loaded && st.offAfterRace.n === 0,
+    JSON.stringify(st));
+  t('and one turned on twice at once registers its commands once, and all of them go when it is turned off',
+    st.n0 > 0 && st.twiceOn === st.n0 && st.offAfter === 0, JSON.stringify(st));
+}
+
+{
+  // Two extension folders with one id -- what copying a folder to change it
+  // gives you -- both started, and the second overwrote the record of what
+  // the first had registered, so turning it off left the first's commands in
+  // the palette for good.
+  const dup = fileURLToPath(new URL('../extensions/zz-guard-dup-aging', import.meta.url));
+  cpSync(fileURLToPath(new URL('../extensions/map-aging', import.meta.url)), dup, { recursive: true });
+  try {
+    const st = await p.evaluate(async () => {
+      const E = await import('/js/extensions.js');
+      await E.loadExtensions();
+      const copy = E.extensions.list.find((m) => m.dir === 'zz-guard-dup-aging');
+      const n = E.extensions.commands.filter((c) => c.extension === 'map-aging').length;
+      await E.setExtensionEnabled('map-aging', false);
+      const left = E.extensions.commands.filter((c) => c.extension === 'map-aging').length;
+      await E.setExtensionEnabled('map-aging', true);
+      return { error: copy && copy.error, n, left };
+    });
+    t('a second extension folder with the same id is refused with a message', !!st.error && /already uses/.test(st.error),
+      JSON.stringify(st));
+    t('and turning the id off takes every one of its commands out', st.left === 0 && st.n > 0, JSON.stringify(st));
+  } finally {
+    rmSync(dup, { recursive: true, force: true });
+    await p.evaluate(async () => (await import('/js/extensions.js')).loadExtensions());
+  }
 }
 
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));

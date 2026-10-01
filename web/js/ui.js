@@ -15,6 +15,7 @@ import * as R from './render.js';
 import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, selectedObjects, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { copySelection, duplicateSelection } from './clipboard.js';
 import { loadPrefabs, prefabStrip, saveSelectionAsPrefab } from './prefabs.js';
+import { mirrorSelection, turnSelection, turnStep } from './transform.js';
 import { $, el, modal, toast } from './util.js';
 
 /* ------------------------------------------------------------------ fields */
@@ -964,7 +965,11 @@ const OBJECT_FIELDS = {
   objects: (item) => [
     { key: 'scale', type: 'range', label: 'Size', min: 0.1, max: 4, step: 0.05,
       value: item.scale != null ? item.scale : 1, suffix: '×', commit: true },
-    { key: 'rot', type: 'range', label: 'Tilt', min: -0.8, max: 0.8, step: 0.01,
+    // The full circle, not the stamp tool's few degrees of tilt: a stamp that
+    // has been turned with its set reads as a quarter or a half here, and a
+    // narrower slider would show it pinned at the end and undo the turn when
+    // touched.
+    { key: 'rot', type: 'range', label: 'Turn', min: -3.14, max: 3.14, step: 0.01,
       value: item.rot || 0, commit: true },
     { key: 'opacity', type: 'range', label: 'Opacity', min: 0.05, max: 1, step: 0.01,
       value: item.opacity != null ? item.opacity : 1, percent: true, commit: true },
@@ -1109,6 +1114,7 @@ export function renderSelection() {
     }));
   }
   root.appendChild(setButtons());
+  root.appendChild(turnButtons());
   root.appendChild(el('p', { class: 'muted small',
     text: 'Drag it to move it. Ctrl+V pastes a copy at the pointer. Shift-click, or drag a box on empty map, to pick up more than one.' }));
 }
@@ -1127,6 +1133,28 @@ function setButtons() {
   ]);
 }
 
+/** Turning and mirroring, in a row of their own under the set buttons. The
+ *  step is named because it is not always a quarter: a hex map turns by a
+ *  sixth, which is what keeps its walls on the hex lines. */
+function turnButtons() {
+  const step = turnStep() + '\u00b0';
+  // Two pairs, so the row does not wrap one button onto a line of its own.
+  return el('div', {}, [
+    el('div', { class: 'tool-actions' }, [
+      el('button', { class: 'btn', text: 'Turn left', title: 'Shift+R: ' + step + ' anticlockwise',
+                     'data-action': 'turn-left', onclick: () => turnSelection(-1) }),
+      el('button', { class: 'btn', text: 'Turn right', title: 'R: ' + step + ' clockwise',
+                     'data-action': 'turn-right', onclick: () => turnSelection(1) }),
+    ]),
+    el('div', { class: 'tool-actions' }, [
+      el('button', { class: 'btn', text: 'Mirror', title: 'Swap left and right',
+                     'data-action': 'mirror', onclick: () => mirrorSelection('x') }),
+      el('button', { class: 'btn', text: 'Flip', title: 'Swap top and bottom',
+                     'data-action': 'flip', onclick: () => mirrorSelection('y') }),
+    ]),
+  ]);
+}
+
 /** Several things held at once: what they are, and what can be done to all of
  *  them. Their fields are not offered, because an edit to "the colour" of a
  *  wall, a lamp and a stamp has no single meaning; click one on its own to
@@ -1142,8 +1170,9 @@ function renderSetSummary(panel, root, set) {
   root.appendChild(el('p', { class: 'muted small', 'data-selection-count': String(set.length),
     text: set.length + ' things picked up: ' + parts.join(', ') + '.' }));
   root.appendChild(setButtons());
+  root.appendChild(turnButtons());
   root.appendChild(el('p', { class: 'muted small',
-    text: 'Drag any of them to move them all. Shift-click adds or removes one. To edit one of them, press Escape to put the rest down and click it.' }));
+    text: 'Drag any of them to move them all; R turns the lot. Shift-click adds or removes one. To edit one of them, press Escape to put the rest down and click it.' }));
 }
 
 function plural(noun) { return /(s|x|ch|sh)$/.test(noun) ? 'es' : 's'; }

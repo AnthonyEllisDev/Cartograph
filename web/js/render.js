@@ -871,14 +871,15 @@ export function paintLand(layer, ctx, box, dirty) {
  * the shape anyone painted, so there is no reason to replay every stroke to
  * find out what that shape was. Colour changes hit the cached alpha and cost
  * two tint passes; width changes regrow the shape but still skip the mask. */
-export function repaintLand(layer) {
+export function repaintLand(layer, reachThen = 0) {
   const coast = layer.coast || {};
   const pad = (coast.shallow ? (coast.shallowWidth || 26) : 0) + (coast.inkWidth || 0) + 8;
   // Cleared as far as the coast has ever reached on this layer, drawn as far
   // as it reaches now -- see coastReach. The box is still snapped to
   // SHELF_GRID inside paintLand, so widening it by whole grid steps moves
-  // nothing the shelf downscale depends on.
-  const reach = Math.max(pad, coastReach.get(layer.id) || 0);
+  // nothing the shelf downscale depends on. `reachThen` is for an undo that
+  // has just put back pixels drawn under an older, wider shelf.
+  const reach = Math.max(pad, coastReach.get(layer.id) || 0, reachThen);
   coastReach.set(layer.id, pad);
   const box = opsBox(layer, reach);
   if (!box) return;

@@ -14,6 +14,7 @@ import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
 import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
+import { turnSelection } from './transform.js';
 import { clamp, modal, el, toast, uid } from './util.js';
 
 const BLENDS = [
@@ -172,7 +173,12 @@ function endPaint() {
     // moved on, the land is repainted from the (restored) mask as a colour
     // change would repaint it; when it has not, the snapshot is exact and fast.
     const style = landStyle(layer);
-    const restyle = () => { if (landStyle(layer) !== style) R.repaintLand(layer); };
+    // The restored pixels reach as far as the shelf did when they were drawn,
+    // which a narrower shelf since then no longer does -- and repaintLand's
+    // memory of the old reach was lowered the moment the shelf was narrowed --
+    // so the repaint is told how far the snapshot can have painted.
+    const reachThen = pad;
+    const restyle = () => { if (landStyle(layer) !== style) R.repaintLand(layer, reachThen); };
     R.applyLandOp(layer, op);
     layer.ops.push(op);
     R.paintLand(layer, canvas.getContext('2d'), box, raw);
@@ -1495,7 +1501,7 @@ define({
   label: 'Select',
   icon: 'select',
   assetKind: null,
-  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up; its properties appear in the right rail. Shift-click adds or removes one, and dragging on empty map picks up everything inside the box. Drag any of them to move them all. Delete removes them, Ctrl+C / Ctrl+V copy and paste, Ctrl+D duplicates, Ctrl+A picks up everything and Escape puts it all down.',
+  hint: 'Click a stamp, path, region, wall, light, label or note to pick it up; its properties appear in the right rail. Shift-click adds or removes one, and dragging on empty map picks up everything inside the box. Drag any of them to move them all; R turns them, Shift+R the other way. Delete removes them, Ctrl+C / Ctrl+V copy and paste, Ctrl+D duplicates, Ctrl+A picks up everything and Escape puts it all down.',
   options: () => ([]),
   // `grabbed`/`layer` is the primary: the one the Selected panel edits and the
   // extension API's selectedObject() reports. `more` is the rest of the set.
@@ -1564,17 +1570,22 @@ define({
     // redo restores it there, and push no Move for it -- that entry undid
     // nothing and threw the redo away.
     const gone = moving.items.filter((m) => !app.doc.layers.includes(m.layer) || !m.layer.ops.includes(m.item));
-    for (const m of gone) Object.assign(m.item, JSON.parse(JSON.stringify(m.before)));
-    const changed = moving.items.filter((m) => !gone.includes(m) && JSON.stringify(m.before) !== JSON.stringify(m.item));
+    for (const m of gone) setPlace(m.item, placeOf(m.before));
+    // Where things are, and nothing else. Ctrl+Z mid-drag can also undo an
+    // edit made to the thing being dragged (Lit unticked, say); the snapshot
+    // was taken before that undo, so a Move that restored the whole item put
+    // the undone edit back, with no step left that could take it off again.
+    const changed = moving.items.filter((m) => !gone.includes(m)
+      && JSON.stringify(placeOf(m.before)) !== JSON.stringify(placeOf(m.item)));
     // Selecting is not moving. An entry per click filled the 32-slot stack
     // with steps that undid nothing and pushed the real ones off the bottom.
     if (!changed.length) return;
-    const steps = changed.map((m) => ({ layer: m.layer, item: m.item, before: m.before, after: JSON.parse(JSON.stringify(m.item)) }));
-    // Deep copies on the way back too: assigning the snapshot's own points
-    // array onto the item let the next drag rewrite a snapshot that the
-    // history was still holding.
+    const steps = changed.map((m) => ({ layer: m.layer, item: m.item, before: placeOf(m.before), after: placeOf(m.item) }));
+    // Deep copies on the way back too (setPlace copies): assigning the
+    // snapshot's own points array onto the item let the next drag rewrite a
+    // snapshot that the history was still holding.
     const put = (which) => {
-      for (const st of steps) Object.assign(st.item, JSON.parse(JSON.stringify(st[which])));
+      for (const st of steps) setPlace(st.item, st[which]);
       invalidateAll(new Set(steps.map((st) => st.layer)));
     };
     pushEntry({
@@ -1589,6 +1600,12 @@ define({
       if (!selectedObjects().length) return false;
       setSelection([]);
       return true;
+    }
+    // R turns what is held, Shift+R the other way, as in Dungeon Scrawl. Only
+    // with something held: otherwise R is still the Shape tool's letter.
+    if ((ev.key === 'r' || ev.key === 'R') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      if (!selectedObjects().length) return false;
+      return turnSelection(ev.shiftKey ? -1 : 1);
     }
     if (ev.key !== 'Delete' && ev.key !== 'Backspace') return false;
     if (!selectedObjects().length) return false;
@@ -1638,15 +1655,40 @@ function drawRing(ctx, layer, g, primary) {
     ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
     ctx.stroke();
   } else {
+    // A stamp stands on its point, so the box is above it -- above in the
+    // stamp's own frame, which a turn has rotated.
     const s = R.mapToScreen(g.x, g.y);
-    ctx.strokeRect(s.x - 14, s.y - 26, 28, 28);
+    ctx.translate(s.x, s.y);
+    if (g.rot) ctx.rotate(g.rot);
+    ctx.strokeRect(-14, -26, 28, 28);
   }
   ctx.restore();
 }
 
+/** A point in a stamp's own frame: origin at its foot, y up its height. */
+function stampLocal(item, pt) {
+  const dx = pt.x - item.x, dy = pt.y - item.y;
+  const a = -(item.rot || 0);
+  return { x: dx * Math.cos(a) - dy * Math.sin(a), y: dx * Math.sin(a) + dy * Math.cos(a) };
+}
+
+/** Where a thing is, as a deep copy: its anchor and its points, which are all
+ *  a move changes. */
+function placeOf(item) {
+  const out = {};
+  if (item.x != null) { out.x = item.x; out.y = item.y; }
+  if (item.points) out.points = item.points.map((p) => ({ ...p }));
+  return out;
+}
+
+function setPlace(item, place) {
+  if (place.x != null) { item.x = place.x; item.y = place.y; }
+  if (place.points) item.points = place.points.map((p) => ({ ...p }));
+}
+
 /** Rebuild each layer once. Walls go last, because invalidating a walls layer
  *  relights, and the light has to be cast against where the walls are now. */
-function invalidateAll(layers) {
+export function invalidateAll(layers) {
   const list = [...layers];
   for (const l of list) if (l.kind !== 'walls') R.invalidate(l);
   for (const l of list) if (l.kind === 'walls') R.invalidate(l);
@@ -1675,7 +1717,10 @@ function hitTest(pt) {
         const item = layer.ops[j];
         const img = imageNow(item.asset);
         const w = (img ? img.width : 40) * item.scale, h = (img ? img.height : 40) * item.scale;
-        if (pt.x >= item.x - w / 2 && pt.x <= item.x + w / 2 && pt.y >= item.y - h && pt.y <= item.y) {
+        // In the stamp's own frame, which a turn or a tilt has rotated: a
+        // stamp turned on its side is clicked where it is drawn.
+        const l = stampLocal(item, pt);
+        if (l.x >= -w / 2 && l.x <= w / 2 && l.y >= -h && l.y <= 0) {
           return { layer, item };
         }
       }

@@ -139,32 +139,61 @@ function thumbBlob() {
   return new Promise((resolve) => flat.toBlob(resolve, 'image/png'));
 }
 
-export async function saveProject({ silent = false } = {}) {
+/* Saves run one at a time. Two at once on a map not yet on disk -- Ctrl+S
+ * pressed twice, or Ctrl+S landing on an autosave -- both saw no slug and
+ * both created a project, so one map became two folders and the editor went
+ * on with the second. A save asked for while another is in flight waits for
+ * it, and by then the map has its slug and is written rather than created. */
+let saving = null;
+
+export function saveProject(opts) {
+  // With nothing in flight it starts there and then, so the snapshot is of the
+  // map as it is at the call, not as it is a tick later.
+  const go = () => saveOnce(opts || {});
+  const run = saving ? saving.then(go, go) : go();
+  saving = run;
+  const done = () => { if (saving === run) saving = null; };
+  run.then(done, done);
+  return run;
+}
+
+async function saveOnce({ silent = false } = {}) {
   if (!app.doc) return null;
-  app.doc.view = { x: R.view.x, y: R.view.y, zoom: R.view.zoom };
+  // The map this save is for. Another map can be opened while it is in
+  // flight, and everything after an await used to write to whatever app.doc
+  // was by then -- the new map's slug went onto the map just opened, whose
+  // next save then overwrote the new map's folder with its own contents.
+  const doc = app.doc;
+  doc.view = { x: R.view.x, y: R.view.y, zoom: R.view.zoom };
   // The payload is a snapshot. Between here and the last await there are three
   // round trips and a PNG encode, and anything painted in that time is in the
   // document but not in the file -- so clearing the flag unconditionally told
   // the user their work was saved when it was not, and autosave then skipped
   // it because it looked clean.
   const editsAtSnapshot = app.edits;
-  const payload = serialise(app.doc);
+  const payload = serialise(doc);
 
-  if (!app.slug) {
+  let slug = app.slug;
+  if (!slug) {
     const created = await api.createProject(payload);
-    app.slug = created.project.slug;
-    app.doc.slug = app.slug;
+    slug = created.project.slug;
+    doc.slug = slug;
+    if (app.doc === doc) app.slug = slug;
   } else {
-    await api.writeProject(app.slug, payload);
+    await api.writeProject(slug, payload);
   }
+  // Saved, but no longer the map on screen: the thumbnail would be a picture
+  // of the other one, and the dirty flag and the toast are about it too.
+  if (app.doc !== doc) return slug;
 
   const thumb = await thumbBlob();
-  if (thumb) await api.writeThumb(app.slug, thumb);
+  if (thumb && app.doc === doc) await api.writeThumb(slug, thumb);
+  if (app.doc !== doc) return slug;
 
   if (app.edits === editsAtSnapshot) markDirty(false);
-  emit('saved', app.slug);
-  if (!silent) toast('Saved to projects/' + app.slug, 'good');
-  return app.slug;
+  emit('saved', slug);
+  if (!silent) toast('Saved to projects/' + slug, 'good');
+  return slug;
 }
 
 /* Autosave is a deadline set by the first edit after a save, not a debounce.

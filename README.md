@@ -66,6 +66,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/dungeon.js         seeded dungeons: rooms, corridors, walls, doors, the key
   js/clipboard.js       copy, cut, paste and duplicate
   js/prefabs.js         sets saved to put down on any map
+  js/transform.js       turning and mirroring what Select holds
 assets/packs/         asset packs; drop folders in here
   starter/              generated on first launch
   user/                 anything you import
@@ -79,13 +80,14 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       60 more, for the server's guards, over raw sockets
-test/regress.mjs      95 more, for bugs that have been in here once already
+test/guards.mjs       63 more, for the server's guards, over raw sockets
+test/regress.mjs      107 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
+test/transform.mjs    43 more, for turning and mirroring a set
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -161,9 +163,10 @@ drawn any more, and every change is one step in the history like any other.
 What Select is holding can be **copied, cut, pasted and duplicated** — Ctrl+C,
 Ctrl+X, Ctrl+V and Ctrl+D, or the Duplicate and Copy buttons in the Selected
 panel. A paste lands under the pointer, or a cell on from the original when the
-pointer is off the map; a duplicate lands one cell on. Either way it snaps as
-the thing's own tool would, so a door copied off a grid line lands on a grid
-line and a lamp lands in the middle of a cell (or of a hex), and the copy is
+pointer is off the map; a duplicate lands one cell on. Either way it moves by a
+whole number of cells, so a door copied off a grid line lands on a grid line and
+a lamp copied from the middle of a cell (or of a hex) lands in the middle of
+another, and the copy is
 picked up ready to drag. It goes back onto the layer it came from, or onto the
 same kind of layer on another map — the clipboard outlives opening a different
 map, so a room's worth of furniture carries from one battle map to the next. A
@@ -198,6 +201,18 @@ with no notes layer, say) is left out with a message, as a paste leaves it out.
 Things go down at the size they were drawn: a prefab saved on a 70-px grid and
 put down on a 100-px one says so, because its walls will not sit on the new
 grid's lines.
+
+Whatever Select holds can be **turned and mirrored**: R turns it clockwise and
+Shift+R anticlockwise, and *Turn left*, *Turn right*, *Mirror* (left to right)
+and *Flip* (top to bottom) are in the Selected panel and the palette. The set
+turns as one rigid thing, so a stamp's own angle and a cone light's facing go
+round with it and a chair still faces its table; text keeps reading left to
+right. On a square grid a turn is a quarter, about a grid corner or a cell
+centre; on a hex map it is a sixth, about a hex centre — the only turns that put
+walls drawn on the lines back on the lines. A prefab comes down picked up, so it
+can be turned into place straight away. Each turn is one step in the history,
+four quarter turns land exactly where they started, and a turned wall casts its
+shadow at once. With nothing held, R is still the Shape tool.
 
 **Scatter** throws a handful of stamps down at once, thinning towards the edge
 of the brush. **Fill** floods a whole region — the sea, the land, everything —
@@ -360,6 +375,7 @@ table of colours and adding one is a few lines.
 | `Ctrl+S` `Ctrl+E` `Ctrl+N` | Save · Export · New map |
 | `Ctrl+Z` `Ctrl+Shift+Z` | Undo · Redo |
 | `Ctrl+C` `Ctrl+X` `Ctrl+V` `Ctrl+D` | Copy · Cut · Paste · Duplicate |
+| `R` `Shift+R` (holding something) | Turn what Select holds clockwise · anticlockwise |
 | Shift+click, drag on empty map | Add to what Select holds · pick up what a box encloses |
 | `Ctrl+A` `Esc` | Pick up everything · put it all down |
 | Alt (held) | Ignore grid snapping |
@@ -450,7 +466,10 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 648 assertions in all: `prefabs.mjs`
+There are narrower scripts beside it, 706 assertions in all: `transform.mjs`
+(turning and mirroring a set: walls kept on the grid and the hex lattice, a
+stamp's angle and a cone's facing turned with it, four turns home exactly, undo,
+the shadow following a turned wall, and the round trip), `prefabs.mjs`
 (saving a set, the file on disk, putting it down on another map as one step
 with its shape kept and its walls on the grid, the round trip, names shown as
 text, and the server refusing what could not be placed), `selection.mjs`

@@ -15,6 +15,7 @@ import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
 import { describeKinds, placePrefab, prefabs, saveSelectionAsPrefab } from './prefabs.js';
 import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
+import { mirrorSelection, turnSelection } from './transform.js';
 import * as R from './render.js';
 import { TOOLS, clearSelection, selectAll, setTool } from './tools.js';
 import { renderAssetPicker, renderToolOptions } from './ui.js';
@@ -47,6 +48,15 @@ const BUILT_IN = [
     detail: 'At the pointer, or a cell on from where it was copied', run: () => paste(null) },
   { id: 'duplicate', group: 'Edit', title: 'Duplicate the selection', keys: 'Ctrl+D',
     run: () => duplicateSelection() },
+  { id: 'turn-right', group: 'Edit', title: 'Turn the selection clockwise', keys: 'R',
+    detail: 'A quarter turn, or a sixth on a hex map, keeping walls on the grid',
+    run: () => turnSelection(1) },
+  { id: 'turn-left', group: 'Edit', title: 'Turn the selection anticlockwise', keys: 'Shift+R',
+    run: () => turnSelection(-1) },
+  { id: 'mirror', group: 'Edit', title: 'Mirror the selection', detail: 'Swap left and right',
+    run: () => mirrorSelection('x') },
+  { id: 'flip', group: 'Edit', title: 'Flip the selection', detail: 'Swap top and bottom',
+    run: () => mirrorSelection('y') },
   { id: 'save-prefab', group: 'Edit', title: 'Save the selection as a prefab…',
     detail: 'Keep what the Select tool is holding, to put down on any map',
     run: () => saveSelectionAsPrefab() },

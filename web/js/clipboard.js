@@ -19,7 +19,7 @@
  */
 
 import { app, emit, markDirty, scheduleAutosave } from './app.js';
-import { gridStepPx, kindOf, layerVisible, snapPoint } from './doc.js';
+import { gridStepPx, kindOf, latticePoint, layerVisible } from './doc.js';
 import { pushEntry } from './history.js';
 import * as R from './render.js';
 import { TOOLS, deleteSelection, selectObjects, selectedObjects, toolForLayer } from './tools.js';
@@ -119,25 +119,28 @@ function snapFor(kind) {
 }
 
 /** How far to move a set. One delta for all of it, so the set keeps its shape;
- *  snapped as the first thing in it whose tool snaps -- centres for things
- *  that stand in a cell, corners for things drawn along the lines -- so a door
- *  copied from a grid line lands on a grid line, and on a hex map a copy lands
- *  on the hex lattice rather than one square step off it. */
+ *  and when anything in it snaps, the delta is a whole number of cells -- the
+ *  difference of two cell centres, which carries corners onto corners and
+ *  centres onto centres on a square grid and a hex one alike. Snapping one
+ *  thing in the set instead put the rest on the lines only when that one was
+ *  already there: a light Alt-placed off centre dragged a copied wall half a
+ *  cell off the grid, and on a hex map a corner moved onto a different kind
+ *  of corner took half of a path off the lattice. */
 function offsetFor(items, kinds, to, steps) {
-  let lead = kinds.findIndex((k) => snapFor(k));
-  const snap = lead >= 0 ? snapFor(kinds[lead]) : null;
-  if (lead < 0) lead = 0;
-  const anchor = anchorOf(items[lead]);
+  const snaps = kinds.some((k) => snapFor(k)) && (app.doc.snap || 'off') !== 'off';
+  const anchor = anchorOf(items[0]);
   let want;
   if (to) {
     const c = boundsCentre(items);
-    want = { x: anchor.x + to.x - c.x, y: anchor.y + to.y - c.y };
+    want = { x: to.x - c.x, y: to.y - c.y };
   } else {
     const step = gridStepPx(app.doc) || 64;
-    want = { x: anchor.x + step * steps, y: anchor.y + step * steps };
+    want = { x: step * steps, y: step * steps };
   }
-  const snapped = snap ? snapPoint(app.doc, want, snap) : want;
-  return { dx: snapped.x - anchor.x, dy: snapped.y - anchor.y };
+  if (!snaps) return { dx: want.x, dy: want.y };
+  const from = latticePoint(app.doc, anchor);
+  const land = latticePoint(app.doc, { x: anchor.x + want.x, y: anchor.y + want.y });
+  return { dx: land.x - from.x, dy: land.y - from.y };
 }
 
 function moved(item, dx, dy, kind) {
