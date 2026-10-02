@@ -1133,6 +1133,8 @@ export const WALL_KINDS = {
 
 function renderWalls(layer, ctx) {
   const thick = layer.thickness || 7;
+  // Under the walls, so the line is drawn over the ends of the strokes.
+  renderHatching(layer, ctx);
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -1184,6 +1186,215 @@ function strokeRun(ctx, pts) {
   ctx.beginPath();
   pts.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
   ctx.stroke();
+}
+
+/* ----------------------------------------------------------------- hatching */
+
+/** The look of the old hand-drawn dungeon plan: short bundles of parallel
+ *  strokes hugging the outside of the walls, the rock beyond left bare.
+ *
+ * Which side of a wall is rock is not stored anywhere, so it is worked out.
+ * The walls are rasterised small and the gaps between them labelled as
+ * regions. Whatever touches the edge of the map is rock. From there a region
+ * on the far side of a wall is the opposite of the one it was reached from,
+ * and one on the far side of a door is the same -- a door joins floor to
+ * floor -- taking the fewest walls over any route. So a room is floor, the
+ * corridor through its door is floor, and a pocket of rock that a ring of
+ * corridors closes off is rock again, which a plain flood from the edge of
+ * the map took for one more room and left bare.
+ *
+ * A lone wall in the rock is hatched on both sides, which is what it is; a
+ * room left open to the edge of the map is rock as far as this can tell, and
+ * hatched inside.
+ *
+ * Each bundle is placed and turned from a hash of its lattice position, not
+ * from a running random sequence, so adding a wall in one corner does not
+ * reshuffle the hatching in every other. That also makes the rebuild a pure
+ * function of the layer's own ops and settings, which is invariant (a). */
+export const HATCH_DEFAULTS = { width: 36, size: 22 };
+const HATCH_CELL = 4;      // px per cell of the region grid
+
+function hatchSettings(layer) {
+  return {
+    width: !layer.hatch ? 0 : layer.hatchWidth > 0 ? layer.hatchWidth : HATCH_DEFAULTS.width,
+    size: layer.hatchSize > 0 ? layer.hatchSize : HATCH_DEFAULTS.size,
+    color: layer.hatchColor || layer.color || '#20242c',
+  };
+}
+
+/** Rock (`out`) and near a wall (`near`), one entry per HATCH_CELL square. */
+function hatchFields(layer, width) {
+  const W = view.doc.width, H = view.doc.height, s = HATCH_CELL;
+  const cw = Math.ceil(W / s), ch = Math.ceil(H / s);
+  const c = makeCanvas(cw, ch);
+  const g = c.getContext('2d');
+  g.scale(1 / s, 1 / s);
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  g.strokeStyle = '#000';
+  const runs = layer.ops.filter((o) => o.points && o.points.length >= 2);
+  // At least two and a half cells wide, so a diagonal wall has no gap at the
+  // corners of the small grid for a region to leak through.
+  const barrier = Math.max(layer.thickness || 7, s * 2.5);
+  g.lineWidth = barrier;
+  for (const o of runs) strokeRun(g, o.points);
+  const wall = g.getImageData(0, 0, cw, ch).data;
+  g.clearRect(0, 0, W, H);
+  g.lineWidth = width * 2;
+  for (const o of runs) strokeRun(g, o.points);
+  const near = g.getImageData(0, 0, cw, ch).data;
+
+  // Regions: the gaps between walls, four-connected.
+  const n = cw * ch;
+  const label = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(n);
+  let regions = 0;
+  for (let start = 0; start < n; start++) {
+    if (label[start] >= 0 || wall[start * 4 + 3]) continue;
+    let head = 0, tail = 0;
+    label[start] = regions; queue[tail++] = start;
+    while (head < tail) {
+      const i = queue[head++], x = i % cw;
+      const go = (k) => { if (label[k] < 0 && !wall[k * 4 + 3]) { label[k] = regions; queue[tail++] = k; } };
+      if (x > 0) go(i - 1);
+      if (x < cw - 1) go(i + 1);
+      if (i >= cw) go(i - cw);
+      if (i < n - cw) go(i + cw);
+    }
+    regions++;
+  }
+
+  // Which regions face each other across which run, probed a little way out
+  // from both sides of it -- past the barrier, so the probe lands in a gap.
+  const links = Array.from({ length: regions }, () => []);
+  const at = (x, y) => {
+    const cx = Math.floor(x / s), cy = Math.floor(y / s);
+    return cx < 0 || cy < 0 || cx >= cw || cy >= ch ? -1 : label[cy * cw + cx];
+  };
+  const reach = barrier / 2 + s * 1.5;
+  for (const o of runs) {
+    const cost = WALL_KINDS[o.kind] && WALL_KINDS[o.kind].portal ? 0 : 1;
+    for (let k = 0; k + 1 < o.points.length; k++) {
+      const a = o.points[k], b = o.points[k + 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 1e-6) continue;
+      const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+      for (let d = Math.min(len / 2, reach); d <= len - Math.min(len / 2, reach) + 1e-6; d += s * 2) {
+        const px = a.x + ux * d, py = a.y + uy * d;
+        const l = at(px - uy * reach, py + ux * reach), r = at(px + uy * reach, py - ux * reach);
+        if (l < 0 || r < 0 || l === r) continue;
+        links[l].push(r, cost);
+        links[r].push(l, cost);
+      }
+    }
+  }
+
+  // Fewest walls from the edge: a 0-1 walk, doors costing nothing. A region
+  // nothing reaches is rock, as an unreached cell of the map is.
+  const dist = new Int32Array(regions).fill(-1);
+  // A region can be queued once per improvement, so the deque is sized by the
+  // links rather than the regions, with room to grow at either end.
+  let pushes = regions;
+  for (const ls of links) pushes += ls.length / 2;
+  const deque = new Int32Array(pushes * 2 + 2);
+  let front = pushes + 1, back = pushes + 1;
+  const edgeRegion = (i) => { const r = label[i]; if (r >= 0 && dist[r] < 0) { dist[r] = 0; deque[back++] = r; } };
+  for (let x = 0; x < cw; x++) { edgeRegion(x); edgeRegion((ch - 1) * cw + x); }
+  for (let y = 0; y < ch; y++) { edgeRegion(y * cw); edgeRegion(y * cw + cw - 1); }
+  const done = new Uint8Array(regions);
+  while (front < back) {
+    const r = deque[front++];
+    if (done[r]) continue;
+    done[r] = 1;
+    const ls = links[r];
+    for (let k = 0; k < ls.length; k += 2) {
+      const q = ls[k], nd = dist[r] + ls[k + 1];
+      if (dist[q] >= 0 && dist[q] <= nd) continue;
+      dist[q] = nd;
+      if (ls[k + 1] === 0) deque[--front] = q; else deque[back++] = q;
+    }
+  }
+
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (label[i] >= 0 && !(dist[label[i]] & 1)) out[i] = 1;
+  // The wall's own cells on the rock side count as rock, so the strokes run
+  // right up under the line instead of stopping a few pixels short.
+  const edge = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (label[i] >= 0) continue;
+    const x = i % cw;
+    if ((x > 0 && out[i - 1]) || (x < cw - 1 && out[i + 1])
+        || (i >= cw && out[i - cw]) || (i < n - cw && out[i + cw])) edge[i] = 1;
+  }
+  return { cw, ch, out, edge, near };
+}
+
+function hatchHash(i, j) {
+  let h = Math.imul(i, 73856093) ^ Math.imul(j, 19349663) ^ 0x5bd1e995;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  return (h ^ (h >>> 12)) >>> 0;
+}
+
+function renderHatching(layer, ctx) {
+  const set = hatchSettings(layer);
+  if (!set.width) return;
+  const W = view.doc.width, H = view.doc.height, s = HATCH_CELL;
+  const f = hatchFields(layer, set.width);
+  const rock = (x, y) => {
+    const cx = Math.floor(x / s), cy = Math.floor(y / s);
+    if (cx < 0 || cy < 0 || cx >= f.cw || cy >= f.ch) return false;
+    const k = cy * f.cw + cx;
+    return f.out[k] === 1 || f.edge[k] === 1;
+  };
+  // How far a stroke can run from its middle before it leaves the rock: a
+  // bundle by a wall reaches across it, and is cut back to the wall here
+  // rather than by compositing a mask over the whole map afterwards, which
+  // cost more than drawing the strokes did.
+  const run = (x, y, dx, dy, half) => {
+    let t = 0;
+    while (t < half) {
+      const nt = Math.min(half, t + s / 2);
+      if (!rock(x + dx * nt, y + dy * nt)) break;
+      t = nt;
+    }
+    return t;
+  };
+
+  ctx.save();
+  ctx.strokeStyle = set.color;
+  ctx.lineWidth = Math.max(1, set.size * 0.065);
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  const step = set.size * 0.8;
+  const cols = Math.ceil(W / step) + 1, rows = Math.ceil(H / step) + 1;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const r = rng(hatchHash(i, j));
+      const x = (i + 0.15 + r() * 0.7) * step, y = (j + 0.15 + r() * 0.7) * step;
+      const cx = Math.floor(x / s), cy = Math.floor(y / s);
+      if (cx < 0 || cy < 0 || cx >= f.cw || cy >= f.ch) continue;
+      const k = cy * f.cw + cx;
+      // Placed by its middle, so the band ends raggedly a bundle at a time,
+      // as a pen leaves it, rather than along a ruled line.
+      if (!(f.out[k] || f.edge[k]) || !f.near[k * 4 + 3]) continue;
+      const ang = r() * Math.PI;
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      const count = 3 + Math.floor(r() * 3);
+      const gap = set.size * 0.24;
+      for (let m = 0; m < count; m++) {
+        const off = (m - (count - 1) / 2) * gap;
+        const half = set.size * (0.38 + r() * 0.16);
+        const px = x - dy * off, py = y + dx * off;
+        if (!rock(px, py)) continue;
+        const fwd = run(px, py, dx, dy, half), back = run(px, py, -dx, -dy, half);
+        if (fwd + back < 1) continue;
+        ctx.moveTo(px - dx * back, py - dy * back);
+        ctx.lineTo(px + dx * fwd, py + dy * fwd);
+      }
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* ----------------------------------------------------------------- lighting */

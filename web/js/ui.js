@@ -668,6 +668,37 @@ function renderLayerProps() {
       ? `${n} light${n === 1 ? '' : 's'}. The Light tool adds them; Select moves and deletes them.`
       : 'No lights yet. The Light tool drops them, and walls cast the shadows.' }));
   }
+  if (layer.kind === 'walls') {
+    // Unlike the panels around it, these are undoable: one entry per change,
+    // holding the one field it touched, and none for a change to nothing.
+    const hatch = (key, value, label) => {
+      const was = layer[key];
+      if (was === value) return;
+      const put = (v) => {
+        if (v === undefined) delete layer[key]; else layer[key] = v;
+        R.invalidate(layer); R.requestDraw();
+        if (activeLayer() === layer) renderLayerProps();
+      };
+      put(value);
+      pushEntry({ label, bytes: 0, undo() { put(was); }, redo() { put(value); } });
+      markDirty(); scheduleAutosave();
+    };
+    root.appendChild(el('h3', { text: 'Hatching' }));
+    root.appendChild(field({ type: 'toggle', label: 'Hatch the rock around the walls', value: !!layer.hatch },
+      (v) => hatch('hatch', v, v ? 'Hatching on' : 'Hatching off')));
+    root.appendChild(field({ type: 'range', label: 'Width', min: 8, max: 160, step: 1,
+      value: layer.hatchWidth || R.HATCH_DEFAULTS.width, suffix: 'px', commit: true },
+      (v) => hatch('hatchWidth', v, 'Hatching width')));
+    root.appendChild(field({ type: 'range', label: 'Stroke length', min: 8, max: 60, step: 1,
+      value: layer.hatchSize || R.HATCH_DEFAULTS.size, suffix: 'px', commit: true },
+      (v) => hatch('hatchSize', v, 'Hatching strokes')));
+    root.appendChild(field({ type: 'color', label: 'Ink', value: layer.hatchColor || layer.color || '#20242c',
+      commit: true }, (v) => hatch('hatchColor', v, 'Hatching ink')));
+    root.appendChild(el('p', { class: 'empty', text:
+      'Drawn on the rock side of the walls only. A room the walls close off stays clean, and so '
+      + 'does anything reached from it through a door; rock that a ring of corridor closes off is '
+      + 'hatched again. A room left open to the edge of the map counts as rock.' }));
+  }
   if (layer.kind === 'grid') {
     const isHex = layer.type === 'hex';
     // The grid is what a cell is. Change it and the scale, the measure tool and

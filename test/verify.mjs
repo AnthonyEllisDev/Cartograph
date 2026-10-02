@@ -692,12 +692,15 @@ for (const [w, h] of [[1280, 800], [1920, 1080]]) {
   });
   await page.waitForTimeout(400);
   t('a custom layer kind renders through the extension hook', await page.evaluate(() => {
-    const d = window.__cg.R.view.flat.getContext('2d').getImageData(400, 400, 1, 1).data;
+    const d = window.__cg.R.view.flat.getContext('2d').getImageData(374, 400, 1, 1).data;
     // the disc reads red against blue-green sea; the paper layer above it
-    // darkens everything, so test the hue rather than an absolute brightness
+    // darkens everything, so test the hue rather than an absolute brightness.
+    // Read beside the centre, not on it: the token's letter is drawn there,
+    // and where the fallback serif puts its stroke depends on the fonts the
+    // machine has, so the centre pixel was sometimes white glyph.
     return d[0] > 100 && d[0] > d[1] * 1.5 && d[0] > d[2] * 1.5;
   }), await page.evaluate(() => {
-    const d = window.__cg.R.view.flat.getContext('2d').getImageData(400, 400, 1, 1).data;
+    const d = window.__cg.R.view.flat.getContext('2d').getImageData(374, 400, 1, 1).data;
     return [d[0], d[1], d[2]].join(',');
   }));
 

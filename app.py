@@ -144,6 +144,13 @@ def main():
         print("  ! port %s is busy (%s) — picking a free one" % (wanted, exc))
         httpd, port = serve(ctx, args.host, 0)
         transient.setdefault("port", config.get("port", ABSENT))
+    except (OverflowError, TypeError, ValueError):
+        # bind() raises these, not OSError, for a port that is not a number
+        # from 0 to 65535 -- "7870" in quotes in a hand-edited config.json, or
+        # --port 70000 -- and the program stopped with a traceback.
+        print("  ! %r is not a port number -- picking a free one" % (wanted,))
+        httpd, port = serve(ctx, args.host, 0)
+        transient.setdefault("port", config.get("port", ABSENT))
     config["port"] = port
     save_config(config, transient)
 

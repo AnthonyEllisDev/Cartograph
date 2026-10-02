@@ -87,7 +87,8 @@ test/dungeon.mjs      34 more, for seeded dungeons
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
-test/transform.mjs    43 more, for turning and mirroring a set
+test/transform.mjs    52 more, for turning and mirroring a set
+test/hatch.mjs        27 more, for hatching the rock around the walls
 docs/DAILY-LOG.md     what changed, day by day
 EXTENSIONS.md         how to write your own extension
 ASSETS.md             how to add your own art
@@ -246,8 +247,9 @@ secret. What it writes is ordinary map, not a picture:
 - the walls, doors and secret doors go on the **Walls** layer as walls, so they
   cast shadows, go to a virtual tabletop as sight lines and doors, and can be
   selected and changed one at a time like any wall you drew;
-- the floor goes on the **Terrain** paint layer in the texture you pick, with
-  the rock around it shaded, so painting over it works as it always has;
+- the floor goes on the **Terrain** paint layer in the texture you pick, so
+  painting over it works as it always has, and the rock around it is shaded,
+  hatched along the walls (see below) or left plain, as *Rock* says;
 - and, if you like, every room gets a numbered **note** — *Entrance* first,
   then the rooms in the order a party would meet them, each with its size —
   which is the key the export can already set beside the map.
@@ -258,6 +260,23 @@ notes, but not notes of your own — and one Ctrl+Z takes the whole thing away.
 A secret door is only ever a second way into somewhere: a room whose only door
 is hidden is a room nobody finds. Dungeons are laid out on square grids; a hex
 map is told so.
+
+**Hatching.** Select the Walls layer and tick *Hatch the rock around the walls*
+for the look of an old hand-drawn plan: short bundles of pen strokes hugging the
+rock side of every wall, the rock beyond left bare. *Width* is how far the band
+reaches from the wall, *Stroke length* the size of the bundles, and *Ink* their
+colour; each change is one undo step. Nobody has to say which side of a wall is
+rock — it is worked out from the walls themselves, the way you would read the
+plan: whatever touches the edge of the map is rock, a room closed off by walls
+is floor, a corridor through its door is floor too, and a pocket of rock that a
+ring of corridor closes off is rock again. So it works for walls you draw by
+hand as much as for a generated dungeon, and it follows every wall you add,
+move or delete. A room left open to the edge of the map counts as rock and is
+hatched inside; close it with a wall or a door. The strokes are placed from
+their position on the map, not drawn at random each time, so a wall added in
+one corner leaves the hatching everywhere else exactly as it was, and the map
+reloads exactly as it was saved. Generating a dungeon with *Rock: Hatched along
+the walls* turns it on as part of the same step.
 
 ### Lighting for battle maps
 
@@ -466,7 +485,11 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 706 assertions in all: `transform.mjs`
+There are narrower scripts beside it, 742 assertions in all: `hatch.mjs`
+(hatching: a closed room clean and the rock round it hatched, a door joining
+floor to floor, a pocket of rock inside a ring of corridor, the panel's undo
+steps, stability as walls are added, the dungeon's Rock setting and the round
+trip), `transform.mjs`
 (turning and mirroring a set: walls kept on the grid and the hex lattice, a
 stamp's angle and a cone's facing turned with it, four turns home exactly, undo,
 the shadow following a turned wall, and the round trip), `prefabs.mjs`

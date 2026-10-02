@@ -1604,6 +1604,9 @@ define({
     // R turns what is held, Shift+R the other way, as in Dungeon Scrawl. Only
     // with something held: otherwise R is still the Shape tool's letter.
     if ((ev.key === 'r' || ev.key === 'R') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      // Mid-drag it does nothing, but it is still eaten: falling through would
+      // pick up the Shape tool with the set in the air.
+      if (this.state.moving) return true;
       if (!selectedObjects().length) return false;
       return turnSelection(ev.shiftKey ? -1 : 1);
     }

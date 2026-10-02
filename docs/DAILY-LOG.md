@@ -5,6 +5,188 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-02 — hatching the rock, and five things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 80
+tracked source files (the two screenshots were not compared), so this was a
+feature day.
+
+**Baseline: one red check, not a regression.** 705 of 706 passed, plus
+`battle`. The one failure, `verify.mjs`'s *a custom layer kind renders through
+the extension hook*, failed the same way on a rerun, so it was looked at rather
+than rerun again. The check reads the pixel at the token's exact centre, which
+is where the token's letter is drawn. Probed on the running program, the centre
+read 164,119,114 (white glyph blended into the red), while 26 px to the left
+read 181,94,94, plainly the disc. Where the fallback serif puts its stroke
+depends on the fonts the machine has, so this check has been passing by luck of
+the font. It now reads beside the centre. The program was not changed for it.
+
+**Review.** Two readers in parallel, reading only, while the baseline ran: one
+on the renderer, lighting, `transform.js` (new yesterday), the clipboard and
+prefabs, the other on the server and front-end state. `node --check` passed on
+every module, and the non-ASCII scan found nothing outside comments and
+strings. Both readers found the first item below independently. Five were
+reproduced and fixed, each with a check that fails on a pristine clone:
+
+- *R pressed in the middle of a Select drag half-turned the set.* The drag
+  writes every position back from its pointer-down snapshot on the next move,
+  which undid the turn's positions but not a cone's `angle` or a stamp's `rot`.
+  The Turn entry's "before" was a mid-drag copy, so undoing both steps left the
+  set where the drag had been, not where it began. R is now eaten and ignored
+  while a drag is in progress, and `transformSet` refuses one as well (for the
+  palette and extensions).
+- *Turning a lone round lamp, a pin or a straight label pushed an undo entry
+  that changed nothing.* `pivotFor` turns a lone point-like thing about itself.
+  The entry still took one of 32 slots and threw the redo stack away. There is
+  now no entry when nothing moved.
+- *A cone aimed by dragging lost precision on its first turn.* `angleDeg`
+  rounded every angle to four places, so 22.126334809373287 came back from R
+  then Shift+R as 22.1263. Now only an angle a hair from a whole degree is put
+  on it; the round trip is good to 1e-9 (adding and taking away 90 can move the
+  last bit of a double).
+- *On Half snapping, a hex edge's midpoint drifted off the lattice when turned.*
+  `settle` tried only corners and centres, so a sixth turn left a midpoint
+  ~5e-7 px off the point the Wall tool snaps to. With Half snapping on, it now
+  also tries `snapPoint`'s half lattice.
+- *A bad port stopped the program starting.* `bind()` raises `OverflowError`
+  for 70000 and `TypeError` for `"7870"` in quotes in a hand-edited
+  `config.json`. Neither is an `OSError`, which is all `app.py` caught.
+  Reproduced with `--port 70000`. It now says so and picks a free port.
+
+Fixed by reading and not covered by a check: `transform.js` reused the cached
+pivot after the grid or the snapping changed between two turns. The lattice is
+now part of the cache key.
+
+Written up, not changed:
+
+- An extension whose manifest id is not slug-shaped (`@me/aging`) loads, but it
+  cannot be switched off. The toggle route runs the id through `slug()`, which
+  refuses it with a 400. This sits next to the known "enabled keyed on manifest
+  id" item.
+- The Extensions tab's Reload bypasses yesterday's `toggling` queue, so a
+  Reload clicked during a toggle's import could still register an extension
+  twice.
+- Two prefab files differing only in case (`Hall.json`, `Hall.JSON`) share one
+  slug on a case-sensitive disk.
+- Deleting a prefab that is a symlink removes its target, because `under()`
+  resolves links.
+- `deletePrefab` returns true after a failed delete. The user still sees the
+  toast.
+- The "Autosaved" toast fires even when the save stood down because another
+  map was opened mid-save.
+
+**The feature: hatching the rock around the walls.** This is the old
+hand-drawn dungeon look: short bundles of pen strokes hugging the rock side of
+every wall, with the rock beyond left bare. It is the signature style of Dyson
+Logos, of Dungeon Scrawl and of Watabou's one-page dungeons. Campaign
+Cartographer users build it by hand. Cartograph's only options were the
+dungeon generator's flat dark shade or nothing.
+
+It passed the three tests:
+- *Not already there.* There was no hatching anywhere in the code.
+- *Within the founding constraints.* It is arithmetic and canvas strokes.
+- *Fits what this is.* It is a style for one person's battle maps.
+
+Rejected today:
+- GM/player export in one go. Smaller, and it was weighed yesterday.
+- Editing a set's fields.
+- Making `registerExporter` work.
+- Print tiling and elevation.
+
+How it works:
+
+- **It belongs to the walls layer, not to an op.** It has to follow every wall
+  that is drawn, moved, turned, pasted or deleted, and every one of those routes
+  already ends in `R.invalidate(walls)`. `renderWalls` draws it first, under the
+  lines, from `hatch`, `hatchWidth`, `hatchSize` and `hatchColor` on the layer.
+  All four are read with defaults, so old maps are unchanged.
+- **Which side is rock is worked out from the walls.** They are rasterised at
+  4 px a cell, and the gaps are labelled as regions. Whatever touches the frame
+  is rock. Otherwise a region's class is the parity of the fewest walls between
+  it and the frame, found by a 0-1 walk where a door (any `portal` kind) costs
+  nothing, because a door joins floor to floor.
+  - The first version flooded from the frame and called everything unreached a
+    room. That left every pocket of rock inside a ring of corridors bare, which
+    was obvious in a screenshot of a generated dungeon and invisible in the
+    source.
+  - A lone wall in open rock is hatched on both sides.
+  - A room open to the frame counts as rock. The panel says so.
+- **Each bundle is placed and turned from a hash of its lattice position**, not
+  from a running random sequence. A wall added in one corner leaves the
+  hatching elsewhere bit-identical (checked), and the rebuild is a pure
+  function of the layer, which is invariant (a).
+- A bundle is placed by its middle, so the band ends raggedly a bundle at a
+  time. Each stroke is then cut back where it leaves the rock by marching along
+  it on the region grid.
+  - The first version clipped with a full-map `destination-in` mask instead.
+    That cost 45 ms of a ~200 ms rebuild on a 2800 x 2100 dungeon.
+  - It now takes 50-80 ms in this container (software-rendered) against 2 ms
+    with hatching off. Nothing feeds `applyStroke`, so no box of the dangerous
+    kind was touched.
+- **Panel:** the Walls layer has a properties section for the first time: a
+  toggle, *Width*, *Stroke length* and *Ink*. Every slider and colour is
+  `commit: true`. Unlike the layer panels around it, these are undoable, one
+  entry per change and none for a change to nothing. That makes them a small
+  model for the known "layer edits are not undoable" item.
+- **Dungeon generator:** *Shade the rock around it* became *Rock: Shaded /
+  Hatched along the walls / Left plain*.
+  - `normalise` still honours an old `shade: false`.
+  - Hatched writes no shade op and sets `walls.hatch`, inside `commitDungeon`'s
+    one step. Undo puts back the old value, or the absence of one.
+  - A dungeon generated with the rock shaded turns off a previous dungeon's
+    hatching, but never adds `hatch: false` to a map that had none.
+  - The dialog's plan shows the choice.
+- Extension API: unchanged apart from `HATCH_DEFAULTS`, which `api.render`
+  exposes automatically. `API_VERSION` stays 1.
+
+What is left, for a later day:
+- Hatching the walls of every walls layer together. Each layer works out its
+  own rooms today, as each layer must redraw from its own ops.
+- A hand-inked rough edge on the walls themselves.
+- A flagstone floor texture to go with it.
+
+**Tests.** There is a new suite, `test/hatch.mjs` (27). It throws on a pristine
+clone, which has no hatching control. It checks:
+- a closed room left clean and the rock round it hatched;
+- hatching stopping short of rock far from walls;
+- two rooms joined by a door both clean;
+- a pocket of rock inside a ring of corridor hatched, and the ring left clean;
+- a wall added far away leaving another corner bit-identical;
+- a lone wall hatched both sides;
+- Width widening the band, as one undo step that undo and redo put back
+  exactly;
+- no entry for setting a value to itself;
+- the round trip pixel-identical;
+- a rebuild under 300 ms (fastest of four);
+- the dungeon dialog's *Hatched* turning it on in one step that undo takes off
+  (key and all), and *Shaded* turning it off again.
+
+`transform.mjs` went from 43 to 52 checks:
+- six fail on a pristine clone: the half-lattice midpoint, R mid-drag (three:
+  no half-turn, one Move entry not two, undo back to where the drag began), the
+  round lamp's entry and the dragged cone's angle;
+- two are preconditions, kept deliberately: the path really is on edge
+  midpoints, and the round lamp really is the only thing held;
+- one, *the Select tool is still in hand*, passes on a pristine clone and is
+  kept because it guards today's choice to eat R mid-drag rather than let it
+  fall through to the Shape tool.
+
+The `verify.mjs` change is described above. The `app.py` port fix was checked
+by hand, `--port 70000` against a copy, since no suite starts the program.
+
+Looked at in screenshots at 1440 x 900: a 17-room generated dungeon with
+hatched rock. The rooms and corridors are clean, every rock pocket between the
+loops is hatched, and the bundles meet the walls under the line.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 16 ext,
+16 theme, 63 guards, 107 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 39 clipboard, 43 selection, 41 prefabs, 52 transform, 27 hatch --
+742 checks, all passing, plus `battle`, over two full back-to-back rounds on the
+finished tree, with `CG_CHROME` pointed at
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome` as before.
+
+---
+
 ## 2026-10-01 — turning a set round, and eight things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 80

@@ -61,11 +61,21 @@ export const DUNGEON_DEFAULTS = {
   doors: 'most',
   secret: true,            // hide a few of the doors
   numbers: true,           // a numbered note in every room
-  shade: true,             // darken the rock around the dungeon
+  rock: 'shaded',          // 'shaded' | 'hatched' | 'plain' -- see ROCK
   tex: 'starter/parchment',
 };
 
 const SECRET_SHARE = 0.12;
+
+/* What the rock around the dungeon looks like. Shaded is a flat dark op on the
+   paint layer; hatched is the walls layer's own hatching, which follows the
+   walls wherever they are edited afterwards, so it is a setting on that layer
+   rather than another op. */
+const ROCK = {
+  shaded:  { label: 'Shaded' },
+  hatched: { label: 'Hatched along the walls' },
+  plain:   { label: 'Left plain' },
+};
 const SHADE = { color: '#15120f', opacity: 0.55 };
 
 /** A fresh seed that a person can read back and type in again. The land
@@ -89,7 +99,11 @@ export function normalise(params) {
   if (!DOOR_SHARES[p.doors]) p.doors = DUNGEON_DEFAULTS.doors;
   p.secret = !!p.secret;
   p.numbers = !!p.numbers;
-  p.shade = !!p.shade;
+  // `shade` was a toggle before `rock` existed; settings remembered from then
+  // still mean what they meant.
+  const given = params || {};
+  p.rock = ROCK[given.rock] ? given.rock : given.shade === false ? 'plain' : DUNGEON_DEFAULTS.rock;
+  p.shade = p.rock === 'shaded';
   p.tex = typeof p.tex === 'string' && p.tex ? p.tex : DUNGEON_DEFAULTS.tex;
   return p;
 }
@@ -449,7 +463,7 @@ export function generateDungeon(params, doc) {
   } : null;
 
   const notes = p.numbers ? roomNotes(lay, doc, f, px) : [];
-  return { floor, shade, walls, notes, rooms: lay.rooms.length, params: p };
+  return { floor, shade, walls, notes, hatch: p.rock === 'hatched', rooms: lay.rooms.length, params: p };
 }
 
 /** A note in every room, numbered from the way in.
@@ -544,6 +558,11 @@ export function commitDungeon(result, keepWalls) {
   walls.ops = (keepWalls ? walls.ops : []).concat(result.walls);
   if (notesLayer) notesLayer.ops = notesLayer.ops.filter((n) => n.gen !== 'dungeon').concat(result.notes);
   const after = new Map(touched.map((l) => [l, l.ops.slice()]));
+  // The rock choice is the generator's, so it sets hatching either way; a
+  // second dungeon with the rock shaded does not keep the first one's hatching.
+  // A map that never had hatching does not gain a `hatch: false` either.
+  const hatchBefore = walls.hatch;
+  const hatchAfter = result.hatch ? true : hatchBefore === undefined ? undefined : false;
 
   // A layer the step added and its undo took away keeps its canvases here,
   // and gets the same ones back on redo: a paint entry made on it afterwards
@@ -567,6 +586,8 @@ export function commitDungeon(result, keepWalls) {
       doc.layers = doc.layers.filter((l) => !added.includes(l));
     }
     for (const l of touched) if (doc.layers.includes(l)) l.ops = ops.get(l).slice();
+    const h = present ? hatchAfter : hatchBefore;
+    if (h === undefined) delete walls.hatch; else walls.hatch = h;
     // Walls last: invalidate on a walls layer relights, and the light has to
     // be cast against the walls that are there now.
     for (const l of touched) if (doc.layers.includes(l) && l !== walls) R.invalidate(l);
@@ -603,9 +624,30 @@ function drawPreview(canvas, params) {
   const lay = layout(params, f.cols, f.rows);
   const s = Math.min(canvas.width / (f.cols * f.cell + f.ox), canvas.height / (f.rows * f.cell + f.oy)) * f.cell;
   const x0 = f.ox / f.cell * s, y0 = f.oy / f.cell * s;
+  if (params.rock !== 'shaded') {
+    ctx.fillStyle = '#8c8475';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  const open = (x, y) => x >= 0 && y >= 0 && x < f.cols && y < f.rows && lay.open[y * f.cols + x];
+  if (params.rock === 'hatched') {
+    // A diagonal stroke in every rock cell beside the floor: the plan is too
+    // small to show the bundles themselves, only where they will go.
+    ctx.strokeStyle = '#2a2622';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let y = 0; y < f.rows; y++) for (let x = 0; x < f.cols; x++) {
+      if (open(x, y)) continue;
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (open(x + dx, y + dy)) { near = true; break; }
+      if (!near) continue;
+      ctx.moveTo(x0 + x * s, y0 + (y + 1) * s);
+      ctx.lineTo(x0 + (x + 1) * s, y0 + y * s);
+    }
+    ctx.stroke();
+  }
   ctx.fillStyle = '#d9cfb8';
   for (let y = 0; y < f.rows; y++) for (let x = 0; x < f.cols; x++) {
-    if (lay.open[y * f.cols + x]) ctx.fillRect(x0 + x * s, y0 + y * s, Math.ceil(s), Math.ceil(s));
+    if (open(x, y)) ctx.fillRect(x0 + x * s, y0 + y * s, Math.ceil(s), Math.ceil(s));
   }
   const ink = { wall: '#1b1a18', door: '#a8763c', secret: '#6a4aa0' };
   ctx.lineCap = 'square';
@@ -670,7 +712,8 @@ export async function dungeonDialog() {
             options: Object.entries(DOOR_SHARES).map(([id, d]) => [id, d.label]) }, set('doors')),
     field({ type: 'toggle', label: 'Hide a few doors on the loops', value: p.secret }, set('secret')),
     field({ type: 'select', label: 'Floor', value: p.tex, options: textures }, set('tex')),
-    field({ type: 'toggle', label: 'Shade the rock around it', value: p.shade }, set('shade')),
+    field({ type: 'select', label: 'Rock', value: p.rock,
+            options: Object.entries(ROCK).map(([id, r]) => [id, r.label]) }, set('rock')),
     field({ type: 'toggle', label: 'Number the rooms with notes', value: p.numbers }, set('numbers')),
     walls && walls.ops.length
       ? field({ type: 'select', label: 'Walls already drawn', value: 'replace',

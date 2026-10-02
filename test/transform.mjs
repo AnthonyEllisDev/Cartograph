@@ -328,6 +328,106 @@ await p.click('#selection-props [data-action="flip"]');
 await p.waitForTimeout(260);
 t('and so does a flipped one', (await offCorner()) < 1e-6);
 
+/* A hex edge's midpoint, which Half snapping offers, comes round onto another
+ * one exactly. Only corners and centres were tried, so a sixth turn left it
+ * 1.4e-6 px off the point the Wall tool snaps to. */
+await p.evaluate(async () => {
+  const D = await import('/js/doc.js');
+  const H = await import('/js/hex.js');
+  const doc = window.__cg.app.doc;
+  doc.snap = 'half';
+  const c = H.corners(D.gridLayer(doc), 6, 6);
+  const mid = (a, b2) => ({ x: (a.x + b2.x) / 2, y: (a.y + b2.y) / 2 });
+  const paths = doc.layers.find((l) => l.kind === 'paths');
+  paths.ops = [{ id: 'p-mid', style: 'road', width: 6, color: '#8a6a44',
+    points: [mid(c[0], c[1]), mid(c[2], c[3]), mid(c[3], c[4])] }];
+  window.__cg.R.invalidate(paths);
+});
+const offHalf = () => p.evaluate(async () => {
+  const D = await import('/js/doc.js');
+  const doc = window.__cg.app.doc;
+  let worst = 0;
+  for (const q of doc.layers.find((l) => l.kind === 'paths').ops[0].points) {
+    const s = D.snapPoint(doc, q, 'corner');
+    worst = Math.max(worst, Math.hypot(s.x - q.x, s.y - q.y));
+  }
+  return worst;
+});
+t('precondition: a path through three hex edge midpoints', (await offHalf()) === 0, await offHalf());
+await press('Escape');
+await press('Control+a');
+await press('r');
+t('a sixth turn on Half snapping lands edge midpoints exactly on edge midpoints',
+  (await offHalf()) === 0, await offHalf());
+
+/* ------------------------------------------- what the 2026-10-02 review found */
+
+await newMap(p, { name: 'Turning Again', kind: 'battle', size: '40x30' });
+await p.evaluate(() => {
+  const doc = window.__cg.app.doc;
+  const walls = doc.layers.find((l) => l.kind === 'walls');
+  const lights = doc.layers.find((l) => l.kind === 'lights');
+  walls.ops.push({ id: 'w-a', kind: 'wall', points: [{ x: 420, y: 420 }, { x: 840, y: 420 }] });
+  lights.ops.push({ id: 'l-cone', x: 595, y: 595, bright: 140, dim: 280, color: '#ffd28a', cone: 90, angle: 0 });
+  lights.ops.push({ id: 'l-round', x: 1505, y: 1505, bright: 140, dim: 280, color: '#ffd28a', cone: 360, angle: 0 });
+  window.__cg.R.invalidate(walls); window.__cg.R.invalidate(lights);
+});
+await tool('select');
+
+// R in the middle of a drag: the drag wrote every position back from the
+// snapshot it took at pointer-down, which undid the turn's positions and kept
+// its angles, and the Turn entry's "before" was a copy from mid-drag.
+await click(1505, 1505);
+await press('Escape');
+await press('Control+a');
+const dragStart = await all();
+const rN0 = await past();
+const ga = await M(595, 595), gz = await M(805, 735);
+await p.mouse.move(ga.x, ga.y);
+await p.mouse.down();
+await p.mouse.move((ga.x + gz.x) / 2, (ga.y + gz.y) / 2, { steps: 4 });
+await p.keyboard.press('r');
+await p.waitForTimeout(200);
+await p.mouse.move(gz.x, gz.y, { steps: 4 });
+await p.mouse.up();
+await p.waitForTimeout(300);
+const [rCone1] = (await ops('lights')).filter((l) => l.id === 'l-cone');
+t('R pressed mid-drag does not half-turn the set', rCone1.angle === 0, 'cone faces ' + rCone1.angle);
+t('and leaves one Move entry, not a Turn as well', (await past()) === rN0 + 1 && (await lastLabel()) === 'Move',
+  ((await past()) - rN0) + ' ' + (await lastLabel()));
+t('and the Select tool is still in hand', await p.evaluate(async () =>
+  (await import('/js/tools.js')).currentTool().id === 'select'));
+await p.evaluate(async () => (await import('/js/history.js')).undo());
+await p.waitForTimeout(300);
+t('undoing it goes back to where the drag began', (await all()) === dragStart);
+
+// A lone round lamp turned about itself changes nothing, and must not cost an
+// undo slot or the redo stack.
+await press('Escape');
+await click(1505, 1505);
+t('precondition: the round lamp alone is held', JSON.stringify(await held()) === '["lights:l-round"]',
+  JSON.stringify(await held()));
+const rN1 = await past();
+await press('r');
+t('turning a round lamp in place pushes no entry', (await past()) === rN1, (await past()) - rN1);
+
+// A cone rAimed by dragging has a full-precision angle; R then Shift+R must give
+// back that number, not one rounded to four places.
+const rAimed = 22.126334809373287;
+await p.evaluate((ang) => {
+  const lights = window.__cg.app.doc.layers.find((l) => l.kind === 'lights');
+  lights.ops.find((l) => l.id === 'l-cone').angle = ang;
+  window.__cg.R.invalidate(lights);
+}, rAimed);
+await press('Escape');
+await click(595, 595);
+await press('r');
+await press('Shift+R');
+const [rCone2] = (await ops('lights')).filter((l) => l.id === 'l-cone');
+// Within a billionth of a degree: adding and taking away 90 can move the
+// last bit of a double, which nothing will ever see; four places could be seen.
+t('a dragged cone turned there and back keeps its angle', close(rCone2.angle, rAimed, 1e-9), rCone2.angle);
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 /* ------------------------------------------------------------------ report */

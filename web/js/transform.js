@@ -26,9 +26,9 @@
  */
 
 import { app, emit, markDirty, scheduleAutosave } from './app.js';
-import { gridLayer, latticePoint } from './doc.js';
+import { gridLayer, latticePoint, snapPoint } from './doc.js';
 import { pushEntry } from './history.js';
-import { invalidateAll, selectedObjects } from './tools.js';
+import { TOOLS, invalidateAll, selectedObjects } from './tools.js';
 import { toast } from './util.js';
 
 /** How far one turn goes on this map, in degrees. */
@@ -77,14 +77,25 @@ let last = null;
 function transformSet(label, how) {
   const set = selectedObjects();
   if (!set.length) { toast('Pick something up with the Select tool first'); return false; }
+  // Mid-drag the Select tool is about to write every position back from the
+  // snapshot it took when the button went down, which would undo the turn's
+  // positions and keep its stamp angles: half a turn, and an undo that went
+  // back to the middle of the drag instead of the start.
+  if (TOOLS.select && TOOLS.select.state.moving) return false;
   const items = set.map((s) => s.item);
+  // The lattice is part of what the pivot was chosen against: change the grid
+  // or the snapping between two turns and the old pivot is no longer on it.
+  const state = JSON.stringify(items) + '|' + latticeKey(app.doc);
   const same = last && last.items.length === items.length && last.items.every((it, i) => it === items[i])
-    && last.doc === app.doc && last.state === JSON.stringify(items);
+    && last.doc === app.doc && last.state === state;
   const pivot = same ? last.pivot : pivotFor(items);
   const steps = set.map((s) => ({ layer: s.layer, item: s.item, before: copy(s.item) }));
   for (const st of steps) apply(st.layer, st.item, pivot, how);
   for (const st of steps) st.after = copy(st.item);
-  last = { items, doc: app.doc, pivot, state: JSON.stringify(items) };
+  last = { items, doc: app.doc, pivot, state: JSON.stringify(items) + '|' + latticeKey(app.doc) };
+  // A lone round lamp, a pin or a straight label turned about itself does not
+  // move: no entry, which at 32 slots would push a real step off the bottom.
+  if (steps.every((st) => JSON.stringify(st.before) === JSON.stringify(st.after))) return true;
   const layers = new Set(steps.map((st) => st.layer));
   // Deep copies both ways, and keys the snapshot lacks taken off: a stamp
   // that had no `flip` before a mirror must not keep one after the undo.
@@ -103,6 +114,11 @@ function transformSet(label, how) {
   markDirty();
   scheduleAutosave();
   return true;
+}
+
+function latticeKey(doc) {
+  const g = gridLayer(doc);
+  return [doc.snap || 'off', g ? [g.type, g.size, g.orientation, g.offsetX || 0, g.offsetY || 0].join(',') : ''].join('/');
 }
 
 function apply(layer, item, pivot, how) {
@@ -155,8 +171,11 @@ function clean(v) { return Math.abs(v) < 1e-12 ? 0 : v; }
 function settle(p) {
   const doc = app.doc;
   if ((doc.snap || 'off') !== 'off') {
-    for (const prefer of ['corner', 'centre']) {
-      const q = latticePoint(doc, p, prefer);
+    const near = ['corner', 'centre'].map((prefer) => latticePoint(doc, p, prefer));
+    // Half snapping adds points between them -- a hex edge's midpoint, half a
+    // square -- which a turn about a lattice point carries onto one another.
+    if (doc.snap === 'half') near.push(snapPoint(doc, p, 'corner'));
+    for (const q of near) {
       if (Math.hypot(q.x - p.x, q.y - p.y) < 0.01) return { x: q.x, y: q.y };
     }
   }
@@ -182,7 +201,11 @@ function angleDeg(v) {
   let a = v % 360;
   if (a <= -180) a += 360;
   if (a > 180) a -= 360;
-  return Math.round(a * 1e4) / 1e4;
+  // Only a hair from a whole degree is put on it. Rounding every angle to four
+  // places changed a lamp aimed by dragging the first time it was turned, so
+  // R then Shift+R did not give back the number it started from.
+  const k = Math.round(a);
+  return Math.abs(a - k) < 1e-9 ? k : a;
 }
 
 function copy(v) { return JSON.parse(JSON.stringify(v)); }
