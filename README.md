@@ -341,6 +341,35 @@ the grid or the paper.
   layers — yours and theirs, say — each count from 1 and get their own heading
   in the key.
 
+### Printing at scale
+
+A battle map is still most often used on a table, under miniatures, and a
+miniature wants a one-inch square. **Print** in the top bar (Ctrl+P, or *Print
+at scale…* in the palette) writes a PDF that puts the map on paper at that
+size, across as many sheets as it takes:
+
+- **One square prints the size you choose** — an inch, 25 mm, 30 mm, 20 mm or
+  half an inch. On a hex map it is one hex measured across the flats, the way
+  hex mats are sold. A region map prints its grid cell at that size.
+- **A4, US Letter, A3 or Tabloid**, portrait or landscape, or whichever of the
+  two takes fewer sheets. The dialog shows the sheets over a picture of the map
+  and says how many there are and how big the whole thing comes out.
+- **Each sheet carries a strip of overlap** (none, 5, 10 or 15 mm) printed on
+  both neighbours. Trim a sheet at the edge of its picture on the left and at
+  the top, where the corner marks are, and lay it over its neighbours with
+  that edge on their dashed line; the strip underneath takes the glue.
+- **Every sheet is labelled** like a spreadsheet — A1, B1, A2 — with the sheets
+  it goes beside, and has a **scale bar** at its foot to check with a ruler
+  before cutting. Print at 100% (*Actual size*); a printer set to *Fit to page*
+  shrinks everything, and the bar is how you find out.
+- **An optional first page** shows the whole map with the sheets drawn over it.
+
+The PDF goes into `exports/` beside the PNGs, and a copy downloads. Quality
+runs from 100 to 300 dpi; 150 is plenty for a battle map. The grid, the
+lighting and the note pins can each be left off, as on export. A print of more
+than 200 sheets is refused — that is a poster, and wants a print shop and a
+PNG. Printing does not touch the map and is not a step in the history.
+
 ### Working at scale
 
 **Layer groups** are folders. Add one from the **+** in the Layers panel and
@@ -485,9 +514,13 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 742 assertions in all: `hatch.mjs`
+There are narrower scripts beside it, 777 assertions in all: `print.mjs`
+(printing at scale: the sheets covering the map with exactly the overlap
+between them, a square printing exactly its size on A4, Letter and a hex map,
+the PDF's cross-references, a piece of the map matching the whole, the map
+and its history left alone, Ctrl+P and the file in `exports/`), `hatch.mjs`
 (hatching: a closed room clean and the rock round it hatched, a door joining
-floor to floor, a pocket of rock inside a ring of corridor, the panel's undo
+floor to floor, a front door from the rock, a pocket of rock inside a ring of corridor, the panel's undo
 steps, stability as walls are added, the dungeon's Rock setting and the round
 trip), `transform.mjs`
 (turning and mirroring a set: walls kept on the grid and the hex lattice, a

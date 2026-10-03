@@ -13,6 +13,7 @@ import { initUI, renderHistory, renderSelection, renderToolOptions } from './ui.
 import { $, el, modal, modalOpen, toast } from './util.js';
 import { copySelection, cutSelection, duplicateSelection, paste } from './clipboard.js';
 import { selectAll } from './tools.js';
+import { printDialog } from './print.js';
 
 async function start() {
   R.initRender($('#canvas'));
@@ -69,6 +70,7 @@ function stepHistory(step) {
 function wireTopbar() {
   $('#btn-save').addEventListener('click', () => doSave());
   $('#btn-export').addEventListener('click', exportDialog);
+  $('#btn-print').addEventListener('click', printDialog);
   // scheduleAutosave alongside markDirty, as every other edit does. Without it
   // an undo after the last autosave had already fired left the document dirty
   // for good: nothing ever rearmed the timer, so the file on disk kept the
@@ -112,9 +114,12 @@ function wireTopbar() {
     // Undo and the clipboard act on the map, and a dialog on screen is still
     // waiting on the map as it was when it opened.
     const onMap = !typing && !modalOpen() && !paletteOpen();
-    if (paletteOpen() && (key === 'e' || key === 'n')) { ev.preventDefault(); return; }
+    if (paletteOpen() && (key === 'e' || key === 'n' || key === 'p')) { ev.preventDefault(); return; }
     if (key === 's') { ev.preventDefault(); doSave(); }
     else if (key === 'e') { ev.preventDefault(); exportDialog(); }
+    // The browser's own print would put the editor on paper, toolbars and
+    // all, at whatever size fits; nobody wants that from a map maker.
+    else if (key === 'p') { ev.preventDefault(); printDialog(); }
     else if (key === 'n') { ev.preventDefault(); newMapDialog(); }
     else if (key === 'z' || key === 'y') {
       // Inside a text field these belong to the field. Taking them undid a

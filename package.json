@@ -19,6 +19,7 @@
     "prefabs": "node test/prefabs.mjs",
     "transform": "node test/transform.mjs",
     "hatch": "node test/hatch.mjs",
+    "print": "node test/print.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

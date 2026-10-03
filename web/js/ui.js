@@ -697,7 +697,8 @@ function renderLayerProps() {
     root.appendChild(el('p', { class: 'empty', text:
       'Drawn on the rock side of the walls only. A room the walls close off stays clean, and so '
       + 'does anything reached from it through a door; rock that a ring of corridor closes off is '
-      + 'hatched again. A room left open to the edge of the map counts as rock.' }));
+      + 'hatched again. A door in an outside wall is a wall as far as this goes, and a room '
+      + 'left open to the edge of the map counts as rock.' }));
   }
   if (layer.kind === 'grid') {
     const isHex = layer.type === 'hex';

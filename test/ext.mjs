@@ -114,6 +114,27 @@ const drawn = await p.evaluate(() => {
 });
 t('the tokens layer is drawing again', drawn > 100, drawn + ' inked pixels');
 
+// A listener an extension added through api.events is the extension's, and
+// goes when it does: handed the bare `on`, one switched off went on hearing
+// every event, and each Reload added another copy of its handler.
+const heard = await p.evaluate(async () => {
+  const X = await import('/js/extensions.js');
+  const A = await import('/js/app.js');
+  const id = Array.from(X.extensions.loaded.keys())[0];
+  const { manifest, api } = X.extensions.loaded.get(id);
+  let calls = 0;
+  api.events.on('layers', () => { calls++; });
+  A.emit('layers');
+  const live = calls;
+  X.unloadExtension(id);
+  A.emit('layers');
+  const after = calls;
+  await X.loadOne(manifest);
+  return { live, after, back: X.extensions.loaded.has(id) };
+});
+t('an extension\'s event listener is taken away when it is switched off',
+  heard.live === 1 && heard.after === 1 && heard.back, JSON.stringify(heard));
+
 await p.screenshot({ path: '/tmp/cg_ext_reload.png' });
 for (const [status, name, note] of out) console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 console.log(`\n${out.length - fails}/${out.length} passed`);

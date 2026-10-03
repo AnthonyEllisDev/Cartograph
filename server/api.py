@@ -248,9 +248,10 @@ def route(req):
         stem = stem.strip() or "map"
         # Maps go out as pictures; battle maps also go out as data for a
         # virtual tabletop, which is a JSON file with the walls in it; and a
-        # map with notes on it can go out with its key as a Markdown file.
+        # map with notes on it can go out with its key as a Markdown file; and
+        # any map can go out to paper at scale, which only a PDF holds to.
         ext = ".png"
-        for allowed in (".png", ".jpg", ".jpeg", ".webp", ".dd2vtt", ".uvtt", ".json", ".md"):
+        for allowed in (".png", ".jpg", ".jpeg", ".webp", ".dd2vtt", ".uvtt", ".json", ".md", ".pdf"):
             if raw.lower().endswith(allowed):
                 ext = allowed
                 break

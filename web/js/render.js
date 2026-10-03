@@ -1214,10 +1214,17 @@ function strokeRun(ctx, pts) {
 export const HATCH_DEFAULTS = { width: 36, size: 22 };
 const HATCH_CELL = 4;      // px per cell of the region grid
 
+// The panel's sliders keep to these, but a map file is other people's data:
+// the work grows with 1/size^2, so a stroke length of 0.05 typed into a
+// project.json would hang the tab as the map opened.
+const HATCH_RANGE = { width: [8, 160], size: [8, 60] };
+const hatchValue = (v, key) => (Number.isFinite(v) && v > 0
+  ? Math.min(HATCH_RANGE[key][1], Math.max(HATCH_RANGE[key][0], v)) : HATCH_DEFAULTS[key]);
+
 function hatchSettings(layer) {
   return {
-    width: !layer.hatch ? 0 : layer.hatchWidth > 0 ? layer.hatchWidth : HATCH_DEFAULTS.width,
-    size: layer.hatchSize > 0 ? layer.hatchSize : HATCH_DEFAULTS.size,
+    width: !layer.hatch ? 0 : hatchValue(layer.hatchWidth, 'width'),
+    size: hatchValue(layer.hatchSize, 'size'),
     color: layer.hatchColor || layer.color || '#20242c',
   };
 }
@@ -1271,9 +1278,16 @@ function hatchFields(layer, width) {
     const cx = Math.floor(x / s), cy = Math.floor(y / s);
     return cx < 0 || cy < 0 || cx >= cw || cy >= ch ? -1 : label[cy * cw + cx];
   };
+  // A door in a building's outside wall still has rock on one side of it, so
+  // it costs a wall there; costing nothing, it gave the room behind it the
+  // outside's parity, and every room beyond was hatched through.
+  const framed = new Uint8Array(regions);
+  const onEdge = (i) => { if (label[i] >= 0) framed[label[i]] = 1; };
+  for (let x = 0; x < cw; x++) { onEdge(x); onEdge((ch - 1) * cw + x); }
+  for (let y = 0; y < ch; y++) { onEdge(y * cw); onEdge(y * cw + cw - 1); }
   const reach = barrier / 2 + s * 1.5;
   for (const o of runs) {
-    const cost = WALL_KINDS[o.kind] && WALL_KINDS[o.kind].portal ? 0 : 1;
+    const portal = !!(WALL_KINDS[o.kind] && WALL_KINDS[o.kind].portal);
     for (let k = 0; k + 1 < o.points.length; k++) {
       const a = o.points[k], b = o.points[k + 1];
       const len = Math.hypot(b.x - a.x, b.y - a.y);
@@ -1283,6 +1297,7 @@ function hatchFields(layer, width) {
         const px = a.x + ux * d, py = a.y + uy * d;
         const l = at(px - uy * reach, py + ux * reach), r = at(px + uy * reach, py - ux * reach);
         if (l < 0 || r < 0 || l === r) continue;
+        const cost = portal && !framed[l] && !framed[r] ? 0 : 1;
         links[l].push(r, cost);
         links[r].push(l, cost);
       }
@@ -2037,9 +2052,13 @@ function roundRect(ctx, x, y, w, h, r) {
 
 /* --------------------------------------------------------------- exporting */
 
-export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true } = {}) {
-  const w = Math.round(view.doc.width * scale);
-  const h = Math.round(view.doc.height * scale);
+/** The map as one picture. `rect`, in map pixels, takes a piece of it instead:
+ *  printing at scale wants a 60-cm map one page at a time, and flattening the
+ *  whole of it at 300 dpi first would be a canvas no browser will make. */
+export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true, rect = null } = {}) {
+  const r = rect || { x: 0, y: 0, w: view.doc.width, h: view.doc.height };
+  const w = Math.max(1, Math.round(r.w * scale));
+  const h = Math.max(1, Math.round(r.h * scale));
   const out = makeCanvas(w, h);
   const ctx = out.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
@@ -2052,7 +2071,8 @@ export function flatten({ scale = 1, grid = true, paper = true, lights = true, n
     if (layer.kind === 'notes' && !notes) continue;
     ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
-    ctx.drawImage(canvasFor(layer), 0, 0, w, h);
+    if (rect) ctx.drawImage(canvasFor(layer), r.x, r.y, r.w, r.h, 0, 0, w, h);
+    else ctx.drawImage(canvasFor(layer), 0, 0, w, h);
   }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';

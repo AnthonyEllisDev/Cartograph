@@ -681,6 +681,45 @@ try {
   }
 }
 
+/* links inside the folders the server writes to ---------------------------- */
+
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const pack = join(root, 'assets/packs/guard-link-pack');
+  const outside = join(root, 'exports', 'guard-link-target.png');
+  const real = join(root, 'projects', 'guard-link-real');
+  const link = join(root, 'projects', 'guard-link-alias');
+  try {
+    // exists() is False for a dangling link and open() then follows it, so an
+    // import into a pack someone else made could write anywhere the link said.
+    mkdirSync(join(pack, 'stamps'), { recursive: true });
+    rmSync(outside, { force: true });
+    symlinkSync(outside, join(pack, 'stamps', 'guardlink.png'));
+    const res = await fetch(`${BASE}/api/packs/import?name=guardlink.png&pack=guard-link-pack&kind=stamp`,
+      { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: new Uint8Array([137, 80, 78, 71]) });
+    const reply = await res.json().catch(() => ({}));
+    t('an import does not write through a dangling link out of its pack', !existsSync(outside),
+      existsSync(outside) ? 'wrote ' + outside : (reply.asset && reply.asset.file) || res.status);
+
+    // under() resolves links, so deleting a linked map folder emptied the map
+    // it pointed at, which is a different map.
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(real, 'project.json'), JSON.stringify({ name: 'Real', width: 100, height: 100, layers: [] }));
+    symlinkSync(real, link);
+    const del = await fetch(`${BASE}/api/projects/guard-link-alias`, { method: 'DELETE' });
+    t('deleting a linked map folder takes the link away, not the map it points at',
+      existsSync(join(real, 'project.json')), del.status);
+    let linkGone = true;
+    try { readdirSync(link); linkGone = false; } catch (err) { linkGone = err.code === 'ENOENT'; }
+    t('and the link itself is gone', linkGone && del.status === 200, del.status);
+  } finally {
+    rmSync(pack, { recursive: true, force: true });
+    rmSync(outside, { force: true });
+    rmSync(link, { force: true });
+    rmSync(real, { recursive: true, force: true });
+  }
+}
+
 for (const [status, name, note] of out) {
   console.log(status.padEnd(5), name, note ? ' [' + note + ']' : '');
 }

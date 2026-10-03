@@ -5,6 +5,170 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-03 — printing at scale, and seven things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 81
+tracked source files (the screenshots and the tracked `.pyc` files were not
+compared), so this was a feature day. One thing noticed in passing: the ten
+`server/__pycache__` and `tools/__pycache__` `.pyc` files are tracked in git
+even though `.gitignore` names them. They were committed before the ignore
+line, so git goes on tracking them. Nothing was done about it, because it needs
+`git rm --cached`, which is Anthony's to run.
+
+**Baseline: green.** 742 of 742, plus `battle`. The second half was run against
+a pristine clone on its own port, because the first run had been serving files
+that were already being edited.
+
+**Review.** Two readers, reading only, in parallel with the baseline. One
+covered the renderer, the hatching, lighting, `transform.js`, `dungeon.js` and
+the walls panel. The other covered the server and the front-end state.
+`node --check` passed on all 50 modules. The non-ASCII scan found nothing
+outside comments and UI strings.
+
+Seven findings were reproduced and fixed. Each has a check that fails on a
+pristine clone (the hatch one hangs there instead):
+
+- *A room with a door in its outside wall was hatched inside, as rock.* A door
+  cost nothing to cross in the 0-1 walk. So a room entered from the rock through
+  a front door took the outside's parity, and so did every room beyond it. A
+  tavern with a front door came out hatched throughout. A door now costs a wall
+  when either side of it is a region touching the frame. Between rooms it still
+  costs nothing.
+- *A tiny stroke length in a map file hung the tab.* The work grows with
+  1/size^2, and only the panel's slider kept it at 8 or more. Probed at 0.5 it
+  took 5.3 s; at 0.05 it would take minutes. The new check really did hang the
+  pristine clone. Width and stroke length are now clamped to the panel's ranges
+  when read, and a value that is not finite falls back to the default.
+- *Importing art wrote through a dangling link out of its pack.* `exists()` is
+  False for a broken link, and `open()` then followed it. Reproduced with a link
+  out to `exports/`. Names are now claimed with `O_EXCL`, which refuses any
+  existing name, a link included, and also closes the exists-then-open race.
+- *Deleting a linked map folder deleted the map it pointed at.* `under()`
+  resolves links, so `rmtree` ran on the target, which is a different map. The
+  link is now unlinked and the target is left alone. The same problem for
+  prefabs stays written up, as it was yesterday.
+- *A prefab or paste holding a stamp this session had not decoded put down
+  nothing visible.* It was saved, and it appeared after a reload. `place()` now
+  warms any cold stamp and redraws when it lands, as the Stamp tool does.
+- *Extension event listeners outlived their extension.* `api.events.on` was the
+  bare `on`, so a switched-off extension went on hearing events, and each Reload
+  added another copy of the handler. They are now owned and taken away on
+  unload. This is additive, and `API_VERSION` stays 1.
+- *A map save did not fsync before its rename.* After a power cut, NTFS can
+  leave an empty `project.json`, which loses the whole map. This was fixed by
+  reading and has no check, because it cannot be reproduced without the crash.
+
+Written up, not changed:
+
+- *Dragging a set that includes walls on a hatched map rebuilds all the hatching
+  on every pointer move.* That is 50-250 ms a move here, so a few frames a
+  second. Hatching off is 2 ms. The fix is to freeze the hatching during a
+  Select drag and rebuild once at pointer-up. It touches the drag path the
+  transform work depends on, so it was left for a day with room to test it.
+- The Light tool's first light sets `layer.visible = true`. Put into a lights
+  layer inside a hidden group, it turns on darkness nobody can see. It is a
+  write, not a read, so the `layerVisible()` rule covers it only loosely.
+
+**The feature: printing at scale.** **Print** in the top bar (Ctrl+P, or the
+palette) writes a PDF that puts the map on paper at a chosen size per grid
+cell, across as many sheets as it takes:
+
+- One inch to the square by default, or 25, 30 or 20 mm, or half an inch. On a
+  hex map it is one hex across the flats.
+- A4, Letter, A3 or Tabloid, either way round, or whichever gives fewer sheets.
+- Overlap of 0 to 15 mm between sheets, with dashed lines to lay the next sheet
+  on and corner marks to cut at.
+- A label on every sheet (A1, B2...), naming the sheets it goes beside.
+- A scale bar on every sheet, to check with a ruler before cutting.
+- An optional first page with the sheets drawn over the whole map.
+
+It went into `exports/` and offers a download, like Export.
+
+Why this one: print tiling has been on the candidate list since 2026-09-21 and
+was put off every day for one reason, "needs a PDF writer, verified by
+printing". Both are now done. The writer is `web/js/pdf.js`, about 130 lines.
+It writes pages, JPEGs placed as they are (PDF takes `DCTDecode` without
+re-encoding), lines and Helvetica text, which every reader carries, so nothing
+is embedded. The verification was done with poppler in the container:
+
+- `qpdf --check` is clean.
+- `pdfinfo` reads 19 A4 pages.
+- One sheet rendered at 150 dpi has its grid lines at 150, 150, 150, 151 and
+  150 px, which is one inch.
+
+Elsewhere the gap is real. Dungeondraft exports a picture and leaves the inch
+to a poster-printing tool; there are blog posts (Dan Q's "Printing Maps from
+Dungeondraft") on doing it by hand. Other tools were not checked one by one. It
+passes the three tests:
+
+- *Not there.* Nothing in the code wrote PDF or tiled.
+- *No dependency.* It is canvas, `toBlob('image/jpeg')` and a byte array.
+- *Fits.* It is the one-person-at-a-desk job, the step between making a battle
+  map and using it.
+
+Rejected today:
+
+- Hatching across all walls layers, and the hand-inked wall line: polish on
+  yesterday.
+- GM/player export in one go: smaller.
+- `registerExporter`.
+- Elevation: still a design, not an addition.
+
+How it is built:
+
+- `render.flatten` takes an optional `rect` and draws one piece of the map.
+  A 40 x 30 map at 300 dpi would be a 12000-px canvas, which browsers refuse,
+  so each sheet is drawn on its own. The default path is untouched.
+- `printPlan` is pure arithmetic in millimetres. Sheets step by the printable
+  area less the overlap. The overlap is capped at half a sheet, so no part of
+  the map lands on three sheets.
+- `buildPrint` draws each sheet onto white, because a JPEG has no alpha and the
+  map's transparent edges would print black. It yields between sheets.
+- More than 200 sheets is refused before anything is drawn.
+- Printing never touches the document or the history.
+- The server's export allowlist gained `.pdf`.
+- Ctrl+P is taken from the browser, whose own print would put the editor's
+  toolbars on paper.
+
+Not done: the thumbnail labels use canvas text, which looks a little different
+from font to font. Also, the bar label's position is estimated from Helvetica's
+average width rather than its real metrics.
+
+**Tests.** There is a new suite, `test/print.mjs` (27). It checks:
+
+- the sheet counts on A4 both ways and the fewest-sheets choice;
+- coverage with nothing past the map, and exactly 10 mm shared between
+  neighbours;
+- a square printing 25.4 mm, the spreadsheet labels, abutting with no overlap,
+  Letter, and the 200-sheet refusal;
+- the PDF: header and trailer, every xref offset landing on its object, 19
+  pages, the A4 MediaBox, the first sheet placed at exactly its millimetres,
+  and nothing but ASCII outside the pictures;
+- a piece of the map matching the whole (within 2 levels);
+- printing leaving the map and its history alone;
+- a hex map's cell measured across the flats;
+- Ctrl+P opening the dialog, and the plan following the settings;
+- Make the PDF writing a `.pdf` into `exports/`, plus the download and the
+  palette entry;
+- no request off 127.0.0.1, and no console errors.
+
+The fixes added checks to `guards` (+3: the dangling link, and the linked map
+folder twice), `hatch` (+3: the front door twice, the tiny stroke length),
+`clipboard` (+1) and `ext` (+1).
+
+Looked at in screenshots and rendered pages: the dialog on a generated
+dungeon, the assembly page with its 18 labelled sheets, and sheet A1 at
+150 dpi with its dashed lines, corner marks, label and bar.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 17 ext,
+16 theme, 66 guards, 107 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 40 clipboard, 43 selection, 41 prefabs, 52 transform, 30 hatch,
+27 print -- 777 checks, all passing, plus `battle`, over two full back-to-back
+rounds on the finished tree, with `CG_CHROME` pointed at
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome` as before.
+
+---
+
 ## 2026-10-02 — hatching the rock, and five things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 80

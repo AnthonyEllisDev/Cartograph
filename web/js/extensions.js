@@ -108,7 +108,10 @@ function makeApi(manifest) {
     layers: () => (app.doc ? app.doc.layers : []),
     settings: () => app.settings,
 
-    events: { on, emit },
+    // Listeners are owned like everything else registered here: handed the
+    // bare `on`, an extension switched off went on hearing every event, and
+    // each Reload added another copy of its handler.
+    events: { on: (event, fn) => { const off = on(event, fn); owned.teardown.push(off); return off; }, emit },
     render: R,
     tools: { TOOLS, clearSelection, currentTool, mirrorSelection, selectObject, selectObjects, selectedObject, selectedObjects, setTool, turnSelection },
     assets: { library, image, imageNow, pattern, warm },

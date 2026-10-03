@@ -145,6 +145,11 @@ def write(root, name, doc):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, separators=(",", ":"))
+            # Without this the rename can reach the disk before the data does,
+            # and a power cut leaves an empty project.json: the whole map lost
+            # by the very step meant to stop that.
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, os.path.join(folder, "project.json"))
     except BaseException:
         try:
@@ -216,7 +221,17 @@ def sweep_blobs(root, name, keep_ids):
 
 
 def delete(root, name):
-    folder = under(root, slug(name, "project"))
+    name = slug(name, "project")
+    # under() resolves links, so rmtree on a linked map folder emptied the map
+    # it pointed at -- a different map. A link is taken away, not followed.
+    link = os.path.join(os.path.realpath(root), name)
+    if os.path.islink(link):
+        try:
+            os.unlink(link)
+        except FileNotFoundError:
+            raise Unsafe("no such project")
+        return
+    folder = under(root, name)
     if not os.path.isdir(folder):
         raise Unsafe("no such project")
     # isdir-then-rmtree is two steps on a threaded server. A second delete of

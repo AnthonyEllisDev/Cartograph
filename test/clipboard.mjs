@@ -316,6 +316,35 @@ await p.keyboard.press('Control+d');
 await p.waitForTimeout(250);
 t('Ctrl+C, V and D inside a text field copy text, not the note', (await ops('notes')).length === before);
 
+/* ========================================================================== *
+ * A stamp this session has not drawn yet.
+ * ========================================================================== */
+
+// renderObjects skips a stamp not yet decoded, and a prefab is usually put
+// down in a session that has never drawn its stamps: saved, and invisible
+// until the map was opened again.
+const coldId = 'starter/lighthouse';
+const cold = await p.evaluate(async (id) => {
+  const { placeSet } = await import('/js/clipboard.js');
+  const { imageNow } = await import('/js/assets.js');
+  const wasCold = !imageNow(id);
+  const ok = placeSet([{ id: 'cold-1', asset: id, x: 0, y: 0, scale: 1, rot: 0 }], ['objects'], { x: 700, y: 700 });
+  const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'objects');
+  const op = layer && layer.ops.find((o) => o.asset === id);
+  return { wasCold, ok, at: op ? { x: op.x, y: op.y } : null };
+}, coldId);
+await p.waitForTimeout(1500);
+const coldInk = cold.at ? await p.evaluate(({ x, y }) => {
+  const layer = window.__cg.app.doc.layers.find((l) => l.kind === 'objects');
+  const d = window.__cg.R.canvasFor(layer).getContext('2d').getImageData(Math.round(x) - 30, Math.round(y) - 30, 60, 60).data;
+  let n = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++;
+  return n;
+}, cold.at) : 0;
+t('a placed stamp that had not been decoded yet appears without a reload',
+  cold.wasCold && cold.ok && coldInk > 100, JSON.stringify(cold) + ' ' + coldInk + ' px');
+await p.evaluate(async () => { const h = await import('/js/history.js'); h.undo(); });
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 /* ------------------------------------------------------------------ report */

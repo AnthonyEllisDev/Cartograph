@@ -11,6 +11,7 @@ import { app, emit, markDirty, saveProject, saveSettings, scheduleAutosave } fro
 import { extensions } from './extensions.js';
 import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
+import { printDialog } from './print.js';
 import { jumpTo, redo, undo } from './history.js';
 import { allPresets, applyPreset } from './presets.js';
 import { describeKinds, placePrefab, prefabs, saveSelectionAsPrefab } from './prefabs.js';
@@ -28,6 +29,9 @@ let cursor = 0;
 
 const BUILT_IN = [
   { id: 'save', group: 'File', title: 'Save the map', keys: 'Ctrl+S', run: () => saveProject() },
+  { id: 'print', group: 'File', title: 'Print at scale…', keys: 'Ctrl+P',
+    detail: 'A PDF across as many sheets as it takes, one square to the inch',
+    run: () => printDialog() },
   { id: 'fit', group: 'View', title: 'Fit the map in the window', keys: '0', run: () => R.fitView() },
   { id: 'zoom-100', group: 'View', title: 'Zoom to 100%', run: () => { R.view.zoom = 1; R.requestDraw(); } },
   // markDirty and scheduleAutosave travel together. The toolbar buttons were

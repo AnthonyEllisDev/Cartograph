@@ -140,12 +140,23 @@ def import_asset(packs_root, filename, data, kind="stamp", group="imported", pac
     sub = "terrain" if kind == "terrain" else "stamps"
     dest_dir = under(packs_root, pack, sub)
     os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, stem + ext)
+    # Claimed with O_EXCL rather than exists-then-open: exists() is False for a
+    # dangling link, and open() would then follow it out of the pack. A pack
+    # copied in from somewhere else is other people's files. O_EXCL refuses
+    # any existing name, link or not, and closes the race between two uploads.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
     n = 1
-    while os.path.exists(dest):
-        n += 1
-        dest = os.path.join(dest_dir, "%s-%d%s" % (stem, n, ext))
-    with open(dest, "wb") as fh:
+    while True:
+        name = stem + ext if n == 1 else "%s-%d%s" % (stem, n, ext)
+        dest = os.path.join(dest_dir, name)
+        try:
+            fd = os.open(dest, flags, 0o644)
+            break
+        except FileExistsError:
+            n += 1
+            if n > 10000:
+                raise Unsafe("too many files named %s" % stem)
+    with os.fdopen(fd, "wb") as fh:
         fh.write(data)
     return {
         "id": "%s/%s" % (pack, os.path.splitext(os.path.basename(dest))[0]),

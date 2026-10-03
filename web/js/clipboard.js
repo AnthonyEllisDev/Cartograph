@@ -21,6 +21,7 @@
 import { app, emit, markDirty, scheduleAutosave } from './app.js';
 import { gridStepPx, kindOf, latticePoint, layerVisible } from './doc.js';
 import { pushEntry } from './history.js';
+import { imageNow, warm } from './assets.js';
 import * as R from './render.js';
 import { TOOLS, deleteSelection, selectObjects, selectedObjects, toolForLayer } from './tools.js';
 import { toast, uid } from './util.js';
@@ -187,6 +188,16 @@ function place(items, kinds, layerIds, { to = null, steps = 1, label = 'Paste' }
     rebuild();
   };
   apply();
+  // The Stamp tool's rule, kept: renderObjects skips a stamp not yet decoded,
+  // and a prefab is usually placed in a session that has not drawn its stamps,
+  // so they were saved and missing from the screen until the next reload.
+  const cold = [...new Set(copies.map((c) => c.item.asset).filter((id) => typeof id === 'string' && !imageNow(id)))];
+  if (cold.length) {
+    warm(cold).then(() => {
+      for (const l of layers) if (app.doc && app.doc.layers.includes(l)) R.invalidate(l);
+      R.requestDraw();
+    });
+  }
   pushEntry({
     label,
     bytes: 0,

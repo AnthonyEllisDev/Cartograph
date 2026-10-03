@@ -205,7 +205,7 @@ api.registerExporter({
 | `api.layers()` | every layer in the open document |
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'selection'`, `'library'`, `'dirty'`, `'saved'` |
-| `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten`, `mapToScreen`, `screenToMap`, `view` |
+| `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten` (which takes `rect: { x, y, w, h }` in map pixels for one piece of the map), `mapToScreen`, `screenToMap`, `view` |
 | `api.tools` | `{ TOOLS, clearSelection, currentTool, mirrorSelection, selectObject, selectObjects, selectedObject, selectedObjects, setTool, turnSelection }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |
@@ -273,6 +273,9 @@ an ordinary landmass op; push it onto the layer's `ops` and invalidate.
 An extension can be turned off without reloading the page. Everything it
 registered is taken back out: its tools leave the rail, its panels leave the
 side rail, its commands leave the palette, and its layer kinds stop rendering.
+
+Listeners added with `api.events.on` are taken away with it too, as are the
+things above; `on` still returns a function that removes one early.
 
 If it holds anything of its own — a timer, a listener on something outside the
 editor — clean it up either by returning a function from `setup`, or by calling

@@ -124,6 +124,24 @@ const westIn = await ink(6 * C + 10, 6 * C + 10, 14 * C - 10, 12 * C - 10);
 t('a room reached through a door is floor, not rock', eastIn === 0 && westIn === 0,
   'east ' + eastIn + ', west ' + westIn);
 
+/* a door in an outside wall ----------------------------------------------- */
+
+// The same pair of rooms, entered from the rock through a front door in the
+// west room's top wall. A door costing nothing there gave the west room the
+// outside's parity, and the east room's through the inner door with it.
+await setWalls([
+  ...shared.filter((w) => !(w.points[0].y === 6 * C && w.points[1].y === 6 * C && w.points[0].x < 14 * C + 1
+                           && w.points[1].x < 14 * C + 1)),
+  wall(6, 6, 9, 6), wall(9, 6, 10, 6, 'door'), wall(10, 6, 14, 6),
+]);
+await p.waitForTimeout(300);
+const frontWest = await ink(6 * C + 10, 6 * C + 10, 14 * C - 10, 12 * C - 10);
+const frontEast = await ink(14 * C + 10, 6 * C + 10, 20 * C - 10, 12 * C - 10);
+const frontOut = await ink(420 - 30, 500, 420 - 8, 760);
+t('a room with a door to the rock is still floor', frontWest === 0 && frontEast === 0,
+  'west ' + frontWest + ', east ' + frontEast);
+t('and the rock outside its front door is still hatched', frontOut > 150, frontOut + ' inked pixels');
+
 /* a pocket of rock inside a ring of corridor -------------------------------- */
 
 // An outer box (4,4)-(24,20) and an inner one (8,8)-(20,16): the ring between
@@ -134,6 +152,23 @@ const pocket = await ink(8 * C + 8, 10 * C, 8 * C + 30, 14 * C);
 const ring = await ink(4 * C + 10, 10 * C, 8 * C - 10, 14 * C);
 t('rock closed off by a ring of corridor is hatched', pocket > 150, pocket + ' inked pixels');
 t('and the corridor round it is not', ring === 0, ring + ' inked pixels');
+
+/* a stroke length from a hand-edited file -------------------------------- */
+
+// The panel holds it to 8..60, but a map file is anyone's: the work grows with
+// one over the square of it, and 0.05 would have hung the tab as it opened.
+const tiny = await p.evaluate(() => {
+  const l = window.__cg.app.doc.layers.find((x) => x.kind === 'walls');
+  const was = l.hatchSize;
+  l.hatchSize = 0.05;
+  const t0 = performance.now();
+  window.__cg.R.invalidate(l);
+  const ms = performance.now() - t0;
+  if (was === undefined) delete l.hatchSize; else l.hatchSize = was;
+  window.__cg.R.invalidate(l);
+  return ms;
+});
+t('a tiny stroke length in the file is held to the panel\'s range', tiny < 1500, Math.round(tiny) + ' ms');
 
 /* stable as walls are added ------------------------------------------------ */
 
