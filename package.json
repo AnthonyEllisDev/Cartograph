@@ -20,6 +20,7 @@
     "transform": "node test/transform.mjs",
     "hatch": "node test/hatch.mjs",
     "print": "node test/print.mjs",
+    "players": "node test/players.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

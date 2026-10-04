@@ -19,7 +19,7 @@
 
 import { api } from './api.js';
 import { app } from './app.js';
-import { gridLayer, gridStepPx, layerVisible } from './doc.js';
+import { gridLayer, gridStepPx, layerVisible, playersText } from './doc.js';
 import { Pdf, PT_PER_MM } from './pdf.js';
 import * as R from './render.js';
 import { field } from './ui.js';
@@ -40,7 +40,8 @@ export const MARGIN_MM = 12;
 export const MAX_PAGES = 200;
 
 export const PRINT_DEFAULTS = { paper: 'a4', orient: 'auto', cellMm: 25.4, overlapMm: 10, dpi: 150,
-                                grid: true, lights: true, notes: true, index: true, download: true };
+                                grid: true, lights: true, notes: true, index: true, download: true,
+                                players: false };
 
 let last = null;
 
@@ -158,10 +159,18 @@ export async function buildPrint(doc, opts = {}) {
   const plan = printPlan(doc, o);
   if (plan.pages.length > MAX_PAGES) throw new Error(`${plan.pages.length} pages is more than ${MAX_PAGES}`);
   const word = cellWord(doc);
-  const name = (doc.name || 'Map').trim() || 'Map';
+  const name = ((doc.name || 'Map').trim() || 'Map') + (o.players ? ' (players\' copy)' : '');
   const P = PT_PER_MM;
   const pdf = new Pdf();
-  const layersOn = { grid: o.grid, paper: true, lights: o.lights, notes: o.notes };
+  const layersOn = { grid: o.grid, paper: true, lights: o.lights, notes: o.notes, players: !!o.players };
+  // Every sheet is drawn from whatever is on screen when its turn comes, and
+  // the window stays live between sheets. A map opened or painted on part way
+  // through would otherwise come out as half one thing and half another,
+  // under the first one's name.
+  const edits = app.edits;
+  const check = () => {
+    if (R.view.doc !== doc || app.edits !== edits) throw new Error('the map changed while it was being drawn; print it again');
+  };
   const pageW = plan.pw * P, pageH = plan.ph * P, M = MARGIN_MM * P;
   const total = `${plan.cols} across and ${plan.rows} down`;
 
@@ -188,6 +197,7 @@ export async function buildPrint(doc, opts = {}) {
     const w = plan.mapMm.w * P * fit, h = plan.mapMm.h * P * fit;
     // Twice the page's resolution at 72 per inch is plenty for a thumbnail.
     const k = (w * 2) / plan.mapMm.w;              // canvas px per mm of map
+    check();
     const thumb = R.flatten(Object.assign({ scale: (k / plan.pxPerMm) }, layersOn));
     drawSheets(thumb.getContext('2d'), plan, k);
     pg.jpeg(await jpegOf(thumb, 0.85), thumb.width, thumb.height, M, y - h, w, h);
@@ -200,6 +210,7 @@ export async function buildPrint(doc, opts = {}) {
   const barCells = plan.cellMm * 2 <= 70 ? 2 : 1;
   for (const page of plan.pages) {
     const pg = pdf.page(pageW, pageH);
+    check();
     const tile = R.flatten(Object.assign({ scale, rect: page.rect }, layersOn));
     const w = page.mm.w * P, h = page.mm.h * P;
     const top = pageH - M;
@@ -244,6 +255,7 @@ export async function buildPrint(doc, opts = {}) {
     // freeze the window it was started from.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+  check();
   return { bytes: pdf.bytes(), plan };
 }
 
@@ -254,7 +266,11 @@ export async function printDialog() {
   if (!doc) return;
   const o = Object.assign({}, PRINT_DEFAULTS, { paper: localPaper() }, last || {});
   const word = cellWord(doc);
-  const lit = doc.layers.some((l) => l.kind === 'lights' && layerVisible(doc, l) && l.ambient > 0);
+  // A lighting layer with the darkness at nought still draws its pools of
+  // light, so it still needs the switch. Without one shown, the setting left
+  // from an earlier print must not decide it unseen -- see `effective` below.
+  const lit = doc.layers.some((l) => l.kind === 'lights' && layerVisible(doc, l)
+    && (l.ambient > 0 || l.ops.length));
   const pinned = doc.layers.some((l) => l.kind === 'notes' && layerVisible(doc, l) && l.ops.length);
 
   const pw = 420, ph = Math.round(Math.min(240, pw * doc.height / doc.width));
@@ -262,6 +278,8 @@ export async function printDialog() {
   const preview = el('canvas', { class: 'gen-preview', width: pw2, height: ph, 'data-print': 'preview' });
   const base = R.flatten({ scale: pw2 / doc.width, grid: true, paper: true, lights: false, notes: false });
   const summary = el('p', { class: 'muted span', 'data-print': 'plan' });
+  const playersNote = el('p', { class: 'empty span', text: playersText(doc), 'data-print': 'players' });
+  playersNote.hidden = !o.players;
   let plan = null;
   const redraw = throttleFrame(() => {
     plan = printPlan(doc, o);
@@ -297,6 +315,10 @@ export async function printDialog() {
     field({ type: 'toggle', label: 'Include the grid', value: o.grid }, set('grid')),
     lit ? field({ type: 'toggle', label: 'Include the lighting', value: o.lights }, set('lights')) : null,
     pinned ? field({ type: 'toggle', label: 'Include the note pins', value: o.notes }, set('notes')) : null,
+    field({ type: 'select', label: 'Copy', value: o.players ? 'players' : 'gm',
+            options: [['gm', 'The GM\'s: everything'], ['players', 'The players\'']] },
+          (v) => { o.players = v === 'players'; playersNote.hidden = !o.players; redraw(); }),
+    playersNote,
     field({ type: 'toggle', label: 'Start with a page showing how the sheets fit', value: o.index }, set('index')),
     field({ type: 'toggle', label: 'Also download a copy', value: o.download }, set('download')),
     el('p', { class: 'empty span', text:
@@ -320,14 +342,15 @@ export async function printDialog() {
   toast(`Drawing ${plan.pages.length} sheet${plan.pages.length === 1 ? '' : 's'}...`);
   let made;
   try {
-    made = await buildPrint(doc, o);
+    const effective = Object.assign({}, o, { lights: lit ? o.lights : true, notes: pinned ? o.notes : true });
+    made = await buildPrint(doc, effective);
   } catch (err) {
     return toast('Print failed: ' + err.message, 'bad');
   }
   const blob = new Blob([made.bytes], { type: 'application/pdf' });
   const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
   try {
-    const res = await api.exportImage(name + ' - print.pdf', blob);
+    const res = await api.exportImage(name + (o.players ? ' - players' : '') + ' - print.pdf', blob);
     toast('Print written to ' + res.path, 'good');
   } catch (err) {
     toast('Print failed: ' + err.message, 'bad');
@@ -335,7 +358,7 @@ export async function printDialog() {
   }
   if (!o.download) return;
   const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: name + ' - print.pdf' });
+  const a = el('a', { href: url, download: name + (o.players ? ' - players' : '') + ' - print.pdf' });
   document.body.appendChild(a);
   a.click();
   a.remove();

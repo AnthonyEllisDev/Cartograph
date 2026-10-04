@@ -207,7 +207,9 @@ export function scheduleAutosave() {
   if (autosaveTimer) return;
   autosaveTimer = setTimeout(async () => {
     autosaveTimer = 0;
-    if (!app.dirty || !app.doc) return;
+    // Turned off while the deadline was pending: someone who unticks it to try
+    // something risky does not want it written over the saved map regardless.
+    if (!app.settings.autosave || !app.dirty || !app.doc) return;
     try {
       await saveProject({ silent: true });
       emit('autosaved');

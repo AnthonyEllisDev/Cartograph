@@ -5,7 +5,7 @@
 import { assetsOfKind, groupNames, library, warm } from './assets.js';
 import { app, activeLayer, emit, markDirty, on, saveSettings, scheduleAutosave,
          setActiveLayer, setToolSetting } from './app.js';
-import { LAYER_KINDS, NOTE_DEFAULTS, OBJECT_NOUNS, gridLayer, gridStepPx, groupOf, kindOf, layerVisible, makeLayer, membersOf } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, OBJECT_NOUNS, gridLayer, gridStepPx, groupOf, kindOf, layerGM, layerVisible, makeLayer, membersOf } from './doc.js';
 import * as hex from './hex.js';
 import { clearHistory, history, jumpTo, pushEntry, timeline } from './history.js';
 import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js';
@@ -418,6 +418,10 @@ function layerRow(layer, inGroup) {
     },
   }));
   row.appendChild(el('span', { class: 'lname', text: layer.name }));
+  if (layerGM(app.doc, layer)) {
+    row.appendChild(el('span', { class: 'lgm', text: 'GM',
+      title: layer.gm ? 'GM only: left out of the players\' copy' : 'GM only, with its group' }));
+  }
   row.appendChild(el('span', { class: 'lkind', text: kindOf(layer).label }));
   row.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', layer.id);
@@ -510,10 +514,41 @@ function selectLayer(layer) {
   }
 }
 
+/** Mark a layer as the GM's alone, or not. Nothing on screen changes -- the
+ *  players' copy is made at export -- so this is only a flag, but it is one a
+ *  person sets on purpose and expects Ctrl+Z to take back. */
+export function setLayerGM(layer, gm) {
+  const was = !!layer.gm;
+  if (was === !!gm) return;
+  const apply = (v) => { if (v) layer.gm = true; else delete layer.gm; emit('layers'); };
+  apply(gm);
+  pushEntry({ label: gm ? 'GM only' : 'For the players', bytes: 0,
+              undo() { apply(was); }, redo() { apply(gm); } });
+  markDirty(); scheduleAutosave();
+}
+
+/** Drag a group, and its members go with it: a group row moved on its own
+ *  left them where they were, filed in the panel under a folder that was no
+ *  longer anywhere near them. The run lands beside the target's whole run,
+ *  never inside another group's. */
+function moveGroup(moving, target) {
+  const layers = app.doc.layers;
+  const block = layers.filter((l) => l === moving || l.group === moving.id);
+  if (block.includes(target)) return;
+  const home = target.kind === 'group' ? target : groupOf(app.doc, target);
+  const run = home ? layers.filter((l) => l === home || l.group === home.id) : [target];
+  const below = layers.indexOf(block[block.length - 1]) < layers.indexOf(run[0]);
+  for (const l of block) layers.splice(layers.indexOf(l), 1);
+  const at = below ? layers.indexOf(run[run.length - 1]) + 1 : layers.indexOf(run[0]);
+  layers.splice(at, 0, ...block);
+  R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); renderLayers();
+}
+
 function moveLayer(fromId, toId) {
   if (!fromId || fromId === toId) return;
   const target = app.doc.layers.find((l) => l.id === toId);
   const moving = app.doc.layers.find((l) => l.id === fromId);
+  if (moving && target && moving.kind === 'group') return moveGroup(moving, target);
   // Dropping onto a group puts the layer in it; dropping onto an ordinary
   // layer moves it there and gives it whatever group that layer is in, which
   // is what makes a drag out of a group actually leave the group.
@@ -552,6 +587,13 @@ function renderLayerProps() {
     // The Selected panel stops offering what it can no longer touch.
     emit('selection');
   }));
+  if (layer.kind !== 'paper') {
+    const gm = field({ type: 'toggle', label: 'GM only', value: !!layer.gm }, (v) => setLayerGM(layer, v));
+    gm.title = layer.kind === 'group' ? 'Leaves every layer in the group out of the players\' copy'
+      : 'Left out of the players\' copy when you export or print one';
+    gm.dataset.layer = 'gm';
+    root.appendChild(gm);
+  }
 
   if (layer.kind === 'water' || layer.kind === 'floor' || layer.kind === 'land' || layer.kind === 'paper') {
     root.appendChild(textureField(layer, 'Texture'));

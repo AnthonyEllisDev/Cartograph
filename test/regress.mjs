@@ -2032,6 +2032,97 @@ const driftFromRebuild = (decode = []) => p.evaluate(async (ids) => {
   }
 }
 
+/* 2026-10-04 ------------------------------------------------------------- */
+
+{
+  // Turning autosave off left a deadline already set to fire, and it saved
+  // over the map anyway. The callback is caught and run by hand here, so the
+  // check does not wait fifteen seconds.
+  await newMap(p, { name: 'Autosave Off', kind: 'battle', size: '20x15' });
+  const st = await p.evaluate(async () => {
+    const A = await import('/js/app.js');
+    const s = window.__cg.app.settings;
+    const was = s.autosave;
+    s.autosave = true;
+    A.markDirty();
+    const real = window.setTimeout, realFetch = window.fetch;
+    let fire = null, saves = 0;
+    window.setTimeout = (fn, ms, ...rest) => { if (ms >= 15000) { fire = fn; return 0; } return real(fn, ms, ...rest); };
+    try {
+      // A deadline left from earlier in the session would swallow this one.
+      s.autosave = false; A.scheduleAutosave(); s.autosave = true;
+      A.scheduleAutosave();
+    } finally { window.setTimeout = real; }
+    s.autosave = false;
+    window.fetch = (url, init) => { if (/\/api\/projects/.test(String(url)) && init && init.method !== 'GET') saves++; return realFetch(url, init); };
+    try { if (fire) await fire(); } finally { window.fetch = realFetch; }
+    s.autosave = was;
+    return { armed: !!fire, saves, dirty: !!window.__cg.app.dirty };
+  });
+  t('an autosave already due does not save once autosave is turned off', st.armed && st.saves === 0 && st.dirty,
+    JSON.stringify(st));
+}
+
+{
+  // A tool letter pressed with the button down handed the release to the new
+  // tool: a Select drag moved the wall with no undo entry and no dirty flag.
+  await newMap(p, { name: 'Letter Mid Drag', kind: 'battle', size: '20x15' });
+  await p.evaluate(() => {
+    const { app, R } = window.__cg;
+    const l = app.doc.layers.find((x) => x.kind === 'walls');
+    l.ops = [{ id: 'wmid', kind: 'wall', points: [{ x: 210, y: 210 }, { x: 560, y: 210 }] }];
+    R.invalidate(l);
+    app.dirty = false;
+  });
+  await p.click('.tool[data-tool="select"]'); await p.waitForTimeout(200);
+  const at = (x, y) => p.evaluate(([mx, my]) => {
+    const s = window.__cg.mapToScreen(mx, my);
+    const r = document.getElementById('canvas').getBoundingClientRect();
+    return { x: r.left + s.x, y: r.top + s.y };
+  }, [x, y]);
+  const past0 = await p.evaluate(() => window.__cg.history.past.length);
+  const a = await at(210, 210), z = await at(210, 420);
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  for (let i = 1; i <= 4; i++) await p.mouse.move(a.x, a.y + (z.y - a.y) * i / 8);
+  await p.keyboard.press('b');
+  for (let i = 5; i <= 8; i++) await p.mouse.move(a.x, a.y + (z.y - a.y) * i / 8);
+  await p.mouse.up(); await p.waitForTimeout(250);
+  const st = await p.evaluate(async () => {
+    const { app } = window.__cg;
+    const T = await import('/js/tools.js');
+    const w = app.doc.layers.find((x) => x.kind === 'walls').ops[0];
+    return { tool: T.currentTool().id, y: w.points[0].y, dirty: !!app.dirty,
+             past: window.__cg.history.past.length, label: (window.__cg.history.past.slice(-1)[0] || {}).label };
+  });
+  t('a tool letter pressed mid-drag waits, and the drag lands as one Move entry',
+    st.tool === 'select' && st.y !== 210 && st.dirty && st.past === past0 + 1 && st.label === 'Move', JSON.stringify(st));
+}
+
+{
+  // Dragging a group row moved the group alone and left its members where
+  // they were, filed under a folder that was no longer beside them.
+  await newMap(p, { name: 'Group Drag', kind: 'battle', size: '20x15' });
+  const st = await p.evaluate(async () => {
+    const { app } = window.__cg;
+    const ui = await import('/js/ui.js');
+    const terrain = app.doc.layers.find((l) => l.kind === 'raster');
+    const g = ui.addGroup();
+    ui.setLayerGroup(terrain, g.id);
+    return { g: g.id, top: app.doc.layers[app.doc.layers.length - 1].id };
+  });
+  // Drop the group's row on the top layer's row, as a person drags it.
+  await p.dragAndDrop(`.layer[data-id="${st.g}"]`, `.layer[data-id="${st.top}"]`);
+  await p.waitForTimeout(250);
+  const after = await p.evaluate((gid) => {
+    const L = window.__cg.app.doc.layers;
+    const gi = L.findIndex((l) => l.id === gid);
+    const members = L.map((l, i) => (l.group === gid ? i : -1)).filter((i) => i >= 0);
+    return { gi, members, n: L.length };
+  }, st.g);
+  t('dragging a group takes its members with it, still directly under it',
+    after.members.length === 1 && after.members[0] === after.gi - 1 && after.gi > after.n - 4, JSON.stringify(after));
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

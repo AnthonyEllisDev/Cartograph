@@ -205,7 +205,7 @@ api.registerExporter({
 | `api.layers()` | every layer in the open document |
 | `api.settings()` | the settings bag — put your own keys under your id |
 | `api.events` | `{ on, emit }` — `'document'`, `'layers'`, `'tool'`, `'selection'`, `'library'`, `'dirty'`, `'saved'` |
-| `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten` (which takes `rect: { x, y, w, h }` in map pixels for one piece of the map), `mapToScreen`, `screenToMap`, `view` |
+| `api.render` | the whole render module: `invalidate`, `relight`, `relightAll`, `forgetLayer`, `compositeAll`, `requestDraw`, `flatten` (which takes `rect: { x, y, w, h }` in map pixels for one piece of the map, and `players: true` for the players' copy), `forPlayers(layer)`, `mapToScreen`, `screenToMap`, `view` |
 | `api.tools` | `{ TOOLS, clearSelection, currentTool, mirrorSelection, selectObject, selectObjects, selectedObject, selectedObjects, setTool, turnSelection }` |
 | `api.assets` | `{ library, image, imageNow, pattern, warm }` — the texture and stamp library |
 | `api.history` | `{ push, snapshot, restore }` — see below |

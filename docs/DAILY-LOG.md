@@ -5,6 +5,167 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-04 — the players' copy, and eight things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 84
+tracked text files (the two screenshots and the tracked `.pyc` files were not
+compared), so this was a feature day. The `.pyc` files are still tracked; that
+still needs `git rm --cached` from Anthony.
+
+**Baseline: green.** 777 of 777, plus `battle`. Most of it ran against the
+working tree; the last eight suites were run against a pristine clone on its
+own port, because the first hatching fix landed in the working tree while the
+baseline was still running against it.
+
+**Review.** Two readers, reading only, each reproducing on its own copy and
+port. One covered the renderer, printing, `pdf.js`, lighting, `transform.js`,
+`dungeon.js` and the hatching. The other covered the server and the front-end
+state. `node --check` passed on every module, and the non-ASCII scan found
+nothing outside comments, docstrings and UI strings. The server's guards
+(Origin, Host, refuse-before-route, `safe.py` on every path, `safe.load` on
+every body) were re-read and found sound.
+
+Six findings were fixed. Each has a check that fails on a pristine clone:
+
+- *A print drew each sheet from whatever was on screen at that moment.*
+  `buildPrint` takes a document, but every sheet comes from `R.flatten`, which
+  reads `view.doc`, and the window stays live between sheets. Opening another
+  map 30 ms into an 18-sheet print gave a 248 KB PDF instead of 1.2 MB, most
+  of it the other map, under the first one's name. A stroke painted during a
+  long print mixed before and after the same way. The build now stops with
+  "the map changed while it was being drawn" if the map on screen or
+  `app.edits` moves while it runs (`print.mjs`).
+- *The Print dialog could leave the lighting out unseen.* Its switch showed only
+  when the darkness was above nought, but lights still draw their pools without
+  it, and with no switch shown the setting left from an earlier print decided
+  it. The switch now shows for any visible lighting layer with lights in it, and
+  when it is not shown the lighting is printed (`print.mjs`).
+- *A wall all the way round the frame took the hatching off the whole map.*
+  The walk starts from regions touching the edge of the map, and there were
+  none, so every region came out unreached, which the parity test reads as
+  floor. When the edge is entirely wall, the regions just inside it now start
+  the walk instead, as if the wall were the map's edge. Maps with any open
+  edge are untouched, so every saved map draws as before. The comment that
+  said an unreached region is rock was wrong, and now says what the code does
+  (`hatch.mjs`, +2; "and the room inside it clean" passes on the pristine clone
+  too and is kept on purpose, as the guard against seeding at the wrong parity).
+- *A tool letter pressed with the button down lost the work.* The release went
+  to the new tool. A Select drag moved the wall with no undo entry and no dirty
+  flag, and a brush stroke never reached `endPaint`, so it stayed on screen and
+  was not in the map. Tool letters now wait while a drag or a pan is in
+  progress (`regress.mjs`).
+- *Turning autosave off did not stop an autosave already due.* It saved over
+  the map regardless, which is exactly what someone unticking it before
+  something risky does not want. The deadline checks the setting when it
+  fires, and the checkbox clears it (and, turned back on, arms one if there is
+  unsaved work, which closes the 2026-09-26 note that it waited for the next
+  edit) (`regress.mjs`).
+- *Dragging a group row left its members behind.* Already written up on
+  2026-09-26. `moveGroup` in `ui.js` now moves the group and its members as one
+  block, beside the target's whole run, never into another group's
+  (`regress.mjs`).
+
+Written up, not changed:
+
+- *An extension whose manifest id is not slug-shaped cannot be turned off*
+  (`acme:tokens`, `@acme/tokens`): `index()` accepts any string and keys
+  `enabled` on it, and `POST /api/extensions/<id>` refuses it with a 400. The
+  handoff already listed this. The fix (fall back to the folder name, or key on
+  `dir`) changes the ids of tools registered under it, so it wants deciding.
+- Ctrl+S/E/P/N in `main.js` do not check `modalOpen()`, so Ctrl+E over the Note
+  tool's dialog cancels the note. Settled safely (that is `modal()`'s
+  contract), so small.
+
+**The feature: the players' copy.** Export can write a second image, and Print
+a second PDF, of the map as the players are meant to see it:
+
+- secret doors drawn as plain wall;
+- note pins left off;
+- every layer marked **GM only** left out. The switch is in each layer's
+  properties; a group marked GM only takes its members with it
+  (`layerGM(doc, layer)` in `doc.js`, read the way `layerVisible` is), and the
+  layer row carries a **GM** badge. Marking is one undo step.
+
+The dialogs say what the copy will change before it is made. Export writes
+`<map>-players.png` beside the GM's image, named from the file the server
+actually wrote, as the key is, and, with Universal VTT ticked,
+`<map>-players.dd2vtt`, where a secret door goes across as a sight line rather
+than a portal so the tabletop does not show players a door icon. Print writes
+`<map> - players - print.pdf` with "(players' copy)" on every sheet.
+
+Why this one: "GM versus player export, the rest of it" has been on the
+candidate list since 2026-09-24, was called small and more useful once
+generated dungeons had secret doors, and yesterday's printing made it more
+useful again: a dungeon printed for the table with its secret doors dashed in
+is printed twice. Forum threads (Roll20, Paizo) still ask how to get a player
+map with the secret doors taken out; how each comparable tool handles it was
+not checked one by one. It passes the three tests:
+
+- *Not there.* Nothing in the code had a GM flag or a second rendering; hiding
+  the notes layer was the whole of it.
+- *No dependency.* It is a flag on a layer and a branch in `flatten`.
+- *Fits.* One person at a desk making the table's copy and their own.
+
+Rejected today: hatching across all walls layers and the hand-inked wall line
+(polish), `registerExporter`, prefab rescaling, and elevation (still a design,
+not an addition).
+
+How it is built:
+
+- **Nothing is stored but the flag.** The players' copy is made at export from
+  the same layers, so the two copies cannot drift apart. The flag changes
+  nothing on screen and nothing in the GM's copy, and `players.mjs` checks both
+  pixel for pixel.
+- `flatten({ players: true })` skips what `forPlayers(layer)` refuses, and
+  draws a walls layer holding a secret door from `playersCanvas`, which runs
+  the ordinary `renderWalls` on a copy of the layer with each secret door's
+  kind set to `wall` (`playersWalls`). That canvas is cached per layer on a key
+  of the layer's own JSON, because a print asks for it once a sheet and the
+  hatching under it is not cheap. Without `players`, `flatten` takes exactly
+  the old path.
+- `toUVTT(..., { players: true })` leaves out a GM-only walls or lights layer,
+  as the picture does, and sends secret doors as walls.
+- The hatching is the same in both copies. A secret door is a door to the walk,
+  so the players' copy shows a dead-end corridor with clean floor beyond the
+  wall rather than rock, which is what a player standing there would see.
+- `API_VERSION` stays 1. `flatten`'s new option and `forPlayers` reach
+  extensions through `api.render`, and `EXTENSIONS.md` says so.
+
+**Tests.** A new suite, `test/players.mjs` (31), in the style of the others,
+on its own map. It checks:
+
+- the players' copy is pixel-identical to the GM's picture drawn after really
+  turning the secret door into a wall and with the pins off;
+- the GM-only switch: one undo step called "GM only", the GM badge, the layer
+  left out of the players' copy, and the GM's copy and the screen unchanged;
+- undo and redo of the mark;
+- a group marking its members;
+- the summary the dialogs show;
+- the tabletop file: both doors as portals for the GM, the secret door as a
+  wall for the players, and no walls at all from a GM-only walls layer;
+- the mark surviving save and reload, and the map reloading pixel-identical;
+- Export writing `-players.png` and `-players.dd2vtt` and offering both
+  downloads;
+- Print offering the copy, writing the players' PDF, and naming it on every
+  sheet;
+- nothing fetched off 127.0.0.1, and no console errors.
+
+The fixes added checks to `regress` (+3), `print` (+2) and `hatch` (+2).
+
+Looked at in screenshots: the layer panel with the GM switch and badge, the
+Export dialog with the summary line, and a generated dungeon exported both
+ways side by side, zoomed on its secret door: dashed in the GM's copy, solid
+wall in the players'.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 17 ext,
+16 theme, 66 guards, 110 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 40 clipboard, 43 selection, 41 prefabs, 52 transform, 32 hatch,
+29 print, 31 players -- 815 checks, all passing, plus `battle`, over two full
+back-to-back rounds on the finished tree, with `CG_CHROME` pointed at
+`/opt/pw-browsers/chromium-1194/chrome-linux/chrome` as before.
+
+---
+
 ## 2026-10-03 — printing at scale, and seven things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 81

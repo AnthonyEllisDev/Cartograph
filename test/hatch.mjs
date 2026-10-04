@@ -304,6 +304,20 @@ await p.waitForTimeout(1500);
 t('generating again with shaded rock turns it off', (await walls()).hatch === false);
 
 await p.screenshot({ path: '/tmp/cg_hatch.png' });
+/* a wall all the way round the frame ----------------------------------------- */
+
+// With every edge cell under a wall there was no region on the edge for the
+// walk to start from, every region came out unreached, and the hatching
+// vanished from the whole map. The frame is the map's edge drawn in ink.
+await p.evaluate(() => { window.__cg.app.doc.layers.find((x) => x.kind === 'walls').hatch = true; });
+await setWalls([...box(6, 6, 14, 12), ...box(0, 0, 40, 30)]);
+await p.waitForTimeout(300);
+const framedOut = (await ink(420 - 30, 500, 420 - 8, 760)) + (await ink(600, 840 + 8, 800, 840 + 30));
+const framedIn = (await ink(420 + 8, 500, 420 + 30, 760)) + (await ink(600, 840 - 30, 800, 840 - 8));
+t('a wall round the whole frame still leaves the rock outside a room hatched', framedOut > 300,
+  framedOut + ' inked pixels');
+t('and the room inside it clean', framedIn === 0, framedIn + ' inked pixels');
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 report();

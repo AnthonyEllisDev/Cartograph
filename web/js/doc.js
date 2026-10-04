@@ -236,6 +236,42 @@ export function layerVisible(doc, layer) {
   return !g || g.visible;
 }
 
+/** Whether a layer is for the GM's eyes only, which its group can decide for
+ *  it. Read the way layerVisible is, so a group marked GM-only keeps every
+ *  layer in it out of the players' copy without each needing the flag. */
+export function layerGM(doc, layer) {
+  if (layer.gm) return true;
+  const g = groupOf(doc, layer);
+  return !!(g && g.gm);
+}
+
+/** What the players' copy will leave out or change, for a dialog to say so
+ *  before anyone prints forty sheets of it. Counts only what would be drawn. */
+export function playersSummary(doc) {
+  const shown = doc.layers.filter((l) => l.kind !== 'group' && layerVisible(doc, l));
+  const gm = shown.filter((l) => layerGM(doc, l));
+  const kept = shown.filter((l) => !layerGM(doc, l));
+  const count = (kind, test) => kept.filter((l) => l.kind === kind)
+    .reduce((n, l) => n + l.ops.filter(test).length, 0);
+  return {
+    layers: gm.map((l) => l.name),
+    secret: count('walls', (o) => o && o.kind === 'secret'),
+    pins: count('notes', () => true),
+  };
+}
+
+/** The same, as a sentence. */
+export function playersText(doc) {
+  const s = playersSummary(doc);
+  const parts = [];
+  if (s.secret) parts.push(`${s.secret} secret door${s.secret === 1 ? ' drawn as a wall' : 's drawn as walls'}`);
+  if (s.pins) parts.push(`${s.pins} note pin${s.pins === 1 ? '' : 's'} left off`);
+  if (s.layers.length) parts.push(`GM-only ${s.layers.length === 1 ? 'layer' : 'layers'} left out (${s.layers.join(', ')})`);
+  return parts.length ? 'The players\' copy: ' + parts.join('; ') + '.'
+    : 'Nothing on this map is marked for the GM alone yet, so the players\' copy would be the same picture. '
+      + 'Mark a layer GM only in its properties, or draw a secret door.';
+}
+
 /** A layer's opacity with its group's folded in. */
 export function layerAlpha(doc, layer) {
   const own = layer.opacity != null ? layer.opacity : 1;

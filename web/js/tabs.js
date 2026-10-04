@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { library, loadLibrary, forgetImages, forgetPatterns, warm } from './assets.js';
 import { extensions, loadExtensions, setExtensionEnabled, unloadExtension } from './extensions.js';
-import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings } from './app.js';
+import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
 import * as hex from './hex.js';
 import * as R from './render.js';
@@ -419,7 +419,10 @@ export function renderSettings() {
   }));
 
   root.appendChild(el('h3', { text: 'Editing' }));
-  root.appendChild(checkbox('Autosave while you work', s.autosave, (v) => { s.autosave = v; saveSettings(); }));
+  root.appendChild(checkbox('Autosave while you work', s.autosave, (v) => {
+    // Off clears a pending deadline; on arms one if there is unsaved work.
+    s.autosave = v; saveSettings(); if (!v || app.dirty) scheduleAutosave();
+  }));
   root.appendChild(numberField('Autosave every (seconds)', s.autosaveSeconds, 15, 900, (v) => {
     s.autosaveSeconds = v; saveSettings();
   }));

@@ -7,7 +7,7 @@
  */
 
 import { imageNow, pattern } from './assets.js';
-import { LAYER_KINDS, NOTE_DEFAULTS, gridStepPx, layerAlpha, layerVisible } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, gridStepPx, layerAlpha, layerGM, layerVisible } from './doc.js';
 import * as hex from './hex.js';
 import * as light from './light.js';
 import { clamp, makeCanvas, rng } from './util.js';
@@ -1305,7 +1305,7 @@ function hatchFields(layer, width) {
   }
 
   // Fewest walls from the edge: a 0-1 walk, doors costing nothing. A region
-  // nothing reaches is rock, as an unreached cell of the map is.
+  // nothing reaches keeps -1, which the parity test below reads as floor.
   const dist = new Int32Array(regions).fill(-1);
   // A region can be queued once per improvement, so the deque is sized by the
   // links rather than the regions, with room to grow at either end.
@@ -1316,6 +1316,23 @@ function hatchFields(layer, width) {
   const edgeRegion = (i) => { const r = label[i]; if (r >= 0 && dist[r] < 0) { dist[r] = 0; deque[back++] = r; } };
   for (let x = 0; x < cw; x++) { edgeRegion(x); edgeRegion((ch - 1) * cw + x); }
   for (let y = 0; y < ch; y++) { edgeRegion(y * cw); edgeRegion(y * cw + cw - 1); }
+  // A wall drawn all the way round the frame leaves no region on the edge to
+  // start from, and every region came out unreached -- no hatching anywhere.
+  // Such a wall is the map's edge drawn in ink, so what lies just inside it
+  // starts the walk instead, as it would with the wall a cell further out.
+  if (front === back) {
+    const depth = Math.ceil(barrier / s) + 2;
+    const inward = (x, y, dx, dy) => {
+      for (let t = 0; t <= depth; t++) {
+        const xx = x + dx * t, yy = y + dy * t;
+        if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) return;
+        const i = yy * cw + xx;
+        if (label[i] >= 0) { edgeRegion(i); return; }
+      }
+    };
+    for (let x = 0; x < cw; x++) { inward(x, 0, 0, 1); inward(x, ch - 1, 0, -1); }
+    for (let y = 0; y < ch; y++) { inward(0, y, 1, 0); inward(cw - 1, y, -1, 0); }
+  }
   const done = new Uint8Array(regions);
   while (front < back) {
     const r = deque[front++];
@@ -2055,7 +2072,8 @@ function roundRect(ctx, x, y, w, h, r) {
 /** The map as one picture. `rect`, in map pixels, takes a piece of it instead:
  *  printing at scale wants a 60-cm map one page at a time, and flattening the
  *  whole of it at 300 dpi first would be a canvas no browser will make. */
-export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true, rect = null } = {}) {
+export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true, rect = null,
+                          players = false } = {}) {
   const r = rect || { x: 0, y: 0, w: view.doc.width, h: view.doc.height };
   const w = Math.max(1, Math.round(r.w * scale));
   const h = Math.max(1, Math.round(r.h * scale));
@@ -2069,14 +2087,60 @@ export function flatten({ scale = 1, grid = true, paper = true, lights = true, n
     if (layer.kind === 'paper' && !paper) continue;
     if (layer.kind === 'lights' && !lights) continue;
     if (layer.kind === 'notes' && !notes) continue;
+    if (players && !forPlayers(layer)) continue;
+    const src = players ? playersCanvas(layer) : canvasFor(layer);
     ctx.globalAlpha = layerAlpha(view.doc, layer);
     ctx.globalCompositeOperation = layer.blend || 'source-over';
-    if (rect) ctx.drawImage(canvasFor(layer), r.x, r.y, r.w, r.h, 0, 0, w, h);
-    else ctx.drawImage(canvasFor(layer), 0, 0, w, h);
+    if (rect) ctx.drawImage(src, r.x, r.y, r.w, r.h, 0, 0, w, h);
+    else ctx.drawImage(src, 0, 0, w, h);
   }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   return out;
+}
+
+/* ------------------------------------------------------- the players' copy */
+
+/* The map the GM keeps and the map the players are shown are not the same
+ * picture. The players' copy leaves out every layer marked GM-only and every
+ * note pin -- the numbers are the GM's key, and a numbered room is a spoiler
+ * -- and draws a secret door as the plain wall the players believe it to be.
+ * It is made at export time from the same layers, never stored: one map, two
+ * ways of looking at it, so the two copies cannot drift apart. */
+
+/** Whether a layer goes into the players' copy at all. */
+export function forPlayers(layer) {
+  if (layer.kind === 'notes') return false;
+  return !layerGM(view.doc, layer);
+}
+
+/** The ops a players' copy draws for a walls layer: every secret door as a
+ *  wall. The same array when there is nothing to hide. */
+export function playersWalls(ops) {
+  if (!ops.some((o) => o && o.kind === 'secret')) return ops;
+  return ops.map((o) => (o && o.kind === 'secret' ? Object.assign({}, o, { kind: 'wall' }) : o));
+}
+
+// One redrawn walls canvas per layer, kept while the layer is unchanged: a
+// print asks for it once a sheet, and the hatching under it is not cheap.
+const playersCache = new Map();
+
+/** A layer's canvas as the players see it. Only a walls layer holding a
+ *  secret door differs from what is already on screen. */
+function playersCanvas(layer) {
+  if (layer.kind !== 'walls') return canvasFor(layer);
+  const ops = playersWalls(layer.ops);
+  if (ops === layer.ops) return canvasFor(layer);
+  const key = JSON.stringify([view.doc.width, view.doc.height, layer]);
+  const hit = playersCache.get(layer.id);
+  if (hit && hit.key === key) return hit.canvas;
+  const c = makeCanvas(view.doc.width, view.doc.height);
+  renderWalls(Object.assign({}, layer, { ops }), c.getContext('2d'));
+  for (const id of playersCache.keys()) {
+    if (!view.doc.layers.some((l) => l.id === id)) playersCache.delete(id);
+  }
+  playersCache.set(layer.id, { key, canvas: c });
+  return c;
 }
 
 /* --------------------------------------------------------------- the key */
@@ -2185,9 +2249,12 @@ export function withKey(image, sections, title) {
  * Coordinates are in grid cells, not pixels, which is why the map needs a real
  * scale before this means anything.
  */
-export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
+export function toUVTT(dataUrl, { bakedLighting = true, players = false } = {}) {
   const doc = view.doc;
   const cell = gridStepPx(doc) || 64;
+  // The players' copy: a GM-only layer is not in the picture, so it is not in
+  // the data either.
+  const usable = (l) => !players || forPlayers(l);
   const wallLayer = doc.layers.find((l) => l.kind === 'walls');
   const lightLayer = doc.layers.find((l) => l.kind === 'lights');
   const toCell = (pt) => ({ x: +(pt.x / cell).toFixed(4), y: +(pt.y / cell).toFixed(4) });
@@ -2198,8 +2265,11 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
   // picture half of this export goes through flatten, which drops a hidden
   // layer, so exporting sight lines for walls that are not in the image
   // stops tokens dead at a barrier nobody can see.
-  const wallsShown = wallLayer && layerVisible(doc, wallLayer);
-  for (const item of (wallsShown ? wallLayer.ops : [])) {
+  const wallsShown = wallLayer && layerVisible(doc, wallLayer) && usable(wallLayer);
+  // A secret door in the players' copy is drawn as a wall, so it goes across
+  // as one: a portal would put a door icon on the tabletop and give it away.
+  const wallOps = !wallsShown ? [] : players ? playersWalls(wallLayer.ops) : wallLayer.ops;
+  for (const item of wallOps) {
     const kind = WALL_KINDS[item.kind] || WALL_KINDS.wall;
     // Guarded as renderWalls and wallSegments already guard: the wall tool
     // cannot make a one-point wall, but a hand-edited map or an extension can,
@@ -2223,7 +2293,7 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
   // The format takes ranges in grid cells like everything else, and colours as
   // eight hex digits with the alpha first.
   const lights = [];
-  for (const op of (lightLayer && layerVisible(doc, lightLayer) ? lightLayer.ops : [])) {
+  for (const op of (lightLayer && layerVisible(doc, lightLayer) && usable(lightLayer) ? lightLayer.ops : [])) {
     if (op.on === false) continue;
     const { dim } = lightRadii(op);
     lights.push({
@@ -2250,7 +2320,7 @@ export function toUVTT(dataUrl, { bakedLighting = true } = {}) {
     // caller decides which, and says so here.
     environment: {
       baked_lighting: bakedLighting,
-      ambient_light: ambientArgb(doc, lightLayer),
+      ambient_light: ambientArgb(doc, lightLayer && usable(lightLayer) ? lightLayer : null),
     },
     lights,
     image: dataUrl.split(',')[1],

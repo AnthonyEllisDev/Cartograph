@@ -223,6 +223,40 @@ const palette = await p.evaluate(async () => {
 });
 t('the palette offers it too', palette);
 
+/* printing a map that changes under it -------------------------------------- */
+
+const raced = await p.evaluate(async () => {
+  const m = await import('/js/print.js');
+  const { markDirty } = await import('/js/app.js');
+  const doc = window.__cg.app.doc;
+  const job = m.buildPrint(doc, { index: false, dpi: 100, cellMm: 25.4 });
+  // An edit lands between sheets, as a stroke painted during a long job does.
+  setTimeout(() => markDirty(), 0);
+  try { await job; return 'finished'; } catch (err) { return err.message; }
+});
+t('a print the map changed under stops rather than mixing two maps', /changed while it was being drawn/.test(raced), raced);
+
+/* lighting with the darkness at nought ------------------------------------- */
+
+// The switch was offered only when the darkness was above nought, but the
+// lights still draw their pools without it -- and with no switch shown, the
+// setting left from an earlier print decided it unseen.
+await p.evaluate(async () => {
+  const { makeLayer } = await import('/js/doc.js');
+  const { app, R } = window.__cg;
+  const l = makeLayer('lights', { name: 'Lighting' });
+  l.ambient = 0;
+  l.ops.push({ id: 'lt1', x: 300, y: 300, bright: 140, dim: 280, color: '#ffd9a0' });
+  app.doc.layers.push(l);
+  R.invalidate(l);
+});
+await p.keyboard.press('Control+p');
+await p.waitForSelector('.modal [data-print="preview"]', { timeout: 5000 });
+const litSwitch = await p.locator('.modal label.check:has-text("Include the lighting")').count();
+await p.click('.modal button:has-text("Cancel")');
+await p.waitForTimeout(200);
+t('a lighting layer with no darkness still offers the lighting switch', litSwitch === 1, litSwitch);
+
 t('nothing was fetched from off this machine', offHost.length === 0, offHost.slice(0, 3).join(' '));
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 

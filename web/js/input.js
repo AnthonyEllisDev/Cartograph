@@ -129,6 +129,10 @@ export function initInput() {
       s: 'stamp', p: 'path', t: 'label', n: 'note', w: 'wall', m: 'measure', v: 'select', h: 'pan',
     };
     if (!ev.ctrlKey && !ev.metaKey && shortcuts[ev.key.toLowerCase()]) {
+      // Not with the button down: the release would go to the new tool, so a
+      // stroke never reached its commit and a Select drag moved things with no
+      // undo entry and no dirty flag.
+      if (state.drag || state.panning) { ev.preventDefault(); return; }
       setTool(shortcuts[ev.key.toLowerCase()]);
       ev.preventDefault();
     }

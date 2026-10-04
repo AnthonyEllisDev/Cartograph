@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { app, boot, emit, markDirty, newMap, on, saveProject, scheduleAutosave } from './app.js';
 import { canRedo, canUndo, history, redo, undo } from './history.js';
-import { keyMarkdown, layerVisible, noteKey } from './doc.js';
+import { keyMarkdown, layerVisible, noteKey, playersText } from './doc.js';
 import * as R from './render.js';
 import { initInput } from './input.js';
 import { extensions, loadExtensions, renderExtensionLayer } from './extensions.js';
@@ -204,6 +204,12 @@ async function exportDialog() {
   const noteCount = key.reduce((n, sct) => n + sct.entries.length, 0);
   const vtt = el('input', { type: 'checkbox' });
   vtt.checked = !!(walls && walls.ops.length);
+  // Two pictures of one map: the GM's with everything, and the one the players
+  // are shown. Unticked by default, so an export is still one file.
+  const players = el('input', { type: 'checkbox', dataset: { export: 'players' } });
+  const playersNote = el('p', { class: 'muted', text: playersText(app.doc), dataset: { export: 'players-note' } });
+  playersNote.hidden = true;
+  players.addEventListener('change', () => { playersNote.hidden = !players.checked; });
 
   let go = false;
   await modal({
@@ -219,6 +225,8 @@ async function exportDialog() {
         text: 'Set the key beside the image' })]) : null,
       key.length ? el('label', { class: 'check' }, [keyFile, el('span', {
         text: 'Also write the key as a Markdown file' })]) : null,
+      el('label', { class: 'check' }, [players, el('span', { text: 'Also write a players\' copy' })]),
+      playersNote,
       el('label', { class: 'check' }, [download, el('span', { text: 'Also download a copy' })]),
       el('label', { class: 'check' }, [vtt, el('span', {
         text: 'Also write a Universal VTT file' + (walls ? '' : ' (this map has no walls layer)') })]),
@@ -279,14 +287,46 @@ async function exportDialog() {
     }
   }
 
-  if (download.checked) {
-    const url = URL.createObjectURL(blob);
-    const a = el('a', { href: url, download: name + '.png' });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // Named after the GM's image, as the key is, so the pair sort together.
+  const stem = written ? written.split(/[\\/]/).pop().replace(/\.png$/i, '') : name;
+  let playersBlob = null;
+  if (players.checked) {
+    // No pins and no key: the numbers are the GM's.
+    const pc = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked, paper: paper.checked,
+                           lights: lights.checked, players: true });
+    playersBlob = await new Promise((resolve) => pc.toBlob(resolve, 'image/png'));
+    try {
+      const res = await api.exportImage(stem + '-players.png', playersBlob);
+      toast('Players\' copy written to ' + res.path, 'good');
+    } catch (err) {
+      toast('Players\' copy failed: ' + err.message, 'bad');
+    }
+    if (vtt.checked) {
+      try {
+        const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false, players: true });
+        const payload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false, players: true });
+        const res = await api.exportImage(stem + '-players.dd2vtt',
+          new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+        toast('Players\' tabletop file written to ' + res.path, 'good');
+      } catch (err) {
+        toast('Players\' VTT export failed: ' + err.message, 'bad');
+      }
+    }
   }
+
+  if (download.checked) {
+    offerDownload(blob, name + '.png');
+    if (playersBlob) offerDownload(playersBlob, name + '-players.png');
+  }
+}
+
+function offerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 // A small handle for the test suite and for anyone poking at the program in

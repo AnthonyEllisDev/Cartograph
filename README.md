@@ -336,10 +336,9 @@ the grid or the paper.
   it as a Markdown file named after the image, `Harbour-key.md` beside
   `Harbour.png`. A key longer than the map runs on below it rather than being
   cut off.
-- **Hide the notes layer for the players' copy.** A hidden layer's pins are
-  neither drawn nor keyed, and the export dialog stops offering them. Two notes
-  layers — yours and theirs, say — each count from 1 and get their own heading
-  in the key.
+- **The players' copy leaves the pins off** (see below), and a hidden notes
+  layer's pins are neither drawn nor keyed. Two notes layers — yours and
+  theirs, say — each count from 1 and get their own heading in the key.
 
 ### Printing at scale
 
@@ -369,6 +368,34 @@ runs from 100 to 300 dpi; 150 is plenty for a battle map. The grid, the
 lighting and the note pins can each be left off, as on export. A print of more
 than 200 sheets is refused — that is a poster, and wants a print shop and a
 PNG. Printing does not touch the map and is not a step in the history.
+
+### The players' copy
+
+The map the GM keeps and the map the players are shown are not the same
+picture. Tick **Also write a players' copy** in the Export dialog, or pick
+*Copy: The players'* in the Print dialog, and Cartograph makes the second one
+from the same layers:
+
+- **Secret doors are drawn as plain wall**, the way the players believe them
+  to be. The GM's copy keeps the dashed door.
+- **Note pins are left off.** The numbers are the GM's key, and a numbered
+  room is a spoiler.
+- **Any layer marked GM only is left out.** The switch is in every layer's
+  properties, under *Locked*; a group marked GM only takes every layer in it
+  out too, and the layer row says **GM**. Traps, a hidden treasure stamp, the
+  GM's own labels — put them on a layer of their own and mark it.
+
+The dialog says what the players' copy will change before you make it. Export
+writes `Harbour-players.png` beside `Harbour.png`, and with the Universal VTT
+box ticked a `Harbour-players.dd2vtt` too, in which a secret door goes across
+as a wall rather than a door, so the tabletop does not give it away with a door
+icon; turn it into a door there when it is found. Printing writes
+`Harbour - players - print.pdf`, and says *(players' copy)* on every sheet.
+
+Nothing about the players' copy is stored except the GM-only mark: it is the
+same map looked at another way, so the two copies cannot drift apart. Marking a
+layer changes nothing on screen or in the GM's copy, and is a step in the
+history like anything else.
 
 ### Working at scale
 
@@ -514,7 +541,12 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 777 assertions in all: `print.mjs`
+There are narrower scripts beside it, 815 assertions in all: `players.mjs`
+(the players' copy: exactly the GM's picture with the pins off, the secret
+doors drawn as walls and the GM-only layers out, the GM's copy and the screen
+untouched by the mark, a group marking its members, the mark's undo step and
+round trip, the tabletop file agreeing with the picture, and Export and Print
+writing the copy), `print.mjs`
 (printing at scale: the sheets covering the map with exactly the overlap
 between them, a square printing exactly its size on A4, Letter and a hex map,
 the PDF's cross-references, a piece of the map matching the whole, the map

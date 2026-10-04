@@ -216,6 +216,9 @@ input[type=color] { width: 100%; height: 26px; padding: 2px; background: var(--p
 .layer.is-hidden { opacity: .45; }
 .layer .lname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .layer .lkind { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+/* GM only: a badge rather than a colour, so it reads in every theme */
+.layer .lgm { font-size: 9px; font-weight: 600; letter-spacing: .06em; padding: 0 4px; border-radius: 3px;
+              border: 1px solid var(--line-hi); color: var(--dim); }
 .layer.in-group { margin-left: 14px; border-left: 2px solid var(--line-hi); }
 .layer.is-group { background: var(--panel-3); }
 .layer.is-group .lname { font-weight: 600; }
