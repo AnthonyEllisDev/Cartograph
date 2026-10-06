@@ -11,7 +11,7 @@ import * as R from './render.js';
 import { TOOLS, currentTool, setTool } from './tools.js';
 import { $, clamp, modalOpen } from './util.js';
 
-const state = { drag: null, space: false, panning: null, lastPoint: null };
+const state = { drag: null, space: false, panning: null, lastPoint: null, over: false };
 
 function pointFromEvent(ev, tool) {
   const rect = R.view.canvas.getBoundingClientRect();
@@ -81,7 +81,9 @@ export function initInput() {
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
+  canvas.addEventListener('pointerenter', () => { state.over = true; });
   canvas.addEventListener('pointerleave', () => {
+    state.over = false;
     R.view.cursor = null;
     R.requestDraw();
   });
@@ -95,6 +97,18 @@ export function initInput() {
   }, { passive: false });
 
   window.addEventListener('keydown', (ev) => {
+    // Space over the map is the pan, even with a switch in a panel still
+    // focused from the click that set it: the focus stayed on the checkbox,
+    // the key went to it, and the drag that should have panned painted
+    // instead -- and the release toggled the switch. A text box keeps it.
+    const t = ev.target;
+    if (ev.code === 'Space' && state.over && t instanceof HTMLInputElement
+        && ['checkbox', 'radio', 'range', 'color', 'button'].includes(t.type)
+        && !modalOpen() && !paletteOpen()) {
+      ev.preventDefault();
+      if (!state.space) { state.space = true; t.blur(); }
+      return;
+    }
     // A dropdown takes keys too: it jumps to the option you type. Without it
     // here, Delete in a label's Style menu deleted the label, and typing "w"
     // to reach Water picked up the Wall tool.

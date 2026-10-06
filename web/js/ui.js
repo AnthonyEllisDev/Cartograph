@@ -12,7 +12,7 @@ import { applyPreset, deletePreset, presetsFor, savePreset } from './presets.js'
 import { extensions } from './extensions.js';
 import { icon } from './icons.js';
 import * as R from './render.js';
-import { TOOLS, currentTool, deleteSelection, selectObject, selectedObject, selectedObjects, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
+import { TOOLS, currentTool, deleteSelection, invalidateAll, selectObject, selectedObject, selectedObjects, setTool, toolForLayer, toolTarget, unitPx } from './tools.js';
 import { copySelection, duplicateSelection } from './clipboard.js';
 import { loadPrefabs, prefabStrip, saveSelectionAsPrefab } from './prefabs.js';
 import { mirrorSelection, turnSelection, turnStep } from './transform.js';
@@ -541,7 +541,7 @@ function moveGroup(moving, target) {
   for (const l of block) layers.splice(layers.indexOf(l), 1);
   const at = below ? layers.indexOf(run[run.length - 1]) + 1 : layers.indexOf(run[0]);
   layers.splice(at, 0, ...block);
-  R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); renderLayers();
+  restacked(block);
 }
 
 function moveLayer(fromId, toId) {
@@ -561,6 +561,15 @@ function moveLayer(fromId, toId) {
   if (from < 0 || to < 0) return;
   const [moved] = app.doc.layers.splice(from, 1);
   app.doc.layers.splice(to, 0, moved);
+  restacked([moved]);
+}
+
+/** After a drag in the Layers panel. The shadows come from the first walls
+ *  layer in the stack, so moving one past another changes which walls cast
+ *  them: composited alone, the screen kept the old shadows and a reload drew
+ *  the new ones. Only a moved walls layer can change which is first. */
+function restacked(moved) {
+  if (moved.some((l) => l.kind === 'walls')) R.relightAll();
   R.compositeAll(); R.requestDraw(); markDirty(); scheduleAutosave(); renderLayers();
 }
 
@@ -1230,9 +1239,13 @@ function turnButtons() {
 }
 
 /** Several things held at once: what they are, and what can be done to all of
- *  them. Their fields are not offered, because an edit to "the colour" of a
- *  wall, a lamp and a stamp has no single meaning; click one on its own to
- *  edit it. Built from text nodes, as everything that names a layer is. */
+ *  them. Built from text nodes, as everything that names a layer is.
+ *
+ *  When every one of them is the same kind of thing, the fields they share
+ *  are offered too, and a change goes to all of them as one step: six torches
+ *  turned blue, a corridor of doors made secret, every village label set in
+ *  one size. A mixed set offers none, because "the colour" of a wall, a lamp
+ *  and a stamp has no single meaning. */
 function renderSetSummary(panel, root, set) {
   panel.hidden = false;
   const counts = new Map();
@@ -1243,10 +1256,77 @@ function renderSetSummary(panel, root, set) {
   const parts = [...counts].map(([noun, n]) => n + ' ' + noun + (n > 1 ? plural(noun) : ''));
   root.appendChild(el('p', { class: 'muted small', 'data-selection-count': String(set.length),
     text: set.length + ' things picked up: ' + parts.join(', ') + '.' }));
+  const shared = setFields(set);
+  for (const spec of shared) {
+    root.appendChild(field(spec, (v) => editSet(set, spec.key, spec.scale ? v * spec.scale : v)));
+  }
   root.appendChild(setButtons());
   root.appendChild(turnButtons());
   root.appendChild(el('p', { class: 'muted small',
-    text: 'Drag any of them to move them all; R turns the lot. Shift-click adds or removes one. To edit one of them, press Escape to put the rest down and click it.' }));
+    text: (shared.length ? 'A change above goes to every one of them. ' : '')
+      + 'Drag any of them to move them all; R turns the lot. Shift-click adds or removes one. To edit one of them on its own, press Escape to put the rest down and click it.' }));
+}
+
+/* What makes each thing itself is not offered for a set: a label's wording,
+ * a territory's name, a note's title and text. Set to one value across six
+ * things they would be six copies of one name. A stamp's turn is left to the
+ * Turn buttons, which turn the set about its middle; one angle for all of
+ * them would spin each on its own spot instead. */
+const SET_SKIP = { labels: ['text'], regions: ['name'], notes: ['title', 'body'], objects: ['rot'] };
+
+/** The fields a set shares, shown at its primary's value and marked where the
+ *  things held disagree. None for a set of more than one kind. */
+function setFields(set) {
+  const kind = set[0].layer.kind;
+  if (!set.every((s) => s.layer.kind === kind)) return [];
+  const make = OBJECT_FIELDS[kind];
+  if (!make) return [];
+  const skip = SET_SKIP[kind] || [];
+  const all = set.map((s) => make(s.item));
+  const out = [];
+  all[0].forEach((spec, i) => {
+    if (skip.includes(spec.key)) return;
+    const mixed = all.some((specs) => JSON.stringify(specs[i].value) !== JSON.stringify(spec.value));
+    out.push(Object.assign({}, spec, { label: spec.label + (mixed ? ' (mixed)' : '') }));
+  });
+  return out;
+}
+
+/** One field of every thing held, as one undo step. The same rules as
+ *  editObject, applied across the lot: deep copies both ways, nothing pushed
+ *  when nothing moved, keys a snapshot lacks taken off on the way back, and
+ *  every layer touched rebuilt -- walls last, so the lighting is cast from
+ *  where the walls are now. */
+function editSet(set, key, value) {
+  const steps = [];
+  for (const { layer, item } of set) {
+    const before = JSON.parse(JSON.stringify(item));
+    item[key] = value;
+    if (JSON.stringify(before) === JSON.stringify(item)) continue;
+    steps.push({ layer, item, before, after: JSON.parse(JSON.stringify(item)) });
+  }
+  if (!steps.length) return;
+  const layers = new Set(steps.map((st) => st.layer));
+  const done = () => { invalidateAll(layers); renderLayers(); renderSelection(); };
+  const put = (which) => {
+    for (const st of steps) {
+      const snap = st[which];
+      for (const k of Object.keys(st.item)) if (!(k in snap)) delete st.item[k];
+      Object.assign(st.item, JSON.parse(JSON.stringify(snap)));
+    }
+    done();
+  };
+  // Rebuilt at once, unlike a single edit: no field offered for a set takes
+  // typing, and the "(mixed)" marks have to come off what was just evened out.
+  done();
+  const noun = OBJECT_NOUNS[set[0].layer.kind] || 'thing';
+  pushEntry({
+    label: 'Edit ' + steps.length + ' ' + noun + (steps.length > 1 ? plural(noun) : ''),
+    bytes: 0,
+    undo() { put('before'); },
+    redo() { put('after'); },
+  });
+  markDirty(); scheduleAutosave();
 }
 
 function plural(noun) { return /(s|x|ch|sh)$/.test(noun) ? 'es' : 's'; }

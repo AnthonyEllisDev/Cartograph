@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { library, loadLibrary, forgetImages, forgetPatterns, warm } from './assets.js';
 import { extensions, loadExtensions, setExtensionEnabled, unloadExtension } from './extensions.js';
-import { app, emit, markDirty, newMap, openDocument, saveProject, saveSettings, scheduleAutosave } from './app.js';
+import { app, emit, markDirty, newMap, openDocument, rescheduleAutosave, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
 import * as hex from './hex.js';
 import * as R from './render.js';
@@ -164,7 +164,9 @@ export async function renderProjects() {
             });
             if (!go) return;
             await api.deleteProject(project.slug);
-            if (app.slug === project.slug) app.slug = null;
+            // The open map is now on screen and nowhere on disk, and the top
+            // bar went on saying "saved" about it.
+            if (app.slug === project.slug) { app.slug = null; emit('dirty', app.dirty); }
             renderProjects();
             toast('Deleted', 'good');
           },
@@ -424,7 +426,7 @@ export function renderSettings() {
     s.autosave = v; saveSettings(); if (!v || app.dirty) scheduleAutosave();
   }));
   root.appendChild(numberField('Autosave every (seconds)', s.autosaveSeconds, 15, 900, (v) => {
-    s.autosaveSeconds = v; saveSettings();
+    s.autosaveSeconds = v; saveSettings(); rescheduleAutosave();
   }));
   root.appendChild(checkbox('Show the brush outline', s.showCursor, (v) => {
     s.showCursor = v; saveSettings(); R.requestDraw();

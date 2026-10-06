@@ -192,7 +192,7 @@ async function exportDialog() {
 
   const walls = app.doc.layers.find((l) => l.kind === 'walls');
   const lit = app.doc.layers.find((l) => l.kind === 'lights'
-    && layerVisible(app.doc, l) && l.ambient > 0);
+    && layerVisible(app.doc, l) && (l.ambient > 0 || l.ops.length));
   const hexGrid = app.doc.layers.find((l) => l.kind === 'grid' && l.type === 'hex');
   const lights = el('input', { type: 'checkbox' }); lights.checked = true;
   // Only the notes that would be drawn: hiding the notes layer is how a map
@@ -247,11 +247,41 @@ async function exportDialog() {
   });
   if (!go) return;
 
-  let canvas = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked,
+  // Every picture is drawn here, before the first await. Each one is read
+  // from whatever map is on screen at the time, and the window stays live
+  // while the files go up: open another map during a slow upload and the
+  // players' copy came out of that one, under this one's name -- the race
+  // Print was closed against on 2026-10-04.
+  const doc = app.doc;
+  const res1 = parseFloat(scale.value);
+  let canvas = R.flatten({ scale: res1, grid: grid.checked,
                            paper: paper.checked, lights: lights.checked, notes: pins.checked });
-  if (key.length && keyBeside.checked) canvas = R.withKey(canvas, key, app.doc.name);
+  if (key.length && keyBeside.checked) canvas = R.withKey(canvas, key, doc.name);
+  const keyText = key.length && keyFile.checked ? keyMarkdown(doc) : null;
+  // The tabletop does its own lighting, so it gets the map unlit and the
+  // lights as data -- otherwise the two stack and the map comes out washed.
+  let vttPayload = null, vttError = null;
+  if (vtt.checked) {
+    try {
+      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false,
+                               notes: pins.checked });
+      vttPayload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false });
+    } catch (err) { vttError = err; }
+  }
+  // No pins and no key in the players' copy: the numbers are the GM's.
+  const pc = players.checked
+    ? R.flatten({ scale: res1, grid: grid.checked, paper: paper.checked, lights: lights.checked, players: true })
+    : null;
+  let playersPayload = null, playersError = null;
+  if (players.checked && vtt.checked) {
+    try {
+      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false, players: true });
+      playersPayload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false, players: true });
+    } catch (err) { playersError = err; }
+  }
+
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-  const name = (app.doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
+  const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
   let written = null;
   try {
     const res = await api.exportImage(name + '.png', blob);
@@ -260,13 +290,14 @@ async function exportDialog() {
   } catch (err) {
     toast('Export failed: ' + err.message, 'bad');
   }
-  if (key.length && keyFile.checked) {
-    // Named after the image it goes with, which the server may have numbered
-    // ("map-2.png") to avoid writing over an earlier export.
-    const stem = written ? written.split(/[\\/]/).pop().replace(/\.png$/i, '') : name;
+  // Everything else is named after the image it goes with, which the server
+  // may have numbered ("map-2.png") to avoid writing over an earlier export,
+  // so the set sorts together. The GM's .dd2vtt used to take the bare name
+  // and sit beside an older export's image.
+  const stem = written ? written.split(/[\\/]/).pop().replace(/\.png$/i, '') : name;
+  if (keyText != null) {
     try {
-      const res = await api.exportImage(stem + '-key.md',
-        new Blob([keyMarkdown(app.doc)], { type: 'text/markdown' }));
+      const res = await api.exportImage(stem + '-key.md', new Blob([keyText], { type: 'text/markdown' }));
       toast('Key written to ' + res.path, 'good');
     } catch (err) {
       toast('Key export failed: ' + err.message, 'bad');
@@ -274,26 +305,17 @@ async function exportDialog() {
   }
   if (vtt.checked) {
     try {
-      // The tabletop does its own lighting, so it gets the map unlit and the
-      // lights as data — otherwise the two stack and the map comes out washed.
-      const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false,
-                               notes: pins.checked });
-      const payload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false });
-      const res = await api.exportImage(name + '.dd2vtt',
-        new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+      if (vttError) throw vttError;
+      const res = await api.exportImage(stem + '.dd2vtt',
+        new Blob([JSON.stringify(vttPayload)], { type: 'application/json' }));
       toast('Tabletop file written to ' + res.path, 'good');
     } catch (err) {
       toast('VTT export failed: ' + err.message, 'bad');
     }
   }
 
-  // Named after the GM's image, as the key is, so the pair sort together.
-  const stem = written ? written.split(/[\\/]/).pop().replace(/\.png$/i, '') : name;
   let playersBlob = null;
-  if (players.checked) {
-    // No pins and no key: the numbers are the GM's.
-    const pc = R.flatten({ scale: parseFloat(scale.value), grid: grid.checked, paper: paper.checked,
-                           lights: lights.checked, players: true });
+  if (pc) {
     playersBlob = await new Promise((resolve) => pc.toBlob(resolve, 'image/png'));
     try {
       const res = await api.exportImage(stem + '-players.png', playersBlob);
@@ -303,10 +325,9 @@ async function exportDialog() {
     }
     if (vtt.checked) {
       try {
-        const full = R.flatten({ scale: 1, grid: grid.checked, paper: paper.checked, lights: false, players: true });
-        const payload = R.toUVTT(full.toDataURL('image/png'), { bakedLighting: false, players: true });
+        if (playersError) throw playersError;
         const res = await api.exportImage(stem + '-players.dd2vtt',
-          new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+          new Blob([JSON.stringify(playersPayload)], { type: 'application/json' }));
         toast('Players\' tabletop file written to ' + res.path, 'good');
       } catch (err) {
         toast('Players\' VTT export failed: ' + err.message, 'bad');

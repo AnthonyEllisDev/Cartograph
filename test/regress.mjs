@@ -2123,6 +2123,302 @@ const driftFromRebuild = (decode = []) => p.evaluate(async (ids) => {
     after.members.length === 1 && after.members[0] === after.gi - 1 && after.gi > after.n - 4, JSON.stringify(after));
 }
 
+/* 2026-10-05 ---------------------------------------------------------------- */
+
+const DIFF = `(a, b) => {
+  const A = a.getContext('2d').getImageData(0, 0, a.width, a.height).data;
+  const B = b.getContext('2d').getImageData(0, 0, b.width, b.height).data;
+  if (A.length !== B.length) return -1;
+  let n = 0;
+  for (let i = 0; i < A.length; i += 4) {
+    if (A[i] !== B[i] || A[i + 1] !== B[i + 1] || A[i + 2] !== B[i + 2] || A[i + 3] !== B[i + 3]) n++;
+  }
+  return n;
+}`;
+
+{
+  // A wall round the whole frame: the walk then starts just inside it, and
+  // those regions were not counted as framed, so a door in a room's outside
+  // wall cost nothing and the room behind it was hatched as rock.
+  await newMap(p, { name: 'Framed Hatch', kind: 'battle', size: '20x15' });
+  const r = await p.evaluate(() => {
+    const { app, R } = window.__cg;
+    const C = 70, W = app.doc.width, H = app.doc.height;
+    let k = 0;
+    const w = (kind, x0, y0, x1, y1) => ({ id: 'fh' + (k++), kind, points: [{ x: x0, y: y0 }, { x: x1, y: y1 }] });
+    const walls = app.doc.layers.find((l) => l.kind === 'walls');
+    const room = [w('wall', 5 * C, 4 * C, 12 * C, 4 * C), w('wall', 12 * C, 4 * C, 12 * C, 10 * C),
+      w('wall', 12 * C, 10 * C, 9 * C, 10 * C), w('door', 9 * C, 10 * C, 8 * C, 10 * C),
+      w('wall', 8 * C, 10 * C, 5 * C, 10 * C), w('wall', 5 * C, 10 * C, 5 * C, 4 * C)];
+    const frame = [w('wall', 0, 0, W, 0), w('wall', W, 0, W, H), w('wall', W, H, 0, H), w('wall', 0, H, 0, 0)];
+    walls.hatch = true;
+    const ink = (x, y, ww, hh) => {
+      const d = R.canvasFor(walls).getContext('2d').getImageData(x, y, ww, hh).data;
+      let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+      return n;
+    };
+    walls.ops = room.concat(frame); R.invalidate(walls);
+    return { inside: ink(5 * C + 20, 4 * C + 20, 7 * C - 40, 6 * C - 40), outside: ink(5 * C - 40, 4 * C + 20, 30, 6 * C - 40) };
+  });
+  t('a walled frame does not hatch a room with a door in its outside wall',
+    r.inside === 0 && r.outside > 0, JSON.stringify(r));
+}
+
+{
+  // The players' copy left a GM-only walls layer out of the picture but kept
+  // its shadows in the darkness, which drew the hidden walls anyway.
+  await newMap(p, { name: 'GM Shadows', kind: 'battle', size: '20x15' });
+  const n = await p.evaluate(async (diffS) => {
+    const diff = eval(diffS);
+    const { app, R } = window.__cg;
+    const ui = await import('/js/ui.js');
+    const C = 70;
+    const walls = app.doc.layers.find((l) => l.kind === 'walls');
+    const lights = app.doc.layers.find((l) => l.kind === 'lights');
+    walls.ops = [{ id: 'gs1', kind: 'wall', points: [{ x: 8 * C, y: 2 * C }, { x: 8 * C, y: 12 * C }] }];
+    lights.ops = [{ id: 'gl1', x: 5 * C, y: 7 * C, bright: 300, dim: 700 }];
+    lights.ambient = 0.9; lights.visible = true;
+    R.invalidate(walls); R.invalidate(lights);
+    ui.setLayerGM(walls, true);
+    const players = R.flatten({ players: true, grid: false });
+    const keep = walls.ops; walls.ops = []; R.invalidate(walls);
+    const ref = R.flatten({ players: true, grid: false });
+    walls.ops = keep; R.invalidate(walls);
+    return diff(players, ref);
+  }, DIFF);
+  t('the players\' copy casts no shadow from GM-only walls', n === 0, n + ' pixels differ');
+}
+
+{
+  // Shadows come from the first walls layer. Dragging one walls layer past
+  // another composited without relighting, so a reload drew other shadows.
+  await newMap(p, { name: 'Walls Order', kind: 'battle', size: '20x15' });
+  const ids = await p.evaluate(async () => {
+    const { app, R } = window.__cg;
+    const D = await import('/js/dungeon.js');
+    const C = 70;
+    const walls = app.doc.layers.find((l) => l.kind === 'walls');
+    const lights = app.doc.layers.find((l) => l.kind === 'lights');
+    walls.ops = [[3, 3, 12, 3], [12, 3, 12, 9], [12, 9, 3, 9], [3, 9, 3, 3]].map((q, i) => (
+      { id: 'wo' + i, kind: 'wall', points: [{ x: q[0] * C, y: q[1] * C }, { x: q[2] * C, y: q[3] * C }] }));
+    lights.ops = [{ id: 'wl1', x: 7 * C, y: 6 * C, bright: 300, dim: 600 }];
+    lights.ambient = 0.8; lights.visible = true;
+    R.invalidate(lights); R.invalidate(walls);
+    walls.locked = true;   // so the dungeon adds a second walls layer
+    D.commitDungeon(D.generateDungeon({ seed: 7, rooms: 6 }, app.doc), false);
+    return app.doc.layers.filter((l) => l.kind === 'walls').map((l) => l.id);
+  });
+  await p.evaluate(([from, to]) => {
+    const dst = document.querySelector(`.layer[data-id="${to}"]`);
+    const dt = new DataTransfer(); dt.setData('text/plain', from);
+    dst.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, [ids[1], ids[0]]);
+  await p.waitForTimeout(250);
+  const r = await p.evaluate((diffS) => {
+    const diff = eval(diffS);
+    const { app, R } = window.__cg;
+    const order = app.doc.layers.filter((l) => l.kind === 'walls').map((l) => l.id);
+    const lights = app.doc.layers.find((l) => l.kind === 'lights');
+    const shown = R.flatten({ scale: 0.5 });
+    R.rebuildLayer(lights);
+    return { order, n: diff(shown, R.flatten({ scale: 0.5 })) };
+  }, DIFF);
+  t('dragging a walls layer past another relights', r.order[0] === ids[1] && r.n === 0, JSON.stringify(r));
+}
+
+{
+  // Lights draw their pools with no darkness at all, and Export hid the switch
+  // that leaves them out whenever the darkness was nought.
+  await newMap(p, { name: 'Pools Only', kind: 'battle', size: '20x15' });
+  await p.evaluate(() => {
+    const { app, R } = window.__cg;
+    const lights = app.doc.layers.find((l) => l.kind === 'lights');
+    lights.ops = [{ id: 'po1', x: 500, y: 400, bright: 150, dim: 300 }];
+    lights.ambient = 0; lights.visible = true;
+    R.invalidate(lights);
+  });
+  await p.keyboard.press('Control+e');
+  await p.waitForSelector('.modal');
+  const labels = await p.$$eval('.modal label.check span', (els) => els.map((e) => e.textContent));
+  await p.click('.modal .btn:not(.btn-primary)');
+  await p.waitForTimeout(200);
+  t('Export offers the lighting switch for lights with no darkness',
+    labels.includes('Include the lighting'), JSON.stringify(labels));
+}
+
+{
+  // Export drew the players' copy after the GM's image had gone up, from
+  // whatever was on screen by then. Changed during a slow upload, the two
+  // copies of one export disagreed.
+  await newMap(p, { name: 'Export Race', kind: 'battle', size: '20x15' });
+  const bodies = {};
+  let held = false;
+  await p.route('**/api/export**', async (route) => {
+    const u = decodeURIComponent(route.request().url());
+    const name = (u.match(/name=([^&]+)/) || [])[1] || u;
+    bodies[name] = route.request().postDataBuffer();
+    if (!held && /\.png$/.test(name) && !/-players/.test(name)) {
+      held = true;
+      // While the GM's image is in flight, change the map under the dialog.
+      await p.evaluate(() => {
+        const { app, R } = window.__cg;
+        const paper = app.doc.layers.find((l) => l.kind === 'paper');
+        paper.visible = false; R.compositeAll(); R.requestDraw();
+      });
+    }
+    await route.continue();
+  });
+  await p.keyboard.press('Control+e');
+  await p.waitForSelector('.modal');
+  await p.check('.modal [data-export="players"]');
+  // Leave the download and the tabletop file out of this one.
+  for (const lab of ['Also download a copy', 'Also write a Universal VTT file']) {
+    await p.evaluate((l) => {
+      const s = [...document.querySelectorAll('.modal label.check span')].find((x) => x.textContent.startsWith(l));
+      const box = s && s.parentElement.querySelector('input');
+      if (box && box.checked) box.click();
+    }, lab);
+  }
+  const done = p.waitForRequest((r) => decodeURIComponent(r.url()).includes('-players.png'), { timeout: 30000 });
+  await p.click('.modal .btn-primary');
+  await done;
+  await p.waitForTimeout(500);
+  await p.unroute('**/api/export**');
+  const keys = Object.keys(bodies);
+  const gm = keys.find((k) => /\.png$/.test(k) && !/-players/.test(k));
+  const pl = keys.find((k) => /-players\.png$/.test(k));
+  const same = !!(gm && pl && bodies[gm] && bodies[pl] && Buffer.compare(bodies[gm], bodies[pl]) === 0);
+  t('the players\' copy is drawn from the map as it was when Export was pressed', same, JSON.stringify(keys));
+  await p.evaluate(() => {
+    const { app, R } = window.__cg;
+    app.doc.layers.find((l) => l.kind === 'paper').visible = true; R.compositeAll();
+  });
+}
+
+{
+  // The GM's .dd2vtt took the bare map name while the image beside it had
+  // been numbered, so it sat next to an older export's picture.
+  await newMap(p, { name: 'Vtt Stem', kind: 'battle', size: '20x15' });
+  await p.evaluate(() => {
+    const { app, R } = window.__cg;
+    const walls = app.doc.layers.find((l) => l.kind === 'walls');
+    walls.ops = [{ id: 'vs1', kind: 'wall', points: [{ x: 140, y: 140 }, { x: 560, y: 140 }] }];
+    R.invalidate(walls);
+  });
+  const pairs = [];
+  const listen = async (r) => {
+    if (!r.url().includes('/api/export')) return;
+    const asked = (decodeURIComponent(r.url()).match(/name=([^&]+)/) || [])[1];
+    let wrote = null;
+    try { wrote = (await r.json()).path; } catch (e) { /* not ours */ }
+    pairs.push({ asked, wrote: wrote && wrote.split(/[\\/]/).pop() });
+  };
+  p.on('response', listen);
+  for (let i = 0; i < 2; i++) {
+    await p.keyboard.press('Control+e');
+    await p.waitForSelector('.modal');
+    await p.evaluate(() => {
+      const s = [...document.querySelectorAll('.modal label.check span')].find((x) => x.textContent === 'Also download a copy');
+      const box = s.parentElement.querySelector('input'); if (box.checked) box.click();
+    });
+    const done = p.waitForResponse((r) => decodeURIComponent(r.url()).includes('.dd2vtt'), { timeout: 30000 });
+    await p.click('.modal .btn-primary');
+    await done;
+    await p.waitForTimeout(400);
+  }
+  p.off('response', listen);
+  // Every tabletop file must be asked for under the stem of the image that
+  // was actually written just before it.
+  const pngs = pairs.filter((x) => /\.png$/.test(x.asked)).map((x) => (x.wrote || '').replace(/\.png$/, ''));
+  const vtts = pairs.filter((x) => /\.dd2vtt$/.test(x.asked)).map((x) => x.asked.replace(/\.dd2vtt$/, ''));
+  t('each export\'s tabletop file is named after its own image',
+    pngs.length === 2 && vtts.length === 2 && pngs[0] === vtts[0] && pngs[1] === vtts[1], JSON.stringify(pairs));
+}
+
+{
+  // Space over the map with a panel switch still focused from the click that
+  // set it went to the switch, and the drag painted instead of panning.
+  await newMap(p, { name: 'Space Pan', kind: 'battle', size: '20x15' });
+  await tool('select');
+  const id = await p.evaluate(() => {
+    const box = [...document.querySelectorAll('#app input[type=checkbox], body input[type=checkbox]')]
+      .find((x) => x.offsetParent && !x.closest('.modal'));
+    box.id = box.id || 'cg-space-probe';
+    return box.id;
+  });
+  const was = await p.evaluate((i) => document.getElementById(i).checked, id);
+  await p.focus('#' + id);
+  const r0 = await p.evaluate(() => ({ x: window.__cg.R.view.x, past: window.__cg.history.past.length }));
+  const a = await M(600, 500);
+  await p.mouse.move(a.x, a.y);
+  await p.keyboard.down('Space');
+  await p.mouse.down();
+  await p.mouse.move(a.x + 120, a.y + 40, { steps: 6 });
+  await p.mouse.up();
+  await p.keyboard.up('Space');
+  await p.waitForTimeout(150);
+  const r1 = await p.evaluate((i) => ({ x: window.__cg.R.view.x, past: window.__cg.history.past.length,
+                                         checked: document.getElementById(i).checked }), id);
+  t('Space pans with a panel switch focused, and leaves the switch alone',
+    Math.abs(r1.x - r0.x - 120) < 2 && r1.past === r0.past && r1.checked === was, JSON.stringify({ r0, r1, was }));
+}
+
+{
+  // Changing the autosave interval left the deadline already pending where
+  // the old interval had put it.
+  await newMap(p, { name: 'Autosave Interval', kind: 'battle', size: '20x15' });
+  const field = async (v) => {
+    await p.click('.tab[data-tab="settings"]');
+    await p.waitForTimeout(200);
+    await p.evaluate((val) => {
+      const f = [...document.querySelectorAll('.field')].find((x) => x.querySelector('label')
+        && x.querySelector('label').textContent === 'Autosave every (seconds)');
+      const i = f.querySelector('input'); i.value = String(val);
+      i.dispatchEvent(new Event('change', { bubbles: true }));
+    }, v);
+  };
+  const before = await p.evaluate(() => window.__cg.app.settings.autosaveSeconds);
+  await p.evaluate(async () => { const a = await import('/js/app.js'); await a.saveProject({ silent: true }); });
+  await field(900);
+  await p.evaluate(async () => { const a = await import('/js/app.js'); a.markDirty(); a.scheduleAutosave(); });
+  await field(15);
+  await p.waitForFunction(() => !window.__cg.app.dirty, null, { timeout: 25000 }).catch(() => {});
+  const dirty = await p.evaluate(() => window.__cg.app.dirty);
+  await field(before);
+  await p.click('.tab[data-tab="map"]');
+  await p.waitForTimeout(200);
+  t('turning the autosave interval down moves a deadline already pending', dirty === false, 'dirty=' + dirty);
+}
+
+{
+  // Deleting the open map from the Projects tab left the top bar saying
+  // "saved" about a map that was nowhere on disk.
+  await newMap(p, { name: 'Doomed Map', kind: 'battle', size: '20x15' });
+  await p.evaluate(async () => { const a = await import('/js/app.js'); await a.saveProject({ silent: true }); });
+  await p.click('.tab[data-tab="projects"]');
+  await p.waitForTimeout(400);
+  await p.locator('.project-card', { hasText: 'Doomed Map' }).first().locator('.btn-danger').click();
+  await p.waitForSelector('.modal');
+  await p.click('.modal .btn-danger');
+  await p.waitForTimeout(500);
+  const label = await p.evaluate(() => document.getElementById('save-state').textContent);
+  await p.click('.tab[data-tab="map"]');
+  t('deleting the open map says it is not saved', label === 'not saved yet', label);
+}
+
+{
+  // A saved map reopened at launch was labelled "not saved yet": the label
+  // only changed when the dirty flag did, and a clean open moved nothing.
+  await newMap(p, { name: 'Reopened Label', kind: 'battle', size: '20x15' });
+  const slug = await p.evaluate(async () => { const a = await import('/js/app.js'); await a.saveProject({ silent: true }); return a.app.slug; });
+  await p.reload({ waitUntil: 'networkidle' });
+  await ready(p);
+  await p.waitForFunction((s) => window.__cg.app.slug === s, slug, { timeout: 15000 });
+  await p.waitForTimeout(500);
+  const label = await p.evaluate(() => document.getElementById('save-state').textContent);
+  t('a saved map reopened at launch says it is saved', label === 'saved', label);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

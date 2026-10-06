@@ -1285,6 +1285,26 @@ function hatchFields(layer, width) {
   const onEdge = (i) => { if (label[i] >= 0) framed[label[i]] = 1; };
   for (let x = 0; x < cw; x++) { onEdge(x); onEdge((ch - 1) * cw + x); }
   for (let y = 0; y < ch; y++) { onEdge(y * cw); onEdge(y * cw + cw - 1); }
+  // A wall drawn all the way round the frame leaves no region on the edge to
+  // start from, and every region came out unreached -- no hatching anywhere.
+  // Such a wall is the map's edge drawn in ink, so what lies just inside it
+  // starts the walk instead, as it would with the wall a cell further out. It
+  // has to count as framed too, or a door in a room's outside wall costs
+  // nothing again and the room behind it is hatched as rock.
+  const inside = [];
+  if (!framed.some((f) => f)) {
+    const depth = Math.ceil(barrier / s) + 2;
+    const inward = (x, y, dx, dy) => {
+      for (let t = 0; t <= depth; t++) {
+        const xx = x + dx * t, yy = y + dy * t;
+        if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) return;
+        const i = yy * cw + xx;
+        if (label[i] >= 0) { inside.push(i); framed[label[i]] = 1; return; }
+      }
+    };
+    for (let x = 0; x < cw; x++) { inward(x, 0, 0, 1); inward(x, ch - 1, 0, -1); }
+    for (let y = 0; y < ch; y++) { inward(0, y, 1, 0); inward(cw - 1, y, -1, 0); }
+  }
   const reach = barrier / 2 + s * 1.5;
   for (const o of runs) {
     const portal = !!(WALL_KINDS[o.kind] && WALL_KINDS[o.kind].portal);
@@ -1316,23 +1336,7 @@ function hatchFields(layer, width) {
   const edgeRegion = (i) => { const r = label[i]; if (r >= 0 && dist[r] < 0) { dist[r] = 0; deque[back++] = r; } };
   for (let x = 0; x < cw; x++) { edgeRegion(x); edgeRegion((ch - 1) * cw + x); }
   for (let y = 0; y < ch; y++) { edgeRegion(y * cw); edgeRegion(y * cw + cw - 1); }
-  // A wall drawn all the way round the frame leaves no region on the edge to
-  // start from, and every region came out unreached -- no hatching anywhere.
-  // Such a wall is the map's edge drawn in ink, so what lies just inside it
-  // starts the walk instead, as it would with the wall a cell further out.
-  if (front === back) {
-    const depth = Math.ceil(barrier / s) + 2;
-    const inward = (x, y, dx, dy) => {
-      for (let t = 0; t <= depth; t++) {
-        const xx = x + dx * t, yy = y + dy * t;
-        if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) return;
-        const i = yy * cw + xx;
-        if (label[i] >= 0) { edgeRegion(i); return; }
-      }
-    };
-    for (let x = 0; x < cw; x++) { inward(x, 0, 0, 1); inward(x, ch - 1, 0, -1); }
-    for (let y = 0; y < ch; y++) { inward(0, y, 1, 0); inward(cw - 1, y, -1, 0); }
-  }
+  for (const i of inside) edgeRegion(i);
   const done = new Uint8Array(regions);
   while (front < back) {
     const r = deque[front++];
@@ -1435,12 +1439,15 @@ function renderHatching(layer, ctx) {
  *
  * `blocks` on WALL_KINDS already knows which ones those are: a window is a
  * wall you can see through, and it should light the room behind it. */
-export function wallSegments(doc) {
+export function wallSegments(doc, { players = false } = {}) {
   const target = doc || view.doc;
   const layer = target.layers.find((l) => l.kind === 'walls');
   // layerVisible, never layer.visible: a group vetoes what its members draw,
   // and a wall nobody can see must not go on casting a shadow either.
   if (!layer || !layerVisible(target, layer)) return [];
+  // Nor, in the players' copy, may a wall the GM keeps to themselves: its
+  // shadow would draw the very wall the copy leaves out.
+  if (players && layerGM(target, layer)) return [];
   const out = [];
   for (const item of layer.ops) {
     if (!(WALL_KINDS[item.kind] || WALL_KINDS.wall).blocks) continue;
@@ -1460,11 +1467,11 @@ export function lightRadii(op) {
  * Doing it this way rather than additively is what keeps it composable with
  * the rest of the stack: the result is an ordinary RGBA layer with an ordinary
  * blend mode, so it exports, flattens and reorders like any other. */
-function renderLights(layer, ctx) {
+function renderLights(layer, ctx, { players = false } = {}) {
   const doc = view.doc;
   const ambient = layer.ambient != null ? layer.ambient : 0;
   const glow = layer.glow != null ? layer.glow : 0.15;
-  const segs = layer.shadows === false ? [] : wallSegments(doc);
+  const segs = layer.shadows === false ? [] : wallSegments(doc, { players });
 
   if (ambient > 0) {
     ctx.save();
@@ -2126,8 +2133,10 @@ export function playersWalls(ops) {
 const playersCache = new Map();
 
 /** A layer's canvas as the players see it. Only a walls layer holding a
- *  secret door differs from what is already on screen. */
+ *  secret door differs from what is already on screen -- and a lights layer
+ *  whose shadows come from walls marked GM-only. */
 function playersCanvas(layer) {
+  if (layer.kind === 'lights') return playersLights(layer);
   if (layer.kind !== 'walls') return canvasFor(layer);
   const ops = playersWalls(layer.ops);
   if (ops === layer.ops) return canvasFor(layer);
@@ -2136,6 +2145,28 @@ function playersCanvas(layer) {
   if (hit && hit.key === key) return hit.canvas;
   const c = makeCanvas(view.doc.width, view.doc.height);
   renderWalls(Object.assign({}, layer, { ops }), c.getContext('2d'));
+  for (const id of playersCache.keys()) {
+    if (!view.doc.layers.some((l) => l.id === id)) playersCache.delete(id);
+  }
+  playersCache.set(layer.id, { key, canvas: c });
+  return c;
+}
+
+/** The lighting relit without the shadows of GM-only walls. Lit against them,
+ *  the players' copy showed a hard-edged dark shape exactly where the hidden
+ *  walls were -- the picture gave away what the copy leaves out. */
+function playersLights(layer) {
+  const walls = view.doc.layers.find((l) => l.kind === 'walls');
+  if (layer.shadows === false || !walls || !layerVisible(view.doc, walls) || !layerGM(view.doc, walls)) {
+    return canvasFor(layer);
+  }
+  // With the walls left out the segments are none, so the key need not hold
+  // them: the lights layer and the map's size are all the picture depends on.
+  const key = JSON.stringify([view.doc.width, view.doc.height, layer]);
+  const hit = playersCache.get(layer.id);
+  if (hit && hit.key === key) return hit.canvas;
+  const c = makeCanvas(view.doc.width, view.doc.height);
+  renderLights(layer, c.getContext('2d'), { players: true });
   for (const id of playersCache.keys()) {
     if (!view.doc.layers.some((l) => l.id === id)) playersCache.delete(id);
   }

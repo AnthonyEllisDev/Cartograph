@@ -21,6 +21,7 @@
     "hatch": "node test/hatch.mjs",
     "print": "node test/print.mjs",
     "players": "node test/players.mjs",
+    "setedit": "node test/setedit.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

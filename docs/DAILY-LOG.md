@@ -5,6 +5,136 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-05 — editing a set, and ten things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 87
+tracked non-`.pyc` files, and nothing untracked sat beside the sources, so
+this was a feature day. The `.pyc` files are still tracked.
+
+**Baseline: green.** 815 of 815, plus `battle`, against the working tree. (The
+counts in the scheduled prompt are older than the suites; these are the
+current ones.)
+
+**Review.** Two readers, reading only, each reproducing on its own copy and
+port: one on the renderer, lighting, printing, `transform.js`, the hatching and
+the players' copy; one on the server and the front-end state. `node --check`
+passed on every module and the non-ASCII scan found nothing outside comments,
+docstrings and UI strings. The server was re-probed over raw sockets (smuggled
+second request on both branches, foreign Host, chunked, disagreeing and huge
+Content-Length, OPTIONS with a body, traversal through every path-taking
+endpoint, NUL in the path, non-object and NaN bodies) and held everywhere. One
+hardening note, not a defect: an empty `Transfer-Encoding:` header passes the
+check, since `headers.get` returns `""`; it matters only behind a proxy.
+
+Ten findings were fixed. Each has a check in `regress.mjs`, and all ten were
+run against a pristine clone on its own port and fail there (the last as an
+equivalent probe script, the other nine as the checks themselves):
+
+- *The players' copy drew the hidden walls in shadow.* A walls layer marked GM
+  only was left out of the players' picture, but the lighting was the GM's,
+  cast against those walls, so the darkness drew a hard-edged shape exactly
+  where they were (416,619 pixels against the same map with the walls really
+  gone). `wallSegments(doc, { players })` returns none for a GM-only walls
+  layer, and `playersCanvas` relights such a map for the copy, cached as the
+  walls canvas is. Export's PNG and Print's PDF both had it; the `.dd2vtt` did
+  not (its image is unlit and its walls were already left out).
+- *Export drew the players' copy from whatever was on screen by then.* Every
+  picture after the first was drawn after an upload, and the window is live,
+  so opening another map while a large GM image went up wrote that map as
+  `<this map>-players.png`. The same race Print was closed against yesterday.
+  Every picture and both tabletop payloads are now drawn before the first
+  await.
+- *A wall round the whole frame brought back the hatched front room.*
+  Yesterday's fallback seeded the walk from the regions just inside such a
+  wall but never counted them as framed, so a door in a room's outside wall
+  cost nothing again and the room behind it was hatched as rock (14,161 ink
+  pixels inside it). The fallback is worked out before the links and marks
+  what it seeds. Maps with any open edge are untouched.
+- *Dragging a walls layer past another in the Layers panel did not relight.*
+  Shadows come from the first walls layer; `moveLayer` and `moveGroup` only
+  composited, so the screen kept the old shadows and a reload drew new ones
+  (58,827 pixels at half scale). A second walls layer is easy to get without
+  an extension: lock the walls and generate a dungeon. Both now go through
+  `restacked()`, which relights when a walls layer moved.
+- *Export hid "Include the lighting" when the darkness was nought*, though
+  lamps still draw their pools without it -- the rule fixed in Print yesterday,
+  left in Export. Same rule now.
+- *The GM's `.dd2vtt` took the bare map name* while the image beside it had
+  been numbered, so the second export's tabletop file sat beside the first
+  export's picture. It is named from the image actually written, as the key and
+  the players' files already were.
+- *Space over the map, with a panel switch still focused, went to the switch.*
+  Click *Locked* or any tool toggle and the focus stays on it; Space then never
+  started a pan, the drag painted a stroke, and the key toggled the switch.
+  Space over the map now pans and takes the focus off a switch, range or
+  colour control; a text box keeps it.
+- *Changing the autosave interval left a pending deadline where it was.* 900
+  turned down to 15 still waited out the 900. `rescheduleAutosave()` in
+  `app.js` re-arms from now.
+- *Deleting the open map left the top bar saying "saved".* It says "not saved
+  yet" now. Whether to mark such a map dirty, or warn on closing, is left as a
+  decision.
+- *A saved map reopened at launch said "not saved yet".* Found in today's
+  screenshot, not by the readers. `markDirty(false)` emits only when the flag
+  moves, and a clean open moves nothing, so the label kept the page's initial
+  text (or the previous map's). `openDocument` emits it.
+
+**The feature: editing a set.** When everything the Select tool holds is one
+kind of thing, the Selected panel now offers the fields they share, and a
+change goes to all of them as one step: six torches turned blue, a corridor of
+doors made secret, every village label set in one size. A field the things
+disagree on is marked "(mixed)" and shows the primary's value. Left out: a
+label's wording, a region's name, a note's title and text (one value across six
+things is six copies of one name), and a stamp's angle, which the Turn buttons
+already do for the set about its middle. A mixed set offers no fields, as
+before.
+
+Why this one: it has been on the candidate list since the selection set landed
+on 2026-09-29 and was passed over each day as smaller than the day's choice;
+with sets, prefabs and turning all done, it is the obvious gap in that line of
+work. Dungeondraft's Select tool edits a multi-selection's shared properties
+(Encounter Library's guide to its object tools and select tool), and in
+Cartograph the only way to recolour a row of torches was one at a time. It
+passes the three tests: not there (`renderSetSummary` said, in so many words,
+that it offered no fields); no dependency; and squarely a one-person-at-a-desk
+thing. Rejected today: caverns for the dungeon generator (bigger, and wants its
+own day), making `registerExporter` work, prefab rescaling, hatching across
+all walls layers, and elevation (still a design rather than an addition).
+
+How it is built: `setFields(set)` in `ui.js` takes the kind's `OBJECT_FIELDS`
+row for every thing held, drops `SET_SKIP`, and marks a field mixed where the
+values differ; `editSet(set, key, value)` is `editObject` across the lot --
+deep copies both ways, nothing pushed when nothing moved, keys a snapshot
+lacks taken off on undo (a torch with no colour of its own gets none back),
+one entry named "Edit 3 lights", and every layer touched rebuilt through
+`invalidateAll`, walls last, so turning walls into windows relights. Unlike a
+single edit it re-renders the panel at once, since no field offered for a set
+takes typing and the "(mixed)" marks have to come off. A light's radii are set
+in map units and stored in pixels, as for one light. `API_VERSION` stays 1;
+nothing in `api.tools` changed.
+
+**Tests.** A new suite, `test/setedit.mjs` (21), on its own map, picking things
+up with a box dragged on empty map: the shared fields offered and the mixed
+mark; one change reaching every torch held and nothing else, as one step; a
+radius in feet stored as pixels; undo giving each its own colour back and
+taking one off the torch that had none; redo; the screen after both matching a
+rebuild; a no-op change pushing nothing; a mixed set offering nothing; three
+walls made windows in one step and the light reaching past them (32 -> 137
+brightness); labels offered no wording and sized together; the round trip; no
+request off 127.0.0.1; no console errors. `regress` 110 -> 120.
+
+Looked at in a screenshot: three torches held and turned blue, the panel with
+its shared fields under the count, the windows letting the lamp below through.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 17 ext,
+16 theme, 66 guards, 120 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 40 clipboard, 43 selection, 41 prefabs, 52 transform, 32 hatch,
+29 print, 31 players, 21 setedit -- 846 checks, all passing, plus `battle`,
+over two full back-to-back rounds on the finished tree, with `CG_CHROME`
+pointed at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` as before.
+
+---
+
 ## 2026-10-04 — the players' copy, and eight things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 84

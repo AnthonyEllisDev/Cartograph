@@ -183,9 +183,18 @@ everything on the map and Escape puts it all down. Drag any one of them and the
 rest come with it; Delete, cut, copy, paste and duplicate all act on the whole
 set, as one step in the history however many layers it spans — a room's walls,
 its doors, its lamps and its furniture copy and paste together, each part onto
-a layer of its own kind. The Selected panel says what is held; to change one
-thing's colour or wording, press Escape and click it on its own. Something on a layer you then
-lock or hide drops out of what is held.
+a layer of its own kind. Something on a layer you then lock or hide drops out
+of what is held.
+
+The Selected panel says what is held, and when it is all **one kind of thing**
+it offers the fields they share: six torches turned blue, a corridor of doors
+made secret, every village label set in one size, as one step in the history.
+A field the things disagree on is marked *(mixed)* and shows the value of the
+one clicked first. What makes each thing itself is left out — a label's
+wording, a territory's name, a note's title and text — and so is a stamp's
+angle, which the Turn buttons handle for the set as a whole. A mixed set (walls
+and lamps, say) offers no fields; to change one thing on its own, press Escape
+and click it.
 
 Whatever Select holds can be **saved as a prefab** — *Save as prefab…* in the
 Selected panel, *Save selection…* in the Select tool's panel, or the palette —
@@ -541,7 +550,12 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 815 assertions in all: `players.mjs`
+There are narrower scripts beside it, 846 assertions in all: `setedit.mjs`
+(editing a set: the fields one kind of thing shares offered and the ones that
+make each thing itself left out, a disagreement marked, one change reaching
+them all as one step and coming back exactly on undo and redo, a mixed set
+offering nothing, walls made windows relighting the map, and the round trip),
+`players.mjs`
 (the players' copy: exactly the GM's picture with the pins off, the secret
 doors drawn as walls and the GM-only layers out, the GM's copy and the screen
 untouched by the mark, a group marking its members, the mark's undo step and

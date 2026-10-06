@@ -114,6 +114,10 @@ export async function openDocument(doc, slug) {
   app.activeLayerId = (firstPaintable || doc.layers[0]).id;
   clearHistory();
   markDirty(false);
+  // markDirty speaks only when the flag moves, and opening a saved map from a
+  // clean editor moves nothing -- so the top bar kept the last map's word, or
+  // the page's "not saved yet" on every launch, over a map that was on disk.
+  emit('dirty', false);
   if (!doc.view || !doc.view.zoom) R.fitView();
   else { R.view.x = doc.view.x; R.view.y = doc.view.y; R.view.zoom = doc.view.zoom; R.requestDraw(); }
   emit('document');
@@ -220,6 +224,15 @@ export function scheduleAutosave() {
       toast('Autosave failed: ' + err.message, 'bad');
     }
   }, Math.max(15, app.settings.autosaveSeconds) * 1000);
+}
+
+/** The interval changed: a deadline already pending was set from the old one,
+ *  so 900 seconds turned down to 15 still waited out the 900, and turned up
+ *  before something risky still saved at the old, shorter time. */
+export function rescheduleAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = 0;
+  if (app.dirty) scheduleAutosave();
 }
 
 /* ------------------------------------------------------------------- boot */
