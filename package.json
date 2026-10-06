@@ -22,6 +22,7 @@
     "print": "node test/print.mjs",
     "players": "node test/players.mjs",
     "setedit": "node test/setedit.mjs",
+    "art": "node test/art.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

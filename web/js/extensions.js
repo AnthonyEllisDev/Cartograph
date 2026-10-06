@@ -246,18 +246,26 @@ export async function loadOne(manifest) {
   // A cache-busting query so turning an extension off, editing it and turning
   // it back on runs the file on disk rather than the one already imported.
   const href = `/extensions/${encodeURIComponent(manifest.dir)}/${manifest.main}?v=${Date.now()}`;
+  let api = null;
   try {
     const module = await import(/* @vite-ignore */ href);
     const setup = module.default || module.register || module.activate;
     if (typeof setup !== 'function') {
       throw new Error('the module exports no default function to call');
     }
-    const api = makeApi(manifest);
+    api = makeApi(manifest);
     const teardown = await setup(api);
     if (typeof teardown === 'function') api._owned.teardown.push(teardown);
     extensions.loaded.set(manifest.id, { manifest, api });
     return true;
   } catch (err) {
+    // A setup that throws halfway has already registered its tools, panels
+    // and listeners. Unrecorded, nothing could take them out again: unticking
+    // the extension found nothing loaded and left its tool in the rail.
+    if (api) {
+      extensions.loaded.set(manifest.id, { manifest, api });
+      try { unloadExtension(manifest.id); } catch (e) { console.error(e); }
+    }
     manifest.error = String(err && err.message ? err.message : err);
     console.error('[extension ' + manifest.id + ']', err);
     return false;

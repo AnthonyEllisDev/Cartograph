@@ -301,6 +301,13 @@ def serve(ctx, host="127.0.0.1", port=0):
     actual = httpd.server_address[1]
     ctx.origins = {"http://127.0.0.1:%d" % actual, "http://localhost:%d" % actual}
     ctx.hosts = {"127.0.0.1:%d" % actual, "localhost:%d" % actual}
+    # Bound to some other address on purpose (--host), the program printed that
+    # address and then refused every request made to it as an unknown host.
+    # The wildcard binds are reached through 127.0.0.1 and add nothing.
+    if host and host not in ("127.0.0.1", "localhost", "0.0.0.0", "::", ""):
+        named = "[%s]" % host if ":" in host else host
+        ctx.hosts.add("%s:%d" % (named, actual))
+        ctx.origins.add("http://%s:%d" % (named, actual))
     if actual == 80:                         # a browser leaves the default port off
         ctx.hosts |= {"127.0.0.1", "localhost"}
         ctx.origins |= {"http://127.0.0.1", "http://localhost"}    # and so does Origin

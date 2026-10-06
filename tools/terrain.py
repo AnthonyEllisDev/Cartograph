@@ -127,13 +127,203 @@ TERRAINS = {
         stops=[(58, 54, 56), (82, 76, 76), (108, 100, 98)],
         cells=3, octaves=5, kind="fbm", contrast=0.6,
         grain=[(150, (40, 36, 38), 0.2, 0.5, 2.2), (40, (168, 96, 60), 0.18, 0.6, 1.8)]),
+    # Floors for battle maps. Everything above is ground seen from a mile up;
+    # a dungeon at five feet to the square wants what was laid by hand. These
+    # are built rather than noised: the joints are what make them read.
+    "flagstone": dict(
+        group="floor", label="Flagstone Floor", pattern="flagstone",
+        stops=[(104, 100, 94), (132, 127, 118), (156, 150, 138)],
+        grout=(58, 54, 50), rows=4, slabs=(3, 4),
+        grain=[(160, (88, 84, 78), 0.14, 0.4, 1.4), (50, (176, 170, 158), 0.10, 0.6, 1.8)]),
+    "planks": dict(
+        group="floor", label="Wooden Floorboards", pattern="planks",
+        stops=[(106, 72, 44), (134, 94, 58), (160, 118, 76)],
+        grout=(52, 34, 22), boards=16,
+        grain=[(70, (92, 62, 38), 0.12, 0.4, 1.2)]),
+    "cobblestone": dict(
+        group="floor", label="Cobblestones", pattern="cobble",
+        stops=[(98, 96, 92), (128, 124, 116), (160, 154, 142)],
+        grout=(64, 60, 54), cells=12,
+        grain=[(120, (84, 80, 74), 0.12, 0.4, 1.2)]),
 }
+
+
+def _wrap_gap(a, b, size):
+    """Distance between two positions on a circle of the given size."""
+    d = abs(a - b) % size
+    return min(d, size - d)
+
+
+def _shade(rgb, k):
+    """Lighten (k > 0) or darken (k < 0) a colour by a fraction."""
+    if k >= 0:
+        return tuple(int(c + (255 - c) * k) for c in rgb)
+    return tuple(int(c * (1.0 + k)) for c in rgb)
+
+
+def _put(px, i, rgb):
+    j = i * 4
+    px[j], px[j + 1], px[j + 2], px[j + 3] = rgb[0], rgb[1], rgb[2], 255
+
+
+def _flagstone(spec, size, rng):
+    """Courses of squared slabs, each its own stone, the joints staggered."""
+    lo, mid, hi = spec["stops"]
+    rows = spec["rows"]
+    rh = size / rows
+    courses = []
+    for _ in range(rows):
+        n = rng.randint(*spec["slabs"])
+        cuts = sorted(rng.uniform(0, size) for _ in range(n))
+        # Slabs narrower than a third of a course read as rubble, not paving.
+        while any(_wrap_gap(a, b, size) < rh * 0.55 for a, b in zip(cuts, cuts[1:] + cuts[:1])):
+            cuts = sorted(rng.uniform(0, size) for _ in range(n))
+        courses.append((cuts, [rng.random() for _ in cuts]))
+    tone = fbm(size, 4, 4, rng)
+    # A wobble on the joints: a stone edge is dressed by hand, not ruled. The
+    # fields wrap, so the wobble does too.
+    wx, wy = fbm(size, 6, 2, rng), fbm(size, 6, 2, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            sx = (x + (wx[i] - 0.5) * 5.0) % size
+            sy = (y + (wy[i] - 0.5) * 5.0) % size
+            r = int(sy / rh) % rows
+            cuts, tones = courses[r]
+            k = 0
+            while k < len(cuts) and cuts[k] <= sx:
+                k += 1
+            slab = (k - 1) % len(cuts)
+            left = min(_wrap_gap(sx, c, size) for c in cuts)
+            top = sy - r * rh
+            bottom = rh - top
+            edge = min(left, top, bottom)
+            if edge < 1.3:
+                _put(px, i, spec["grout"])
+                continue
+            v = clamp(0.5 + (tones[slab] - 0.5) * 0.7 + (tone[i] - 0.5) * 0.9)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            # A worn arris: light along the top of each slab, shadow along the
+            # bottom, as if lit from the north like every symbol in the pack.
+            if edge < 4.0:
+                if top == edge:
+                    rgb = _shade(rgb, 0.12 * (1.0 - edge / 4.0))
+                elif bottom == edge:
+                    rgb = _shade(rgb, -0.22 * (1.0 - edge / 4.0))
+                else:
+                    rgb = _shade(rgb, -0.10 * (1.0 - edge / 4.0))
+            _put(px, i, rgb)
+    return px
+
+
+def _planks(spec, size, rng):
+    """Boards laid along x, each sawn to its own length, with grain and nails."""
+    lo, mid, hi = spec["stops"]
+    n = spec["boards"]
+    bh = size / n
+    boards = []
+    for _ in range(n):
+        joints = sorted(rng.uniform(0, size) for _ in range(rng.choice((1, 2, 2))))
+        boards.append((joints, rng.random(), rng.uniform(0, 1)))
+    tone = fbm(size, 4, 3, rng)
+    wave = fbm(size, 8, 3, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        b = int(y / bh) % n
+        joints, t, phase = boards[b]
+        yy = y - b * bh
+        for x in range(size):
+            i = y * size + x
+            if yy < 1.0:
+                _put(px, i, spec["grout"])
+                continue
+            near = min(_wrap_gap(x, j, size) for j in joints)
+            if near < 0.8:
+                _put(px, i, spec["grout"])
+                continue
+            # Grain runs the length of the board. A sine across it, bent by a
+            # wrapping field, keeps the tile seamless in x without any seam
+            # work: nothing here depends on x except through the field.
+            g = 0.5 + 0.5 * math.sin(2 * math.pi * (yy / bh * 2.2 + phase + (wave[i] - 0.5) * 2.4))
+            v = clamp(0.5 + (t - 0.5) * 0.6 + (tone[i] - 0.5) * 0.6 - (g ** 6) * 0.35)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if yy < 2.2:
+                rgb = _shade(rgb, 0.10)
+            elif yy > bh - 1.6:
+                rgb = _shade(rgb, -0.16)
+            _put(px, i, rgb)
+    # A nail either side of every joint, where a carpenter would put them.
+    for b, (joints, _t, _p) in enumerate(boards):
+        cy = b * bh + bh / 2
+        for j in joints:
+            for dx in (-3.5, 3.5):
+                _blob(px, size, j + dx, cy, 1.3, (48, 40, 34), 0.85, 0.3)
+    for _ in range(rng.randint(2, 4)):
+        b = rng.randrange(n)
+        kx, ky = rng.uniform(0, size), b * bh + bh / 2
+        _blob(px, size, kx, ky, rng.uniform(2.0, 3.2), (82, 54, 32), 0.7, 0.5)
+    return px
+
+
+def _cobble(spec, size, rng):
+    """Rounded setts packed in mortar: a wrapping Worley field, F2 - F1."""
+    lo, mid, hi = spec["stops"]
+    n = spec["cells"]
+    cell = size / n
+    pts = [[((cx + rng.uniform(0.2, 0.8)) * cell, (cy + rng.uniform(0.2, 0.8)) * cell, rng.random())
+            for cx in range(n)] for cy in range(n)]
+    tone = fbm(size, 6, 3, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        gy = int(y / cell)
+        for x in range(size):
+            gx = int(x / cell)
+            f1 = f2 = 1e9
+            near = None
+            for oy in (-1, 0, 1):
+                for ox in (-1, 0, 1):
+                    cx, cy = gx + ox, gy + oy
+                    px0, py0, t = pts[cy % n][cx % n]
+                    # Shift the point by a whole tile when its cell wrapped,
+                    # so distances are measured on the torus.
+                    px0 += (cx - cx % n) * cell
+                    py0 += (cy - cy % n) * cell
+                    d = math.hypot(x - px0, y - py0)
+                    if d < f1:
+                        f1, f2, near = d, f1, (px0, py0, t)
+                    elif d < f2:
+                        f2 = d
+            i = y * size + x
+            edge = (f2 - f1) / 2.0
+            if edge < 1.4:
+                _put(px, i, spec["grout"])
+                continue
+            nx, ny, t = near
+            v = clamp(0.5 + (t - 0.5) * 0.8 + (tone[i] - 0.5) * 0.5)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            # A dome, lit from the north-west: the side of each stone facing
+            # the light is brighter, the far side falls into the joint.
+            if f1 > 0.5:
+                lit = ((x - nx) * -0.6 + (y - ny) * -0.8) / f1
+                rim = clamp(1.0 - edge / 6.0)
+                rgb = _shade(rgb, (0.16 if lit > 0 else 0.26) * lit * rim)
+            _put(px, i, rgb)
+    return px
+
+
+PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble}
 
 
 def render(name, size, seed):
     """Return RGBA bytes for one seamless terrain tile."""
     spec = TERRAINS[name]
     rng = random.Random("%s:%s" % (name, seed))
+    if spec.get("pattern"):
+        px = PATTERNS[spec["pattern"]](spec, size, rng)
+        for count, rgb, alpha, rmin, rmax in spec.get("grain", []):
+            _speckle(px, size, rng, count, rgb, alpha, rmin, rmax)
+        return bytes(px)
     kind = spec.get("kind", "fbm")
     field = (ridged if kind == "ridged" else fbm)(size, spec["cells"], spec["octaves"], rng)
     # A light domain warp kills the faint square banding that low-octave value

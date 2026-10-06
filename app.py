@@ -96,14 +96,34 @@ def ensure_folders():
 
 
 def ensure_starter_pack(config, force=False):
-    """Bake the generated pack the first time the program is run."""
+    """Bake the generated pack the first time the program is run, and again
+    when the generators have gained art the pack on disk does not have."""
+    from tools import genpack
     pack_dir = os.path.join(ROOT, "assets", "packs", "starter")
     manifest = os.path.join(pack_dir, "pack.json")
+    seed = config.get("packSeed", "v1")
+    size = int(config.get("tileSize", 256))
     if os.path.isfile(manifest) and not force:
-        return False
-    from tools import genpack
-    print("  Generating the starter asset pack (one time, ~10s)...")
-    genpack.build(pack_dir, config.get("packSeed", "v1"), int(config.get("tileSize", 256)))
+        try:
+            with open(manifest, encoding="utf-8") as fh:
+                baked = json.load(fh)
+        except (OSError, ValueError):
+            baked = None
+        if not isinstance(baked, dict):
+            baked = {}
+        version = baked.get("artVersion", 1)
+        if isinstance(version, int) and version >= genpack.ART_VERSION:
+            return False
+        # Rebaked from the seed and size it was made with, not today's
+        # settings: the art already on a map has to come back the same.
+        if isinstance(baked.get("seed"), str):
+            seed = baked["seed"]
+        if isinstance(baked.get("tileSize"), int) and 16 <= baked["tileSize"] <= 2048:
+            size = baked["tileSize"]
+        print("  Adding the new art to the starter pack (~15s)...")
+    else:
+        print("  Generating the starter asset pack (one time, ~15s)...")
+    genpack.build(pack_dir, seed, size)
     return True
 
 

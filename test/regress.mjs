@@ -8,7 +8,9 @@
  * source could change by a route that never told the derived value about it.
  */
 
-import { cpSync, rmSync } from 'node:fs';
+import { cpSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { launch, base, ready, newMap } from './browser.mjs';
 
@@ -2417,6 +2419,196 @@ const DIFF = `(a, b) => {
   await p.waitForTimeout(500);
   const label = await p.evaluate(() => document.getElementById('save-state').textContent);
   t('a saved map reopened at launch says it is saved', label === 'saved', label);
+}
+
+/* 2026-10-06 ------------------------------------------------------------- */
+
+{
+  // The coast's ink ring was regrown only inside the stroke's reach snapped to
+  // the shelf grid; a stroke ending a few pixels short of a grid line left the
+  // ring beyond it out of the screen until a reload drew it.
+  await newMap(p, { name: 'Ink Edge', kind: 'region' });
+  const off = await p.evaluate(async () => {
+    const { TOOLS } = await import('/js/tools.js');
+    const { app, setToolSetting } = await import('/js/app.js');
+    const R = window.__cg.R;
+    const layer = app.doc.layers.find((l) => l.kind === 'land');
+    layer.coast.ink = true; layer.coast.inkWidth = 12; layer.coast.shallow = false;
+    setToolSetting('land', 'size', 100); setToolSetting('land', 'hardness', 1);
+    setToolSetting('land', 'erase', false); setToolSetting('land', 'dynamics', 'off');
+    const stroke = (x, y) => { TOOLS.land.down({ x, y }, null); TOOLS.land.up(); };
+    const grab = () => { const c = R.canvasFor(layer); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.slice(); };
+    stroke(300, 300);
+    stroke(586, 400);            // reaches 586 + 54 = 640, a multiple of 64
+    const shown = grab();
+    R.invalidate(layer);
+    const rebuilt = grab();
+    let n = 0;
+    for (let i = 0; i < shown.length; i += 4) if (shown[i + 3] !== rebuilt[i + 3] || shown[i] !== rebuilt[i]) n++;
+    return n;
+  });
+  t('a coast stroke ending just short of a grid line inks the same as a reload', off === 0, off + ' pixels');
+}
+
+{
+  // The Scatter brush's box stopped at strokeBox's reach, but a dab lands up
+  // to half the jitter off the path: dabs were cut off along a straight line.
+  const lost = await p.evaluate(() => {
+    const R = window.__cg.R;
+    const W = R.view.doc.width, H = R.view.doc.height;
+    let worst = 0;
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const op = { t: 'stroke', mode: 'dabs', color: '#000', size: 120, density: 3, spacing: 0.45,
+                   jitter: 0.7, sizeJitter: 0.5, hardness: 0.5, opacity: 1, seed,
+                   points: [{ x: 600, y: 600 }, { x: 900, y: 600 }] };
+      const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+      const a = mk(), z = mk();
+      R.applyStroke(a.getContext('2d'), op, R.opBox(op));
+      R.applyStroke(z.getContext('2d'), op, null);
+      const da = a.getContext('2d').getImageData(0, 0, W, H).data, dz = z.getContext('2d').getImageData(0, 0, W, H).data;
+      let n = 0;
+      for (let i = 3; i < da.length; i += 4) if (dz[i] - da[i] > 8) n++;
+      worst = Math.max(worst, n);
+    }
+    return worst;
+  });
+  t('a scatter stroke\'s box holds every dab it lays', lost === 0, lost + ' pixels cut off');
+}
+
+{
+  // A stem is one id in a pack, so rock.png imported as a stamp and again as a
+  // texture were two files under one id, and picking the stamp drew the texture.
+  const BASE = base('http://127.0.0.1:7871/').replace(/\/$/, '');
+  const stem = 'zz-dup-' + Date.now();
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const put = (kind) => fetch(`${BASE}/api/packs/import?name=${stem}.png&kind=${kind}&pack=zz-guard-dup`,
+    { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png }).then((r) => r.json());
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  try {
+    const a = await put('stamp'), z = await put('terrain');
+    t('one name imported as a stamp and as a texture gets two ids',
+      a.asset && z.asset && a.asset.id !== z.asset.id, `${a.asset && a.asset.id} ${z.asset && z.asset.id}`);
+  } finally {
+    rmSync(join(root, 'assets', 'packs', 'zz-guard-dup'), { recursive: true, force: true });
+  }
+  // The same in a folder dropped in by hand: two rock.png in two folders.
+  const loose = join(root, 'assets', 'packs', 'zz-guard-loose');
+  try {
+    for (const g of ['desert', 'forest']) {
+      mkdirSync(join(loose, 'stamps', g), { recursive: true });
+      writeFileSync(join(loose, 'stamps', g, 'rock.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    }
+    const packs = (await (await fetch(`${BASE}/api/packs`)).json()).packs;
+    const ids = (packs.find((x) => x.dir === 'zz-guard-loose') || { assets: [] }).assets.map((x) => x.id);
+    t('two files of one name in a loose pack get two ids, the first keeping the plain one',
+      ids.length === 2 && new Set(ids).size === 2 && ids.includes('zz-guard-loose/rock'), ids.join(' '));
+  } finally {
+    rmSync(loose, { recursive: true, force: true });
+  }
+}
+
+{
+  // Two creates of one map name at once: both found the name free, and the
+  // second overwrote the first while both were told it had saved.
+  const BASE = base('http://127.0.0.1:7871/').replace(/\/$/, '');
+  const name = 'Race ' + Date.now();
+  // A body with some weight to it, so the check of its shape takes long
+  // enough for the requests to overlap the way two tabs' saves do.
+  const layers = Array.from({ length: 8000 }, (_, i) => ({ id: 'l' + i, kind: 'objects', ops: [{ x: i, y: i }] }));
+  const made = await Promise.all(Array.from({ length: 5 }, () => fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, width: 100, height: 100, layers }),
+  }).then((r) => r.json())));
+  const slugs = made.map((m) => m.project && m.project.slug);
+  t('five creates of one name at once make five maps', new Set(slugs).size === 5 && slugs.every(Boolean),
+    new Set(slugs).size + ' distinct');
+  for (const s of new Set(slugs)) if (s) await fetch(`${BASE}/api/projects/${encodeURIComponent(s)}`, { method: 'DELETE' });
+  const bad = await fetch(`${BASE}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Too Deep ' + name, layers: JSON.parse('['.repeat(400) + ']'.repeat(400)) }),
+  });
+  const left = (await (await fetch(`${BASE}/api/projects`)).json()).projects.length;
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  t('a create refused for its body leaves no folder behind',
+    bad.status === 400 && !existsSync(join(root, 'projects', 'Too Deep ' + name)), bad.status + ' ' + left);
+}
+
+{
+  // An extension whose setup threw after registering a tool left the tool in
+  // the rail for good: nothing had recorded it, so turning it off found nothing.
+  const dir = fileURLToPath(new URL('../extensions/zz-guard-halfbroken', import.meta.url));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'extension.json'), JSON.stringify({ id: 'zz-halfbroken', name: 'Half Broken', main: 'main.js' }));
+  writeFileSync(join(dir, 'main.js'),
+    "export default function (api) {\n  api.registerTool({ id: 'half', label: 'Half', hint: 'x', down() {} });\n" +
+    "  api.registerCommand({ id: 'half-cmd', title: 'Half', run() {} });\n  throw new Error('boom after registering');\n}\n");
+  try {
+    const st = await p.evaluate(async () => {
+      const E = await import('/js/extensions.js');
+      await E.loadExtensions();
+      const m = E.extensions.list.find((x) => x.id === 'zz-halfbroken');
+      return {
+        error: m && m.error,
+        tool: !!document.querySelector('.tool[data-tool^="zz-halfbroken"]'),
+        commands: E.extensions.commands.filter((c) => c.extension === 'zz-halfbroken').length,
+      };
+    });
+    t('an extension that throws halfway through setup leaves nothing registered',
+      /boom/.test(st.error || '') && !st.tool && st.commands === 0, JSON.stringify(st));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await p.evaluate(async () => (await import('/js/extensions.js')).loadExtensions());
+    // The extension reports its own failure on the console, as it should.
+    for (let i = errs.length - 1; i >= 0; i--) if (/zz-halfbroken|boom after registering/.test(errs[i])) errs.splice(i, 1);
+  }
+}
+
+{
+  // A long map name lost its "-players" to the server's sixty-four
+  // characters, and the players' copy was written under a GM-looking name.
+  await newMap(p, { name: 'L'.repeat(70), kind: 'battle', size: '20x15' });
+  await p.evaluate(() => {
+    window.__names = [];
+    const real = window.fetch;
+    window.__realFetch = real;
+    window.fetch = (url, init) => {
+      const u = decodeURIComponent(String(url));
+      if (u.includes('/api/export')) window.__names.push(new URL(u, location.href).searchParams.get('name'));
+      return real(url, init);
+    };
+  });
+  await p.keyboard.press('Control+e');
+  await p.waitForSelector('.modal .btn-primary', { timeout: 5000 });
+  const players = await p.$('.modal [data-export="players"]');
+  if (players) await p.check('.modal [data-export="players"]');
+  await p.click('.modal .btn-primary');
+  await p.waitForTimeout(2500);
+  const names = await p.evaluate(() => { window.fetch = window.__realFetch; return window.__names; });
+  const stems = names.map((n) => n.replace(/\.[a-z0-9]+$/i, ''));
+  t('an export of a long-named map keeps every suffix inside the server\'s limit',
+    names.length > 0 && stems.every((s) => s.length <= 64) && (!players || names.some((n) => /-players\./.test(n))),
+    names.map((n) => n.length).join(','));
+}
+
+{
+  // Started with --host on another loopback address, the program printed that
+  // address and then answered every request made to it with 421.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const child = spawn('python3', ['app.py', '--no-browser', '--host', '127.0.0.2', '--port', '0'], { cwd: root });
+  let said = '';
+  child.stdout.on('data', (d) => { said += d; });
+  let status = 0;
+  try {
+    const started = Date.now();
+    while (!/Serving at http:\/\/127\.0\.0\.2:\d+/.test(said) && Date.now() - started < 30000) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    const url = (said.match(/Serving at (http:\/\/127\.0\.0\.2:\d+)/) || [])[1];
+    if (url) status = (await fetch(url + '/api/state').catch(() => ({ status: -1 }))).status;
+  } finally {
+    child.kill();
+  }
+  t('a server bound with --host answers at the address it prints', status === 200, status);
 }
 
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));

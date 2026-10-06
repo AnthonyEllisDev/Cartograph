@@ -5,6 +5,127 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-06 -- floors and furnishings, and nine things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 88
+tracked non-`.pyc` files, so this was a feature day. The `.pyc` files are still
+tracked, though `.gitignore` names them; `git rm --cached` would end that.
+
+**Baseline: green.** 846 of 846, plus `battle`, against the working tree.
+
+**From today the run also adds art.** Anthony's note on the scheduled prompt
+asks for three new textures and eight new stamps every day. The pack was baked
+once on first launch and never again, so art added to the generators would
+have reached nobody who had already run the program. That had to be fixed
+first, and it is the day's feature (below). The rules for adding art are now in
+`ASSETS.md` under *Adding to the generated art*: add, never change; every recipe
+on its own random stream; no id ending in `-<number>`.
+
+**Review.** Two readers, reading only, each on its own copy and port: one on
+the renderer, lighting, printing, transforms, the dungeon and land generators;
+one on the server, `tools/` and the front-end state. `node --check` passed on
+every module and the non-ASCII scan found nothing outside comments, docstrings
+and UI strings. Origin and Host checks are in place; every client path still
+goes through `safe.py`. Nine findings; seven were fixed, each with a check in
+`regress.mjs` (nine checks), and every one of those checks fails against a
+pristine clone on its own port (the create race only once the body is heavy
+enough for the requests to overlap, which is how the check is written):
+
+- *The coast's ink was missing past a grid line until a reload.* `growInk`
+  regrew the ring only inside the stroke's reach snapped to `SHELF_GRID`, but
+  the ring stands up to `inkWidth` outside the mask. A stroke ending a few
+  pixels short of a grid line left the new ring beyond it out of the cache (340
+  pixels at width 12). The dirty box is grown by the ring's radius before it is
+  snapped. Undo goes through the same function.
+- *The Scatter brush cut dabs off along a straight line.* `opBox` measured a
+  dabs op with `strokeBox`, but a dab lands up to half the jitter off the path,
+  is up to `0.4 * size * (1 + sizeJitter)` across and is then blurred: at the
+  tool's defaults up to 1,810 pixels of a stroke were sliced away, on screen and
+  on reload alike. `dabsBox` measures dabMask's own reach, and the live stroke
+  uses it. **A saved map with Scatter strokes near their edges draws the
+  missing dabs once reopened** -- a one-time change, towards what was painted.
+- *Two assets in one pack could share an id.* The id is the pack and the stem,
+  so `rock.png` imported as a stamp and again as a texture -- or `forest/rock`
+  beside `desert/rock` in a dropped-in folder -- were two files with one id,
+  and the editor's lookup kept the last: picking the stamp drew the texture. An
+  import now skips any stem already used in the pack under any extension, and a
+  loose pack gives a second file of the same name an id from its path (the
+  first keeps the plain id, so maps that use it still find it).
+- *Two creates of one map name at once wrote into one folder.* `unique_slug`
+  checked and `write` made the folder later; the second save overwrote the
+  first and both were told it had worked. The folder is now claimed with
+  `os.mkdir` in the same step that finds it free, and removed again if the
+  document is then refused.
+- *An extension whose setup threw halfway could not be removed.* What it had
+  registered stayed, and nothing recorded it, so unticking it found nothing.
+  `loadOne` now records it and unloads it at once.
+- *A long map name made the players' copy look like a GM file.* The server
+  keeps 64 characters of a name, and a 70-character map lost `-players` to it.
+  Export and Print cut the map's name to 40 characters before any suffix.
+- *`--host` with any other address refused every request with 421.* The
+  allowed Host and Origin lists only ever held 127.0.0.1 and localhost; the
+  address bound is now added (bracketed for IPv6). The wildcards add nothing.
+
+Written up, not changed: a "(mixed)" select in the set panel shows the
+primary's value, and choosing that same value fires no `change` in a real
+browser, so it never reaches the rest of the set (Playwright always fires
+`change`, so this is reasoned, not reproduced; a blank "(mixed)" option would
+fix it). And the coastline settings in the Layers panel -- ink, widths, shelf
+colours -- are not on the undo stack. Neither are the other layer settings, so
+that is a design question rather than a slip.
+
+**The feature: the starter pack grows, and the first of it.** Three things:
+
+- `ART_VERSION` in `tools/genpack.py`, written into the pack's `pack.json`.
+  `ensure_starter_pack` rebakes a pack whose version is older (or whose
+  `pack.json` does not parse) from the seed and tile size recorded in it, not
+  today's settings. Baked old and new side by side: all 78 files the old
+  generators wrote are byte-identical, and every manifest entry is unchanged.
+- Three floor textures, group *floor*: **flagstones** (courses of dressed
+  slabs, the joints staggered and wobbled by a wrapping field), **wooden
+  floorboards** (sixteen boards to the tile, sawn to random lengths, grain
+  from a sine bent by noise, nails either side of every joint) and
+  **cobblestones** (a wrapping Worley field, F2 - F1 for the mortar, each
+  stone domed and lit from the north-west). All three are built rather than
+  noised, and wrap by construction.
+- Eight furnishings, group *furnishing*, in three variants each: barrel, crate,
+  table, bed, chest, bookshelf, rug, well. Drawn from above at five feet to
+  seventy pixels, in the pack's ink palette, with three timbers and five cloths
+  to vary them.
+
+Why this: the brief asked for art, and every texture and symbol in the pack
+was overland -- the Floor layer of a battle map defaulted to bare rock and the
+dungeon generator to parchment, because there was nothing else. Dungeondraft's
+library is floors and furniture first; Cartograph had none. Without the
+rebake, the art would not have reached Anthony's own copy. Rejected for the
+art: anything downloaded (constraint 3), and changing the battle map's default
+floor from rock to flagstones -- a product decision, left for Anthony.
+
+**Tests.** A new suite, `test/art.mjs` (17): the rebake in a temporary folder
+through the real `ensure_starter_pack` (an old pack rebaked keeping its seed
+and size, a current one left alone, a broken `pack.json` rebaked), a bake
+repeatable byte for byte; then in the browser the new textures and stamps in
+the library, each texture's wrap no worse than its worst interior joint, the
+Floor layer laid in flagstones from the Layers panel, the dungeon dialog
+offering all three floors, a stroke in floorboards and every furnishing placed
+through the real tools, the round trip, no request off 127.0.0.1, no console
+errors. `regress` 120 -> 129.
+
+Looked at: a 2x2 repeat of each texture for seams, a sheet of all 24 furniture
+variants, and the editor with a flagstone floor, a band of floorboards and one
+of each furnishing on it.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 17 ext,
+16 theme, 66 guards, 129 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 40 clipboard, 43 selection, 41 prefabs, 52 transform, 32 hatch,
+29 print, 31 players, 21 setedit, 17 art -- 872 checks, all passing, plus
+`battle`, over two full back-to-back rounds on the finished tree, with
+`CG_CHROME` pointed at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`.
+Anthony's existing starter pack has no `artVersion`, so his next launch prints
+"Adding the new art to the starter pack" and takes about fifteen seconds once.
+
+---
+
 ## 2026-10-05 — editing a set, and ten things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 87

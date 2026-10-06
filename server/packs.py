@@ -31,8 +31,11 @@ def _title(name):
 def _walk_loose(pack_dir, pack_id):
     """Index a folder that has no manifest of its own."""
     assets = []
+    taken = set()
     for root, dirs, files in os.walk(pack_dir):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        # Sorted, so which of two same-named files keeps the plain id does not
+        # depend on the order the file system happens to list them in.
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
         rel_root = os.path.relpath(root, pack_dir)
         parts = [] if rel_root == "." else rel_root.split(os.sep)
         kind = "stamp"
@@ -48,8 +51,18 @@ def _walk_loose(pack_dir, pack_id):
                 continue
             rel = os.path.relpath(os.path.join(root, fn), pack_dir).replace(os.sep, "/")
             stem = os.path.splitext(fn)[0]
+            ident = "%s/%s" % (pack_id, stem)
+            if ident in taken:
+                # forest/rock.png beside desert/rock.png, or rock.png beside
+                # rock.svg: one id for two files, and the editor's lookup kept
+                # only the last, so picking one drew the other. The first keeps
+                # the plain id, so a map that already uses it still finds it.
+                ident = "%s/%s" % (pack_id, slugify(rel.replace("/", "-").replace(".", "-"), stem))
+                while ident in taken:
+                    ident += "-alt"
+            taken.add(ident)
             entry = {
-                "id": "%s/%s" % (pack_id, stem), "kind": kind, "label": _title(stem),
+                "id": ident, "kind": kind, "label": _title(stem),
                 "group": group, "file": rel,
             }
             if ext == ".png":
@@ -125,6 +138,15 @@ def index(packs_root):
     return out
 
 
+def _stem_taken(packs_root, pack, stem):
+    for sub in ("terrain", "stamps"):
+        folder = under(packs_root, pack, sub)
+        for ext in IMAGE_EXT:
+            if os.path.lexists(os.path.join(folder, stem + ext)):
+                return True
+    return False
+
+
 def import_asset(packs_root, filename, data, kind="stamp", group="imported", pack="user"):
     """Write one uploaded file into a pack and return its index entry."""
     pack = slug(pack, "pack")
@@ -149,6 +171,14 @@ def import_asset(packs_root, filename, data, kind="stamp", group="imported", pac
     while True:
         name = stem + ext if n == 1 else "%s-%d%s" % (stem, n, ext)
         dest = os.path.join(dest_dir, name)
+        # The id is the pack and the stem, not the file name, so rock.png as a
+        # stamp and rock.png as a texture were two files with one id. A stem
+        # already used anywhere in the pack, under any extension, is skipped.
+        if _stem_taken(packs_root, pack, os.path.splitext(name)[0]):
+            n += 1
+            if n > 10000:
+                raise Unsafe("too many files named %s" % stem)
+            continue
         try:
             fd = os.open(dest, flags, 0o644)
             break

@@ -24,6 +24,15 @@ from tools import stamps, terrain      # noqa: E402
 
 PACK_ID = "starter"
 
+# Raised whenever the generators gain art. A pack baked by an older version is
+# rebaked on the next launch, from its own seed, so new textures and symbols
+# reach a copy that was set up before they existed. The recipes already in the
+# pack must never change -- every map on disk is drawn from them -- so this
+# only ever adds; tools/terrain.py and tools/stamps.py say the same.
+#   1  the first pack: 17 textures, 29 symbols
+#   2  2026-10-06: flagstone, floorboards, cobblestones; eight furnishings
+ART_VERSION = 2
+
 
 def build(out_dir, seed="v1", size=256, log=print):
     terr_dir = os.path.join(out_dir, "terrain")
@@ -61,6 +70,7 @@ def build(out_dir, seed="v1", size=256, log=print):
         "author": "generated",
         "license": "CC0-1.0",
         "generated": True,
+        "artVersion": ART_VERSION,
         "seed": seed,
         "tileSize": size,
         "assets": assets,

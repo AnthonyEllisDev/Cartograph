@@ -19,12 +19,35 @@ pack's `pack.json`, so a pack you liked can always be rebuilt.
 The generated pack is **CC0 1.0** — public domain. Maps you make with it are
 yours, commercially or otherwise.
 
-Seventeen terrain tiles (parchment, ocean, shallows, grass, meadow, broadleaf
-and pine forest, sand, dunes, rock, highland, snow, tundra, marsh, farmland,
-ashland) and twenty-nine symbols in three random variants each: mountains,
+Twenty terrain tiles: parchment, ocean, shallows, grass, meadow, broadleaf
+and pine forest, sand, dunes, rock, highland, snow, tundra, marsh, farmland and
+ashland for the land, and flagstones, wooden floorboards and cobblestones for
+the floors of battle maps.
+
+Thirty-seven symbols. Drawn side-on, the way an atlas draws them: mountains,
 hills, volcanoes, caves, standing stones, five kinds of tree, villages, towns,
 cities, castles, towers, ruins, windmills, lighthouses, mines, bridges, ships,
-a sea serpent and a compass rose.
+a sea serpent and a compass rose. Drawn from above, at five feet to seventy
+pixels, for battle maps: a barrel, a crate, a table, a bed, a chest, a
+bookshelf, a rug and a well. The land and plant symbols and the furnishings
+come in three random variants each.
+
+## Adding to the generated art
+
+The pack grows: an update that adds art raises `ART_VERSION` in
+`tools/genpack.py`, and a pack baked by an older version is rebaked on the next
+launch from the seed and tile size in its own `pack.json`. For that to be safe,
+three rules hold for anyone changing the generators:
+
+- **Add, never change.** Every map on disk is drawn from the recipes already in
+  the pack. Changing one changes those maps. A new look is a new entry.
+- **Each recipe has its own random stream**, seeded from its name, so adding an
+  entry cannot move anything another entry draws.
+- **Ids never end in `-<number>`.** That suffix is how the Stamp tool finds a
+  symbol's variants: `pine-2` is the second pine.
+
+`test/art.mjs` bakes the pack twice and checks the files are byte-identical,
+and that an older pack picks up the new art from its own seed.
 
 ## Adding your own
 

@@ -92,7 +92,7 @@ function paintLive() {
   // pixel-identical to the committed result. Fixing it properly means letting
   // applyStroke draw into a padded canvas and blit only the middle, which is
   // a change to its contract rather than a one-line swap. See DAILY-LOG.
-  const box = live.kind === 'shape'
+  const box = live.kind === 'shape' || op.mode === 'dabs'
     ? R.opBox(op)
     : boxOf(op.points, op.size, 1 - (op.hardness || 0));
   live.box = unionBox(live.box, box);

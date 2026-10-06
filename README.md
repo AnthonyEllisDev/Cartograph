@@ -26,8 +26,10 @@ the browser you already have. If Windows says Python is not installed, get it
 from [python.org](https://www.python.org/downloads/) and tick *Add Python to
 PATH* during setup.
 
-The first launch spends about ten seconds generating the starter art pack, then
-never does it again.
+The first launch spends about ten seconds generating the starter art pack. It
+does it once more whenever an update adds art to the generators, from the same
+seed, so the new textures and symbols appear and everything already on your
+maps comes back exactly as it was.
 
 ```
 python app.py                    start it
@@ -476,6 +478,20 @@ They are not sandboxed. An extension runs with the same reach the editor has, so
 read one before you put it in the folder. The Extensions tab lists what loaded,
 what failed and why, and lets you turn any of them off.
 
+### Furnishing a battle map
+
+The starter pack has floors as well as ground: **flagstones**, **wooden
+floorboards** and **cobblestones**, under *floor* in the texture picker. Pick
+one for the Floor layer in the Layers panel, paint it with **Terrain**, or give
+it to **Generate dungeon…** as its floor. They tile at five feet to the
+seventy-pixel square, the scale of a new battle map.
+
+And furnishings to stand on them, drawn from above rather than side-on, under
+*furnishing* in the stamp picker: a barrel, a crate, a table, a bed, a chest, a
+bookshelf, a rug and a well, three variants of each. At a size of 1 they are
+drawn to the grid -- a table is two squares long, a bed one by two -- and the
+Stamp tool mixes the variants as it does for trees.
+
 ## Adding your own art
 
 See [ASSETS.md](ASSETS.md). Short version: drop a folder of PNGs into
@@ -507,7 +523,12 @@ file on disk, rather than written back out in a form the browser cannot read.
 `tools/stamps.py` write the whole starter pack from a seed, so there is nothing
 shipped whose licence you have to take on trust, and the pack can be re-rolled.
 Terrain tiles are raster and wrap seamlessly; symbols are SVG so they stay sharp
-when you export at print size.
+when you export at print size. The pack records the version of the generators
+that baked it (`ART_VERSION` in `tools/genpack.py`), and an older pack is
+rebaked on launch from its own seed and tile size. That only works because art
+is only ever added: a recipe already in the pack is never changed, since every
+map on disk is drawn from it, and `test/art.mjs` checks that a bake is
+byte-for-byte repeatable.
 
 **Painting is a mask, then a texture poured into it.** A stroke is drawn as a
 shape first and the texture is filled into that shape, rather than the texture
@@ -550,7 +571,13 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 846 assertions in all: `setedit.mjs`
+There are narrower scripts beside it, 872 assertions in all: `art.mjs`
+(the starter pack's art: an older pack rebaked on launch from its own seed and
+size, a current one left alone, a bake repeatable byte for byte, the floor
+textures in the library and meeting their own edges, the furnishings and their
+variants, the floor laid from the layer panel and offered to the dungeon
+generator, a stroke in floorboards and every furnishing placed with the real
+tools, and the round trip), `setedit.mjs`
 (editing a set: the fields one kind of thing shares offered and the ones that
 make each thing itself left out, a disagreement marked, one change reaching
 them all as one step and coming back exactly on undo and redo, a mixed set

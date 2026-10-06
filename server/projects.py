@@ -243,15 +243,29 @@ def delete(root, name):
         raise Unsafe("no such project")
 
 
-def unique_slug(root, title):
+def unique_slug(root, title, claim=False):
+    """A folder name not yet in use. With claim, the folder is made here, in
+    the same step that finds it free: each request runs on its own thread, and
+    two creates of one name between the check and the write both chose it, so
+    the second save overwrote the first and both were told it had worked."""
     base = slugify(title, "untitled")
     candidate = base
     n = 1
-    while os.path.exists(os.path.join(root, candidate)):
+    while True:
+        if claim:
+            os.makedirs(root, exist_ok=True)
+            try:
+                os.mkdir(under(root, candidate))
+                return candidate
+            except FileExistsError:
+                pass
+        elif not os.path.exists(os.path.join(root, candidate)):
+            return candidate
         n += 1
+        if n > 100000:
+            raise ValueError("too many maps named %s" % base)
         # slugify already trimmed to the 64 characters slug() allows, so the
         # counter has to come out of that budget rather than be added to it --
         # otherwise saving a long-named map is refused by our own validator.
         suffix = " %d" % n
         candidate = base[:64 - len(suffix)].strip() + suffix
-    return candidate

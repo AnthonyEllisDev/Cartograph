@@ -588,7 +588,19 @@ function renderFill(layer, ctx) {
 
 export function opBox(op) {
   if (op.mode === 'shape') return shapeBox(op);
+  if (op.mode === 'dabs') return dabsBox(op);
   return strokeBox(op.points, op.size, 1 - (op.hardness || 0));
+}
+
+/** A dab lands up to half the jitter off the path and is wider than the brush
+ *  is soft, so strokeBox's reach cut dabs off along a straight edge -- on
+ *  screen and on reload alike. The numbers are dabMask's own: the furthest
+ *  centre, the largest radius, and three deviations of its blur. */
+function dabsBox(op) {
+  const jitter = op.jitter != null ? op.jitter : 0.7;
+  const soft = op.hardness != null ? 1 - op.hardness : 0.35;
+  const reach = op.size * (0.5 * jitter + 0.4 * (1 + (op.sizeJitter || 0)) + 0.48 * soft);
+  return strokeBox(op.points, 0, 0, reach + 4);
 }
 
 /** Blur what is already on the layer, under the brush. Unlike every other
@@ -701,7 +713,13 @@ function growShelf(layer, mask, coast, out) {
  *  whole-canvas rebuild would have produced. */
 function growInk(mask, coast, out, dirty) {
   const r = coast.inkWidth || 2.5;
-  const box = snapBox(dirty, SHELF_GRID);
+  // The ring stands up to r outside the mask, so it can change past the
+  // stroke's own reach. Snapping alone usually hid that; a stroke ending a few
+  // pixels short of a grid line left the new ring beyond it out of the cache
+  // until a reload drew it.
+  const grow = Math.ceil(r) + 1;
+  const box = snapBox({ x: dirty.x - grow, y: dirty.y - grow,
+                        x1: dirty.x1 + grow, y1: dirty.y1 + grow }, SHELF_GRID);
   const m = SHELF_GRID;
   const wide = snapBox({ x: box.x - m, y: box.y - m, x1: box.x1 + m, y1: box.y1 + m }, SHELF_GRID);
   const bw = box.x1 - box.x, bh = box.y1 - box.y;

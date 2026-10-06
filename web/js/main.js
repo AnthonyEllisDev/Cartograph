@@ -281,7 +281,10 @@ async function exportDialog() {
   }
 
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-  const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
+  // Cut before a suffix is added: the server keeps sixty-four characters,
+  // and a long name lost "-players" there, so the players' copy was written
+  // under a name that read as a second GM export.
+  const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').slice(0, 40).trim() || 'map';
   let written = null;
   try {
     const res = await api.exportImage(name + '.png', blob);

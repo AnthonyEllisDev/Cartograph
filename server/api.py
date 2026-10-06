@@ -147,11 +147,20 @@ def route(req):
         # ValueError for a document nested too deeply.
         if not isinstance(doc, dict):
             return _err("document must be an object")
-        name = projects.unique_slug(ctx.projects_dir, doc.get("name") or "Untitled Map")
+        try:
+            name = projects.unique_slug(ctx.projects_dir, doc.get("name") or "Untitled Map", claim=True)
+        except ValueError as exc:
+            return _err(exc)
         doc["name"] = doc.get("name") or name
         try:
             saved = projects.write(ctx.projects_dir, name, doc)
         except ValueError as exc:
+            # The folder was claimed before the document was checked; an empty
+            # one left behind would hide its name from unique_slug for good.
+            try:
+                os.rmdir(under(ctx.projects_dir, name))
+            except OSError:
+                pass
             return _err(exc)
         return _json({"ok": True, "project": saved})
 

@@ -348,7 +348,10 @@ export async function printDialog() {
     return toast('Print failed: ' + err.message, 'bad');
   }
   const blob = new Blob([made.bytes], { type: 'application/pdf' });
-  const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').trim() || 'map';
+  // Cut before a suffix is added: the server keeps sixty-four characters,
+  // and a long name lost "-players" there, so the players' copy was written
+  // under a name that read as a second GM export.
+  const name = (doc.name || 'map').replace(/[^\w \-]+/g, '').slice(0, 40).trim() || 'map';
   try {
     const res = await api.exportImage(name + (o.players ? ' - players' : '') + ' - print.pdf', blob);
     toast('Print written to ' + res.path, 'good');
