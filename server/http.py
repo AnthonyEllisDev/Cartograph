@@ -46,6 +46,7 @@ class Context(object):
         self.exports_dir = os.path.join(root, "exports")
         self.extensions_dir = os.path.join(root, "extensions")
         self.prefabs_dir = os.path.join(root, "prefabs")
+        self.backups_dir = os.path.join(root, "backups")
         self.save_config = lambda: None
         self.started = time.time()
         self.origins = set()

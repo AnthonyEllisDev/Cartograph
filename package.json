@@ -24,6 +24,7 @@
     "setedit": "node test/setedit.mjs",
     "art": "node test/art.mjs",
     "caverns": "node test/caverns.mjs",
+    "backups": "node test/backups.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

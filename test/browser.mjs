@@ -56,7 +56,21 @@ export async function newMap(page, { name = 'Test Map', kind = 'region', size } 
   await page.selectOption('.modal select >> nth=0', kind);
   await page.waitForTimeout(200);
   if (size) await page.selectOption('.modal select >> nth=1', size);
+  await page.evaluate(() => { window.__cgBefore = window.__cg.app.doc; });
   await page.click('.modal .btn-primary');
+  // A map with unsaved changes on screen is asked about first (and backed
+  // up): a suite that painted on its last map says yes, as a person
+  // abandoning a scratch map would.
+  const started = Date.now();
+  while (Date.now() - started < 15000) {
+    const state = await page.evaluate(() => ({
+      ask: [...document.querySelectorAll('.modal button')].some((b) => b.textContent === 'Discard and continue'),
+      swapped: window.__cg.app.doc !== window.__cgBefore,
+    }));
+    if (state.swapped) break;
+    if (state.ask) await page.click('.modal button:has-text("Discard and continue")');
+    await page.waitForTimeout(100);
+  }
   await page.waitForTimeout(900);
   await page.waitForFunction((k) => window.__cg.app.doc && window.__cg.app.doc.kind === k,
                              kind, { timeout: 15000 });

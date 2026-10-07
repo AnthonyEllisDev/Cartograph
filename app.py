@@ -91,7 +91,7 @@ def save_config(config, transient=None):
 
 
 def ensure_folders():
-    for sub in ("projects", "exports", "extensions", "prefabs", os.path.join("assets", "packs", "user")):
+    for sub in ("projects", "exports", "extensions", "prefabs", "backups", os.path.join("assets", "packs", "user")):
         os.makedirs(os.path.join(ROOT, sub), exist_ok=True)
 
 

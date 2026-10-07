@@ -53,5 +53,12 @@ export const api = {
   }),
   deletePrefab: (slug) => jsonFetch(`/api/prefabs/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
 
+  backups: () => jsonFetch('/api/backups'),
+  saveBackup: (doc, reason) => jsonFetch('/api/backups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, reason }),
+  }),
+  readBackup: (id) => jsonFetch(`/api/backups/${encodeURIComponent(id)}`),
+  deleteBackup: (id) => jsonFetch(`/api/backups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   exportImage: (name, blob) => put(`/api/export?name=${encodeURIComponent(name)}`, blob, blob.type),
 };

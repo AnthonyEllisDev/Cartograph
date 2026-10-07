@@ -8,7 +8,7 @@ import { newDocument, referencedAssets, serialise, findLayer, kindOf, LAYER_KIND
 import { clearHistory } from './history.js';
 import * as R from './render.js';
 import { applyLook } from './theme.js';
-import { debounce, toast } from './util.js';
+import { debounce, el, modal, toast } from './util.js';
 
 export const app = {
   doc: null,
@@ -21,6 +21,11 @@ export const app = {
   // Bumped by every edit. saveProject compares it across its awaits, because
   // work done while a save is in flight is not in the payload that save wrote.
   edits: 0,
+  // The edit count when the map on screen was opened or made. A new map that
+  // nobody has touched is dirty -- it is not on disk yet -- but there is
+  // nothing in it to lose, and asking about it would only teach people to
+  // click through the question.
+  editsAtOpen: 0,
   listeners: {},
 };
 
@@ -114,6 +119,7 @@ export async function openDocument(doc, slug) {
   app.activeLayerId = (firstPaintable || doc.layers[0]).id;
   clearHistory();
   markDirty(false);
+  app.editsAtOpen = app.edits;
   // markDirty speaks only when the flag moves, and opening a saved map from a
   // clean editor moves nothing -- so the top bar kept the last map's word, or
   // the page's "not saved yet" on every launch, over a map that was on disk.
@@ -133,7 +139,57 @@ export async function newMap(opts = {}) {
   });
   await openDocument(doc, null);
   markDirty(true);
+  app.editsAtOpen = app.edits;
   return doc;
+}
+
+/* ------------------------------------------------------- discarding work */
+
+/** Whether replacing the map on screen would lose something: changes made
+ *  since it was opened or made that no save has written. */
+export function hasUnsavedWork() {
+  return !!(app.doc && app.dirty && app.edits > app.editsAtOpen);
+}
+
+/** Ask before anything replaces a map that has unsaved changes, and keep a
+ *  backup of it either way.
+ *
+ * Opening another map, starting a new one or restoring a backup all go
+ * through openDocument, which used to throw the unsaved work away without a
+ * word. The backup is written *before* the question is put, so it exists
+ * whatever the answer: a dialog gets clicked through unread, and the backup is
+ * what that click costs instead of the work. `what.verb` starts the sentence
+ * ("Creating a new map"), `what.reason` is recorded with the backup. Resolves
+ * true to go ahead. */
+export async function confirmDiscard(what) {
+  if (!hasUnsavedWork()) return true;
+  const doc = app.doc;
+  const name = doc.name || 'this map';
+  let kept = null;
+  let failed = null;
+  try {
+    const snap = serialise(doc);
+    snap.view = { x: R.view.x, y: R.view.y, zoom: R.view.zoom };
+    kept = (await api.saveBackup(snap, what.reason || '')).backup;
+  } catch (err) {
+    failed = err.message;
+  }
+  // Something else replaced the map while the backup was being written; the
+  // question would be about a map no longer on screen.
+  if (app.doc !== doc) return false;
+  let go = false;
+  await modal({
+    title: 'Discard unsaved changes?',
+    body: el('div', {}, [
+      el('p', { text: `${what.verb} will discard all the unsaved changes to “${name}”. Proceed anyway?` }),
+      el('p', { class: 'muted', 'data-discard': kept ? 'backed-up' : 'no-backup', text: kept
+        ? 'A backup of it as it stands has been kept either way: Projects tab, under Backups.'
+        : `No backup could be kept (${failed}). Cancel and save first if you want these changes.` }),
+    ]),
+    buttons: [{ label: 'Cancel' },
+              { label: 'Discard and continue', class: 'btn-danger', onClick: () => { go = true; } }],
+  });
+  return go && app.doc === doc;
 }
 
 /* ------------------------------------------------------------------ saving */

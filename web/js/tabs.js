@@ -3,7 +3,7 @@
 import { api } from './api.js';
 import { library, loadLibrary, forgetImages, forgetPatterns, warm } from './assets.js';
 import { extensions, loadExtensions, setExtensionEnabled, unloadExtension } from './extensions.js';
-import { app, emit, markDirty, newMap, openDocument, rescheduleAutosave, saveProject, saveSettings, scheduleAutosave } from './app.js';
+import { app, confirmDiscard, emit, markDirty, newMap, openDocument, rescheduleAutosave, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { MAP_KINDS, referencedAssets } from './doc.js';
 import * as hex from './hex.js';
 import * as R from './render.js';
@@ -139,6 +139,7 @@ export function initAssetsTab() {
 /* ---------------------------------------------------------------- projects */
 
 export async function renderProjects() {
+  renderBackups();
   const grid = $('#project-grid');
   grid.innerHTML = '<p class="empty">Reading projects…</p>';
   let list = [];
@@ -195,6 +196,8 @@ export async function renderProjects() {
 export async function openProject(slug) {
   try {
     const { project } = await api.readProject(slug);
+    if (!(await confirmDiscard({ verb: `Opening \u201c${project.name || slug}\u201d`,
+                                 reason: 'before opening ' + (project.name || slug) }))) return;
     await warm(referencedAssets(project));
     await openDocument(project, slug);
     $('#project-name').value = project.name || slug;
@@ -202,6 +205,84 @@ export async function openProject(slug) {
     toast('Opened ' + (project.name || slug));
   } catch (err) {
     toast('Could not open: ' + err.message, 'bad');
+  }
+}
+
+/* ----------------------------------------------------------------- backups */
+
+/** The backups kept when a map's unsaved changes were discarded, newest
+ *  first, under the map cards. Rendered with the cards, so a backup taken a
+ *  moment ago is there when the tab is next shown. */
+export async function renderBackups() {
+  const list = $('#backup-list');
+  if (!list) return;
+  let backups = [];
+  try { backups = (await api.backups()).backups; } catch (err) {
+    list.innerHTML = '';
+    list.appendChild(el('p', { class: 'empty', text: 'Could not read backups: ' + err.message }));
+    return;
+  }
+  list.innerHTML = '';
+  if (!backups.length) {
+    list.appendChild(el('p', { class: 'empty', text: 'None yet.' }));
+    return;
+  }
+  for (const b of backups) {
+    const when = new Date(b.saved * 1000);
+    list.appendChild(el('div', { class: 'backup-row', 'data-backup': b.id }, [
+      el('div', { class: 'meta' }, [
+        el('b', { text: b.name }),
+        el('span', { text: `${when.toLocaleString()} (${ago(b.saved)})` +
+                           (b.reason ? ' \u00b7 ' + b.reason : '') +
+                           ` \u00b7 ${b.width}\u00d7${b.height} \u00b7 ${b.layers} layers` }),
+      ]),
+      el('div', { class: 'acts' }, [
+        el('button', { class: 'btn btn-primary', text: 'Restore', 'data-action': 'restore-backup',
+                       onclick: () => restoreBackup(b) }),
+        el('button', {
+          class: 'btn btn-danger', text: 'Delete', 'data-action': 'delete-backup',
+          onclick: async () => {
+            let go = false;
+            await modal({
+              title: 'Delete this backup?',
+              body: `The backup of \u201c${b.name}\u201d from ${when.toLocaleString()} will be removed from disk.`,
+              buttons: [{ label: 'Keep it' },
+                        { label: 'Delete', class: 'btn-danger', onClick: () => { go = true; } }],
+            });
+            if (!go) return;
+            try { await api.deleteBackup(b.id); } catch (err) { toast(err.message, 'bad'); }
+            renderBackups();
+          },
+        }),
+      ]),
+    ]));
+  }
+}
+
+/** Put a backup back on screen as a new, unsaved map.
+ *
+ * Never over the map it came from: that may have been saved since, and the
+ * point of a backup is that nothing is lost by using it. It comes back with
+ * no slug, so its first save makes a project of its own, and "(restored)" on
+ * its name so the two are told apart in the Projects tab. */
+export async function restoreBackup(b) {
+  try {
+    const { project } = await api.readBackup(b.id);
+    if (!(await confirmDiscard({ verb: `Restoring the backup of \u201c${b.name}\u201d`,
+                                 reason: 'before restoring a backup' }))) return;
+    delete project.slug;
+    project.name = (project.name || 'Untitled Map') + ' (restored)';
+    await warm(referencedAssets(project));
+    await openDocument(project, null);
+    // Not on disk anywhere but the backup, so it is unsaved work: dirty, and
+    // asked about before anything replaces it.
+    markDirty(true);
+    scheduleAutosave();
+    $('#project-name').value = project.name;
+    showTab('map');
+    toast('Restored ' + b.name + ' -- save it to keep it');
+  } catch (err) {
+    toast('Could not restore: ' + err.message, 'bad');
   }
 }
 
@@ -293,6 +374,7 @@ export async function newMapDialog() {
     buttons: [{ label: 'Cancel' }, { label: 'Create', class: 'btn-primary', onClick: () => { go = true; } }],
   });
   if (!go) return;
+  if (!(await confirmDiscard({ verb: 'Creating a new map', reason: 'before a new map' }))) return;
   const [w, h] = size();
   await newMap({ kind: kind.value, width: w, height: h, name: name.value.trim() || 'Untitled Map' });
   $('#project-name').value = app.doc.name;
@@ -461,12 +543,13 @@ export function renderSettings() {
     el('dt', { text: 'Maps' }), el('dd', { text: (server.folders || {}).projects || '—' }),
     el('dt', { text: 'Asset packs' }), el('dd', { text: (server.folders || {}).packs || '—' }),
     el('dt', { text: 'Exports' }), el('dd', { text: (server.folders || {}).exports || '—' }),
+    el('dt', { text: 'Backups' }), el('dd', { text: (server.folders || {}).backups || '—' }),
     el('dt', { text: 'Port' }), el('dd', { text: String((server.config || {}).port || '—') }),
   ]));
   const folders = el('div', { class: 'row', style: 'flex-wrap:wrap;margin:-8px 0 16px' });
   for (const [which, label] of [['root', 'Program folder'], ['projects', 'Maps'],
                                 ['packs', 'Asset packs'], ['exports', 'Exports'],
-                                ['extensions', 'Extensions']]) {
+                                ['extensions', 'Extensions'], ['backups', 'Backups']]) {
     folders.appendChild(el('button', {
       class: 'btn', text: 'Open ' + label.toLowerCase(),
       onclick: async () => {

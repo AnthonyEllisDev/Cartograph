@@ -5,6 +5,7 @@ config.json
 projects/
 exports/
 prefabs/
+backups/
 
 # Generated on first launch, and re-rollable with --regen-pack
 assets/packs/starter/

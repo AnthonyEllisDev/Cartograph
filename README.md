@@ -53,6 +53,7 @@ server/               the local HTTP server and file API (standard library only)
   api.py                the JSON endpoints
   projects.py           reading and writing maps
   prefabs.py            reading and writing prefabs
+  backups.py            the copies kept before unsaved work is discarded
   packs.py              indexing asset folders
   png.py                a PNG writer in eighty lines of zlib
   safe.py               every client-supplied path goes through here
@@ -75,6 +76,7 @@ assets/packs/         asset packs; drop folders in here
 projects/             your maps, one folder each
 exports/              PNGs you export
 prefabs/              sets of things you saved to reuse, one JSON file each
+backups/              maps as they stood before unsaved changes were discarded
 extensions/           extensions; one folder each, loaded at startup
   battle-tokens/        worked example: a tool and a layer kind
   hex-coordinates/      worked example: a generated layer and a side panel
@@ -87,6 +89,7 @@ test/regress.mjs      135 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
 test/caverns.mjs      25 more, for caverns and the underground art
+test/backups.mjs      21 more, for the unsaved-work question and backups
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -113,6 +116,17 @@ positions, sizes, textures, colours. The map is re-rendered from that when you
 open it, which is why a saved map is a few kilobytes rather than a few
 megabytes, and why you can diff two versions of it in git and see what changed.
 Copy the folder to back a map up. Delete it to remove it.
+
+**Unsaved work is never dropped without a word.** Opening another map,
+starting a new one or restoring a backup while the map on screen has unsaved
+changes asks first -- *Creating a new map will discard all the unsaved changes
+to ... Proceed anyway?* -- and before it asks it keeps a **backup** of the map as
+it stands, whichever answer you then give. Backups are listed at the bottom of
+the Projects tab, newest first, with when and why each was kept; **Restore**
+opens one as a new unsaved map named "... (restored)", so it never overwrites
+the map it came from, and saving it makes a project of its own. The newest
+twenty are kept, one readable JSON file each in `backups/` beside the program.
+A new map nobody has touched yet has nothing to lose, and is not asked about.
 
 ## Working in it
 
@@ -589,7 +603,11 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 903 assertions in all: `caverns.mjs`
+There are narrower scripts beside it, 924 assertions in all: `backups.mjs`
+(unsaved work: an untouched map replaced quietly, the question before a new
+map, an open and a restore, a backup kept before the answer and on Cancel too,
+a failed backup said so, a restore exactly as it was and saved as a project of
+its own, delete, pruning to twenty, and the server's guards), `caverns.mjs`
 (caverns: the dialog's settings for each kind, the floor, rock, walls and
 notes a cave writes, walls off the grid and closed, every chamber reachable,
 the same seed giving the same cave, the walls casting shadows, one undo step,

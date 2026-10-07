@@ -45,12 +45,11 @@ width* -- is kept as the precondition of the one before it and passes there):
   layer while `commitDungeon` replaced the first unlocked one. It asks about the
   unlocked one now.
 
-Written up, not changed: **opening a map or making a new one discards unsaved
-work without asking** (reproduced: a never-saved map with a stroke on it is
-gone after Open on another card). This was already in the hand-off's
-deliberately-not-fixed list as a design question -- which buttons the prompt
-offers -- and it is still that; but it is the one finding today that loses work,
-so it is worth Anthony's decision soon. Also still open: the Import dialog's
+**Opening a map or making a new one discarded unsaved work without asking**
+(reproduced: a never-saved map with a stroke on it was gone after Open on
+another card). It had been on the hand-off's deliberately-not-fixed list as a
+design question, and Anthony settled it the same day -- see *Later the same
+day* below. Still open: the Import dialog's
 Group field is ignored; `wallSegments`/`toUVTT`/`playersLights` read only the
 first walls layer (reachable only by hand-editing a file); Ctrl+S/E/P/N do not
 check `modalOpen()`.
@@ -117,6 +116,49 @@ art to the starter pack" and takes about fifteen seconds once. What is left
 for caverns, if anyone asks: water and lava pools laid in the low chambers,
 stalagmites scattered on the floor, and a mixed dungeon (rooms opening off a
 cave).
+
+**Later the same day: asking before unsaved work goes, and a backup either
+way.** Anthony's decision on the open question above: ask "Creating a new map
+will discard all currently unsaved changes to this project, proceed anyway?",
+and keep a backup separate from the project whatever the answer, so a click
+through the question without reading it can be undone. He chose a folder of
+its own with a list in the Projects tab over saving backups as ordinary maps.
+
+- `confirmDiscard(what)` in `app.js` is the one gate. `openProject`,
+  `newMapDialog` (after Create, so the question names what is about to
+  happen) and the new `restoreBackup` call it; boot and `openDocument` itself
+  do not. It writes the backup **before** putting the question, so Cancel
+  keeps one too, and if the backup fails the dialog says so and still asks.
+- "Unsaved work" is `app.dirty && app.edits > app.editsAtOpen`: a new map is
+  dirty (it is not on disk) but one nobody has touched has nothing to lose, and
+  asking about it would teach people to click through the question. That is
+  also what keeps the `newMap()` test helper's first map, and the race check in
+  `regress.mjs`, quiet.
+- `server/backups.py`: one JSON file per backup in `backups/` (gitignored,
+  made at startup, never served statically), named `<timestamp> <map name>`,
+  holding the document verbatim beside its name, the reason and the time.
+  Claimed with a hard link from a private temp file as prefabs are; the
+  newest twenty are kept. `GET/POST /api/backups`, `GET/DELETE
+  /api/backups/<id>`, ids through `slug`/`under`, bodies through `_body`, the
+  document held to the tests `projects.read` makes.
+- The Projects tab lists them under the map cards (`#backup-list`,
+  `data-backup`, `data-action="restore-backup"`/`"delete-backup"`). Restore
+  opens the backup as a new unsaved map named "... (restored)" with no slug,
+  so it can never overwrite the map it came from and its first save makes a
+  project of its own. Settings shows the folder and an *Open backups* button.
+- `test/browser.mjs`'s `newMap()` answers the question when it comes (a suite
+  that painted on its last map abandons it, as a person would), and waits for
+  the document to change rather than for its kind.
+
+A new suite, `test/backups.mjs` (21). Looked at the question and the Backups
+list in screenshots at 1280 x 800.
+
+**Tests after the backups:** 924 checks across twenty-six suites, all passing,
+plus `battle`, over two full back-to-back rounds. The round before those had
+three `backups.mjs` checks fail for the suite's own reason: they counted the
+backups, and by then the other suites had filled the folder to its twenty, so
+a new one pushed an old one out and the count stood still. They compare the
+newest backup's id now.
 
 ---
 

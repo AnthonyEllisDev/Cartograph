@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from server import extensions, packs, prefabs, projects, safe
+from server import backups, extensions, packs, prefabs, projects, safe
 from server.safe import Unsafe, slug, under
 
 
@@ -77,6 +77,7 @@ def route(req):
                 "packs": ctx.packs_dir,
                 "exports": ctx.exports_dir,
                 "prefabs": ctx.prefabs_dir,
+                "backups": ctx.backups_dir,
             },
             "config": ctx.config,
             "started": ctx.started,
@@ -113,7 +114,7 @@ def route(req):
         target = {
             "packs": ctx.packs_dir, "projects": ctx.projects_dir,
             "exports": ctx.exports_dir, "extensions": ctx.extensions_dir,
-            "prefabs": ctx.prefabs_dir, "root": ctx.root,
+            "prefabs": ctx.prefabs_dir, "backups": ctx.backups_dir, "root": ctx.root,
         }.get(which)
         if not target:
             return _err("unknown folder")
@@ -242,6 +243,32 @@ def route(req):
         try:
             prefabs.delete(ctx.prefabs_dir, path[len("/api/prefabs/"):])
         except Unsafe as exc:
+            return _err(exc, 404)
+        return _json({"ok": True})
+
+    # Backups: the map as it stood before the editor discarded its unsaved
+    # changes. Like prefabs, the folder is never served statically.
+    if path == "/api/backups" and method == "GET":
+        return _json({"ok": True, "backups": backups.list_backups(ctx.backups_dir)})
+
+    if path == "/api/backups" and method == "POST":
+        try:
+            saved = backups.write(ctx.backups_dir, _body(req))
+        except (Unsafe, ValueError) as exc:
+            return _err(exc)
+        return _json({"ok": True, "backup": saved})
+
+    if path.startswith("/api/backups/") and method == "GET":
+        try:
+            doc = backups.read(ctx.backups_dir, path[len("/api/backups/"):])
+        except (Unsafe, OSError, ValueError) as exc:
+            return _err(exc, 404)
+        return _json({"ok": True, "project": doc})
+
+    if path.startswith("/api/backups/") and method == "DELETE":
+        try:
+            backups.delete(ctx.backups_dir, path[len("/api/backups/"):])
+        except (Unsafe, OSError) as exc:
             return _err(exc, 404)
         return _json({"ok": True})
 
