@@ -2611,6 +2611,143 @@ const DIFF = `(a, b) => {
   t('a server bound with --host answers at the address it prints', status === 200, status);
 }
 
+{
+  // A pen held at one pressure gave every point the same width below the
+  // brush size; endPaint dropped the uniform widths array and left op.size at
+  // the slider, so the stroke was drawn at full width, live and committed.
+  await newMap(p, { name: 'Pen Check', kind: 'region' });
+  await p.click('.tool[data-tool="brush"]');
+  await p.waitForTimeout(200);
+  await p.click('#asset-picker .asset >> nth=3');
+  await p.waitForTimeout(300);
+  const pen = await p.evaluate(async () => {
+    const { TOOLS } = await import('/js/tools.js');
+    const { setToolSetting } = await import('/js/app.js');
+    const app = window.__cg.app, R = window.__cg.R;
+    const bag = app.settings.tools.brush || {};
+    window.__penWas = { dynamics: bag.dynamics ?? 'pressure', dynAmount: bag.dynAmount ?? 0.6,
+                        size: bag.size ?? 90, hardness: bag.hardness ?? 0.55 };
+    for (const [k, v] of Object.entries({ dynamics: 'pressure', dynAmount: 0.9, size: 120, hardness: 1 })) {
+      setToolSetting('brush', k, v);
+    }
+    const layer = app.doc.layers.find((l) => l.kind === 'raster');
+    const ev = () => ({ pointerType: 'pen', pressure: 0.3, timeStamp: performance.now() });
+    const was = layer.ops.length;
+    TOOLS.brush.down({ x: 300, y: 600 }, ev(), layer);
+    for (let i = 1; i <= 20; i++) TOOLS.brush.move({ x: 300 + i * 30, y: 600 }, ev(), layer);
+    TOOLS.brush.up({ x: 900, y: 600 }, ev(), layer);
+    await new Promise((r) => setTimeout(r, 400));
+    if (layer.ops.length === was) return { none: true };
+    const op = layer.ops[layer.ops.length - 1];
+    const col = () => {
+      const d = R.canvasFor(layer).getContext('2d').getImageData(600, 400, 1, 400).data;
+      let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+      return n;
+    };
+    const live = col();
+    R.rebuildLayer(layer);
+    return { size: op.size, widths: !!op.widths, live, rebuilt: col() };
+  });
+  t('a pen held at one pressure paints at the width it asked for, not the full brush',
+    !pen.none && pen.size < 60 && pen.live < 70 && pen.live > 10, JSON.stringify(pen));
+  t('and reloads at that width', !pen.none && Math.abs(pen.rebuilt - pen.live) <= 1, JSON.stringify(pen));
+  await p.evaluate(async () => {
+    const { setToolSetting } = await import('/js/app.js');
+    const was = window.__penWas || {};
+    for (const [k, v] of Object.entries(was)) setToolSetting('brush', k, v);
+  });
+}
+
+{
+  // Rescan emptied the decoded images the open map is drawn from and decoded
+  // nothing again, so the next rebuild of any layer drew its terrain flat.
+  await newMap(p, { name: 'Rescan Check', kind: 'region' });
+  const sig = () => p.evaluate(() => {
+    const c = window.__cg.R.flatten({ scale: 0.25, grid: false, paper: false });
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let h = 0; for (let i = 0; i < d.length; i += 4) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0;
+    return h;
+  });
+  const rebuild = () => p.evaluate(() => {
+    const { app, R } = window.__cg;
+    for (const l of app.doc.layers) R.invalidate(l);
+    R.compositeAll(); R.requestDraw();
+  });
+  await rebuild();
+  await p.waitForTimeout(300);
+  const before = await sig();
+  await p.click('.tab[data-tab="assets"]');
+  await p.waitForTimeout(300);
+  await p.click('#btn-rescan');
+  await p.waitForTimeout(2000);
+  await p.click('.tab[data-tab="map"]');
+  await p.waitForTimeout(300);
+  await rebuild();
+  await p.waitForTimeout(300);
+  const after = await sig();
+  const cold = await p.evaluate(async () => {
+    const A = await import('/js/assets.js');
+    const { referencedAssets } = await import('/js/doc.js');
+    return referencedAssets(window.__cg.app.doc).filter((id) => !A.imageNow(id));
+  });
+  t('after Rescan the open map still draws its textures when a layer is rebuilt',
+    cold.length === 0 && after === before, `${cold.join(',')} ${before} ${after}`);
+}
+
+{
+  // config.json is edited by hand: a tileSize that is not a number stopped
+  // the program before the server bound, and a pack.json saved with a
+  // byte-order mark counted as unreadable and was rebaked from the config's
+  // seed rather than its own. Both against a pack that is already current, so
+  // nothing needs baking.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = join(root, 'test', '.tmp-config-check');
+  rmSync(dir, { recursive: true, force: true });
+  const pack = join(dir, 'assets', 'packs', 'starter');
+  mkdirSync(pack, { recursive: true });
+  const runPy = (code) => new Promise((resolve) => {
+    const child = spawn('python3', ['-c', code], { cwd: root });
+    let said = '';
+    child.stdout.on('data', (d) => { said += d; });
+    child.stderr.on('data', (d) => { said += d; });
+    child.on('close', () => resolve(said.trim().split('\n').pop()));
+  });
+  const version = await runPy('from tools import genpack; print(genpack.ART_VERSION)');
+  const manifest = JSON.stringify({ id: 'starter', generated: true, seed: 'harbour', tileSize: 32,
+                                    artVersion: +version, assets: [] });
+  writeFileSync(join(pack, 'pack.json'), manifest);
+  const call = (cfg) => `import app; app.ROOT = ${JSON.stringify(dir)}; print(app.ensure_starter_pack(${cfg}))`;
+  const word = await runPy(call('{"tileSize": "large"}'));
+  t('a tileSize that is not a number in config.json does not stop the program', word === 'False', word);
+  writeFileSync(join(pack, 'pack.json'), '\ufeff' + manifest);
+  const bom = await runPy(call('{"packSeed": "elsewhere"}'));
+  t('a pack.json saved with a byte-order mark is read, not rebaked', bom === 'False', bom);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+{
+  // With two walls layers, the first locked, the dungeon dialog asked about
+  // the locked layer's walls while the step replaced the other layer's.
+  await newMap(p, { name: 'Two Walls', kind: 'battle', size: '20x15' });
+  await p.evaluate(async () => {
+    const { makeLayer } = await import('/js/doc.js');
+    const doc = window.__cg.app.doc;
+    const first = doc.layers.find((l) => l.kind === 'walls');
+    first.ops.push({ id: 'w-locked', kind: 'wall', points: [{ x: 70, y: 70 }, { x: 280, y: 70 }] });
+    first.locked = true;
+    const second = makeLayer('walls');
+    doc.layers.splice(doc.layers.indexOf(first) + 1, 0, second);
+    const D = await import('/js/dungeon.js');
+    D.dungeonDialog();
+  });
+  await p.waitForTimeout(400);
+  const asks = await p.evaluate(() => (document.querySelector('.modal') || {}).textContent || '');
+  t('the dungeon dialog asks about the walls it will replace, not a locked layer\'s',
+    asks.includes('Generate dungeon') && !asks.includes('Walls already drawn'), asks.includes('Walls already drawn'));
+  await p.click('.modal button:has-text("Cancel")');
+  await p.waitForTimeout(200);
+}
+
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 for (const [status, name, note] of out) {

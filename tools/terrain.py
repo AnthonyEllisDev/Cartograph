@@ -145,6 +145,24 @@ TERRAINS = {
         stops=[(98, 96, 92), (128, 124, 116), (160, 154, 142)],
         grout=(64, 60, 54), cells=12,
         grain=[(120, (84, 80, 74), 0.12, 0.4, 1.2)]),
+    # Underground, for the cavern generator: a floor nobody laid, and the two
+    # things a cave floor gives way to. Added 2026-10-07 (art version 3).
+    "cave-floor": dict(
+        group="floor", label="Cave Floor",
+        stops=[(74, 67, 60), (98, 90, 80), (124, 115, 102)],
+        cells=4, octaves=6, kind="fbm", contrast=0.5, warp=0.03,
+        grain=[(240, (62, 56, 50), 0.30, 0.6, 1.6), (130, (146, 136, 120), 0.26, 0.6, 1.5),
+               (36, (54, 48, 42), 0.24, 1.6, 3.2)]),
+    "cave-water": dict(
+        group="water", label="Underground Pool",
+        stops=[(12, 28, 36), (20, 46, 56), (32, 68, 78)],
+        cells=3, octaves=5, kind="fbm", contrast=0.5,
+        grain=[(60, (84, 134, 146), 0.10, 1.0, 3.0), (30, (8, 18, 24), 0.18, 1.5, 3.5)]),
+    "lava": dict(
+        group="floor", label="Lava Flow", pattern="lava",
+        stops=[(30, 24, 22), (48, 36, 32), (70, 52, 44)],
+        glow=[(255, 236, 150), (250, 150, 40), (180, 50, 20)], cells=7,
+        grain=[(90, (24, 18, 16), 0.25, 0.5, 1.6)]),
 }
 
 
@@ -312,7 +330,56 @@ def _cobble(spec, size, rng):
     return px
 
 
-PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble}
+def _lava(spec, size, rng):
+    """Plates of cooled crust floating on a melt that shows through the cracks.
+
+    The same wrapping Worley field as the cobbles, read the other way round:
+    the joints are the bright part, and the heat bleeds a little way into the
+    crust either side of them."""
+    lo, mid, hi = spec["stops"]
+    white, orange, red = spec["glow"]
+    n = spec["cells"]
+    cell = size / n
+    pts = [[((cx + rng.uniform(0.15, 0.85)) * cell, (cy + rng.uniform(0.15, 0.85)) * cell, rng.random())
+            for cx in range(n)] for cy in range(n)]
+    tone = fbm(size, 8, 4, rng)
+    heat = fbm(size, 3, 3, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        gy = int(y / cell)
+        for x in range(size):
+            gx = int(x / cell)
+            f1 = f2 = 1e9
+            t = 0.0
+            for oy in (-1, 0, 1):
+                for ox in (-1, 0, 1):
+                    cx, cy = gx + ox, gy + oy
+                    px0, py0, tt = pts[cy % n][cx % n]
+                    px0 += (cx - cx % n) * cell
+                    py0 += (cy - cy % n) * cell
+                    d = math.hypot(x - px0, y - py0)
+                    if d < f1:
+                        f1, f2, t = d, f1, tt
+                    elif d < f2:
+                        f2 = d
+            i = y * size + x
+            # The width of a crack varies along it, so the melt does not read
+            # as a ruled grid.
+            edge = (f2 - f1) / 2.0 - (heat[i] - 0.5) * 4.0
+            if edge < 0.9:
+                rgb = mix_rgb(white, orange, clamp(edge / 0.9))
+            elif edge < 2.2:
+                rgb = mix_rgb(orange, red, (edge - 0.9) / 1.3)
+            else:
+                v = clamp(0.5 + (t - 0.5) * 0.6 + (tone[i] - 0.5) * 0.8)
+                rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+                if edge < 5.0:
+                    rgb = mix_rgb(rgb, red, 0.45 * (1.0 - (edge - 2.2) / 2.8))
+            _put(px, i, rgb)
+    return px
+
+
+PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava}
 
 
 def render(name, size, seed):

@@ -23,6 +23,7 @@
     "players": "node test/players.mjs",
     "setedit": "node test/setedit.mjs",
     "art": "node test/art.mjs",
+    "caverns": "node test/caverns.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

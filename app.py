@@ -95,6 +95,12 @@ def ensure_folders():
         os.makedirs(os.path.join(ROOT, sub), exist_ok=True)
 
 
+def _tile_size(v):
+    """A usable texture tile size: a whole number of pixels, within reason.
+    bool is an int to Python, and True is not a size."""
+    return isinstance(v, int) and not isinstance(v, bool) and 16 <= v <= 2048
+
+
 def ensure_starter_pack(config, force=False):
     """Bake the generated pack the first time the program is run, and again
     when the generators have gained art the pack on disk does not have."""
@@ -102,12 +108,20 @@ def ensure_starter_pack(config, force=False):
     pack_dir = os.path.join(ROOT, "assets", "packs", "starter")
     manifest = os.path.join(pack_dir, "pack.json")
     seed = config.get("packSeed", "v1")
-    size = int(config.get("tileSize", 256))
+    # config.json is a file people edit by hand, and int() of "large" or of
+    # null stopped the program before the server ever bound. The same bounds
+    # as a size read back out of a baked pack.
+    size = config.get("tileSize", 256)
+    if not _tile_size(size):
+        size = 256
     if os.path.isfile(manifest) and not force:
         try:
             with open(manifest, encoding="utf-8") as fh:
-                baked = json.load(fh)
-        except (OSError, ValueError):
+                # safe_json, not json: a byte-order mark from a hand edit
+                # made the pack count as unreadable, and a pack rebaked from
+                # the config's seed instead of its own changes every map.
+                baked = safe_json.load(fh)
+        except (OSError, ValueError, RecursionError):
             baked = None
         if not isinstance(baked, dict):
             baked = {}
@@ -118,7 +132,7 @@ def ensure_starter_pack(config, force=False):
         # settings: the art already on a map has to come back the same.
         if isinstance(baked.get("seed"), str):
             seed = baked["seed"]
-        if isinstance(baked.get("tileSize"), int) and 16 <= baked["tileSize"] <= 2048:
+        if _tile_size(baked.get("tileSize")):
             size = baked["tileSize"]
         print("  Adding the new art to the starter pack (~15s)...")
     else:

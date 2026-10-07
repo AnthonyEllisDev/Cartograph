@@ -31,7 +31,8 @@ PACK_ID = "starter"
 # only ever adds; tools/terrain.py and tools/stamps.py say the same.
 #   1  the first pack: 17 textures, 29 symbols
 #   2  2026-10-06: flagstone, floorboards, cobblestones; eight furnishings
-ART_VERSION = 2
+#   3  2026-10-07: cave floor, underground pool, lava; eight underground symbols
+ART_VERSION = 3
 
 
 def build(out_dir, seed="v1", size=256, log=print):

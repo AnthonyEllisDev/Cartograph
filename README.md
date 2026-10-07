@@ -65,7 +65,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/hex.js             hex geometry: the one definition of where hexes are
   js/light.js           shadow casting for the lighting layer
   js/generate.js        seeded land: noise, marching squares, the dialog
-  js/dungeon.js         seeded dungeons: rooms, corridors, walls, doors, the key
+  js/dungeon.js         seeded dungeons: rooms and corridors or caverns, walls, the key
   js/clipboard.js       copy, cut, paste and duplicate
   js/prefabs.js         sets saved to put down on any map
   js/transform.js       turning and mirroring what Select holds
@@ -83,9 +83,10 @@ test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
 test/guards.mjs       63 more, for the server's guards, over raw sockets
-test/regress.mjs      107 more, for bugs that have been in here once already
+test/regress.mjs      135 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
+test/caverns.mjs      25 more, for caverns and the underground art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -264,6 +265,16 @@ secret. What it writes is ordinary map, not a picture:
 - and, if you like, every room gets a numbered **note** — *Entrance* first,
   then the rooms in the order a party would meet them, each with its size —
   which is the key the export can already set beside the map.
+
+**Caverns.** Set *Dig out* to **Caverns** and the same dialog grows a cave
+instead: winding passages and chambers with walls that follow the rock rather
+than the grid, the way a cave was never planned. *Hollow* is how much of the
+rock is open, *Chambers* how many get a numbered note (the widest places first,
+numbered from the one nearest the bottom of the map), and every pocket of the
+cave is tunnelled to the rest, so all of it can be walked to. The walls are
+ordinary walls -- one closed run per outline, so a pillar of rock left standing
+is one wall you can select -- and they cast shadows, hatch and export like any
+other. A cave is laid in the *Cave Floor* texture unless you pick another.
 
 The same seed and settings always give the same dungeon on a map of that size.
 Generating again replaces the dungeon — its floor, its walls and its numbered
@@ -492,6 +503,13 @@ bookshelf, a rug and a well, three variants of each. At a size of 1 they are
 drawn to the grid -- a table is two squares long, a bed one by two -- and the
 Stamp tool mixes the variants as it does for trees.
 
+For going underground there is a **cave floor**, an **underground pool** and a
+**lava flow** among the textures, and under *underground* in the stamp picker a
+pillar, stalagmites, rubble, a campfire, an altar, stairs down, a brazier and
+cave mushrooms, again three variants of each and drawn to the same scale. A
+starter pack baked before these existed gains them on the next launch, from its
+own seed.
+
 ## Adding your own art
 
 See [ASSETS.md](ASSETS.md). Short version: drop a folder of PNGs into
@@ -571,7 +589,12 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 872 assertions in all: `art.mjs`
+There are narrower scripts beside it, 903 assertions in all: `caverns.mjs`
+(caverns: the dialog's settings for each kind, the floor, rock, walls and
+notes a cave writes, walls off the grid and closed, every chamber reachable,
+the same seed giving the same cave, the walls casting shadows, one undo step,
+the round trip, and the underground textures and symbols in the library,
+tiling, painted and placed with the real tools), `art.mjs`
 (the starter pack's art: an older pack rebaked on launch from its own seed and
 size, a current one left alone, a bake repeatable byte for byte, the floor
 textures in the library and meeting their own edges, the furnishings and their

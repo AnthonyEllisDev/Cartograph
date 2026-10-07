@@ -5,6 +5,121 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-07 -- caverns, the underground art, and five things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across the 87
+tracked text files, and the two screenshots by size. (The one difference on
+first compare was this run's own `npm install` bumping Playwright in the
+clone's `package.json`, put back before anything else.) A feature day.
+
+**Baseline: green.** 872 of 872, plus `battle`, against the working tree.
+
+**Review.** Two readers, reading only, each reproducing on its own clone and
+port: one on the renderer, lighting, printing, transforms, the generators and
+the art pipeline; one on the server and the front-end state. `node --check`
+passed on every module and the non-ASCII scan found nothing outside comments,
+docstrings and UI strings. The Origin and Host checks are in place, every early
+return in `_handle` goes through `_refuse`, every client path through
+`safe.py`. Five findings fixed, each with a check in `regress.mjs` (129 -> 135;
+all five fail against a pristine clone, the sixth -- *and reloads at that
+width* -- is kept as the precondition of the one before it and passes there):
+
+- *A pen held at one pressure painted at the full brush width.* `endPaint`
+  drops a uniform `widths` array and left `op.size` at the slider, so a stylus
+  at a steady 0.3 asking for 44 px drew 120 px, live and committed. The size
+  now becomes that width when the array goes (and `livePaintOp` does the same
+  for the preview). The width never exceeds `op.size`, so this only narrows the
+  stroke and every box measured from it. Mouse strokes are unchanged.
+- *Rescan left the open map unable to redraw its own textures.* It emptied the
+  decoded images and decoded nothing again; the screen survived until the next
+  rebuild of any layer drew the terrain flat grey. Written up on 2026-09-22 and
+  reproduced today. Rescan now re-warms what the map uses and redraws it.
+- *A `tileSize` in config.json that is not a number stopped the program* before
+  the server bound (`int("large")`). It is now held to the same bounds as a size
+  read back from a baked pack, else 256.
+- *A `pack.json` saved with a byte-order mark was rebaked from the config's
+  seed*, because `ensure_starter_pack` read it with `json.load`, not
+  `safe.load`. With a different seed in config that changes every map's art.
+- *The dungeon dialog asked about one walls layer and replaced another.* With
+  the first walls layer locked, "Walls already drawn" described the locked
+  layer while `commitDungeon` replaced the first unlocked one. It asks about the
+  unlocked one now.
+
+Written up, not changed: **opening a map or making a new one discards unsaved
+work without asking** (reproduced: a never-saved map with a stroke on it is
+gone after Open on another card). This was already in the hand-off's
+deliberately-not-fixed list as a design question -- which buttons the prompt
+offers -- and it is still that; but it is the one finding today that loses work,
+so it is worth Anthony's decision soon. Also still open: the Import dialog's
+Group field is ignored; `wallSegments`/`toUVTT`/`playersLights` read only the
+first walls layer (reachable only by hand-editing a file); Ctrl+S/E/P/N do not
+check `modalOpen()`.
+
+**The feature: caverns.** *Generate dungeon...* has a new first setting, *Dig
+out*: **Rooms and corridors** (what it always did, and the default) or
+**Caverns**. A cave is grown on a lattice of two points to the grid cell by a
+cellular automaton (noise, then five passes of a 3 x 3 majority), every pocket
+worth keeping is tunnelled to the biggest so all of it can be walked to, and
+the outline is smoothed once and traced with the land generator's marching
+squares (`traceRings`, `simplifyRing` and `ringArea` are exported from
+`generate.js` for it). It writes what a dungeon writes -- a floor op with
+rings, the shaded rock, wall ops (one closed run per outline, so a pillar of
+rock is one wall) and a numbered note per chamber, the chambers being the
+widest places, kept apart, numbered from the bottom by nearest neighbour. So
+shadows, hatching, the VTT export, the players' copy, undo and replace all
+came for free. The dialog hides the room settings for a cave and shows
+*Hollow*; choosing Caverns lays the cave floor unless a floor was picked.
+`isDungeonOp` and `commitDungeon` are unchanged; settings remembered from
+before have no style and mean rooms. No extension API change.
+
+Why this: today's art had to be somewhere to go, and the generator only made
+buildings. Watabou's Cave/Glade generator, Roll20's new random dungeon and the
+cave packs people buy for Dungeondraft all say the same: caves are half of
+what is underground, and Cartograph could not make one without drawing every
+wall by hand. It was on the hand-off's candidate list. Rejected today: making
+`registerExporter` work (real, small, and still worth a day of its own);
+elevation (a design, not a day); the unsaved-work prompt (a product decision).
+
+**The art (version 3).** Three textures -- **Cave Floor** (group *floor*),
+**Underground Pool** (*water*) and **Lava Flow** (*floor*; a wrapping Worley
+field read the other way round from the cobbles, the joints the bright part,
+heat bleeding into the crust beside them) -- and eight symbols in a new group,
+*underground*, three variants each, drawn from above at the furnishings' five
+feet to seventy pixels: pillar, stalagmites, rubble, campfire, altar, stairs
+down, brazier, cave mushrooms. `ART_VERSION` 2 -> 3. Baked old and new side by
+side at the same seed and size: all 105 files the old generators wrote are
+byte-identical and every old manifest entry is unchanged.
+
+**Tests.** A new suite, `test/caverns.mjs` (25): the dialog's settings for each
+kind, what a cave writes, its walls closed and off the grid, every chamber's
+pin on the floor, the cave in one piece, the same seed the same cave, Hollow
+doing what it says, rooms unchanged, the walls casting shadows (and lifting
+them when hidden), one undo step, the round trip pixel-identical, and the
+underground art in the library, tiling, painted and placed through the real
+tools. `regress` 129 -> 135.
+
+Looked at: a contact sheet of the three textures in 2 x 2 repeat and all 24
+symbol variants (the first rubble was too pale and the first lava too bright;
+both tuned before shipping), the dialog at 1600 x 1000 with Caverns chosen, a
+40 x 30 cavern in the cave floor, a hatched 30 x 20 cavern lit by four lights
+in its chambers (shadows stop at the cave walls; the relight took 55 ms), and
+every new symbol placed on a battle map beside a stroke of lava.
+
+**Tests:** 82 verify, 37 props, 29 lighting, 27 hex, 25 pro, 25 regions, 17 ext,
+16 theme, 66 guards, 135 regress, 8 labels, 8 brushes, 27 generate, 36 notes,
+34 dungeon, 40 clipboard, 43 selection, 41 prefabs, 52 transform, 32 hatch,
+29 print, 31 players, 21 setedit, 17 art, 25 caverns -- 903 checks, all
+passing, plus `battle`, over two full back-to-back rounds on the finished
+tree, with `CG_CHROME` pointed at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`.
+
+Anthony's pack has `artVersion` 2, so his next launch prints "Adding the new
+art to the starter pack" and takes about fifteen seconds once. What is left
+for caverns, if anyone asks: water and lava pools laid in the low chambers,
+stalagmites scattered on the floor, and a mixed dungeon (rooms opening off a
+cave).
+
+---
+
 ## 2026-10-06 -- floors and furnishings, and nine things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 88

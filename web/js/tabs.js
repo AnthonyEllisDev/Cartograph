@@ -118,6 +118,20 @@ export function initAssetsTab() {
     forgetImages();
     R.forgetSpriteFx();
     await renderPacks();
+    // forgetImages emptied what the renderer draws the open map's textures and
+    // stamps from. The canvases on screen survived, so nothing looked wrong --
+    // until the next rebuild of a layer drew its terrain as flat grey. Decode
+    // again what the map uses, and redraw it from the files as they are now,
+    // which is also what Rescan is for when a file was replaced on disk.
+    const doc = app.doc;
+    if (doc) {
+      await warm(referencedAssets(doc).filter((id) => library.byId.has(id)));
+      if (app.doc === doc) {
+        for (const layer of doc.layers) R.invalidate(layer);
+        R.compositeAll();
+        R.requestDraw();
+      }
+    }
     toast('Packs rescanned', 'good');
   });
 }

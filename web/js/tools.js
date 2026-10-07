@@ -75,7 +75,9 @@ const LABELS = { stroke: 'Paint', shape: 'Fill', soften: 'Soften' };
  */
 function livePaintOp(op) {
   if (!op.widths || !op.widths.every((w) => Math.abs(w - op.widths[0]) < 0.01)) return op;
-  const flat = Object.assign({}, op);
+  // The width every point asked for, which is not op.size when a pen held
+  // at one pressure asked for less -- see endPaint.
+  const flat = Object.assign({}, op, { size: op.widths[0] });
   delete flat.widths;
   return flat;
 }
@@ -145,8 +147,15 @@ function endPaint() {
 
   // A mouse, or dynamics turned off, gives every point the same width. Keeping
   // the array would mean a different rendering path and a bigger file for no
-  // difference at all, so it goes.
-  if (op.widths && op.widths.every((w) => Math.abs(w - op.widths[0]) < 0.01)) delete op.widths;
+  // difference at all, so it goes -- and the size becomes that width. A pen
+  // held at one pressure gives every point the same width *below* the size,
+  // and dropping the array alone drew it at the full slider width instead.
+  // The width never exceeds op.size, so this only ever narrows the stroke
+  // and every box measured from it (invariant (a1)).
+  if (op.widths && op.widths.every((w) => Math.abs(w - op.widths[0]) < 0.01)) {
+    op.size = op.widths[0];
+    delete op.widths;
+  }
 
   if (live.kind === 'mask') {
     // The coastline is derived from the mask, so both the mask and the drawn

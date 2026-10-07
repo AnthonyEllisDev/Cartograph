@@ -707,6 +707,223 @@ def well(rng):
     return _svg(w, h, "".join(parts))
 
 
+# ---------------------------------------------------------------- underground
+#
+# Plans again, at the furnishings' five feet to seventy pixels: what a cave or
+# a crypt has in it that a house does not. Added 2026-10-07 (art version 3).
+
+EMBER = "#e8862c"
+FLAME = "#f6c74a"
+FLAME_HOT = "#fff1b8"
+CAVE = "#6f665b"
+CAVE_LIGHT = "#968b7c"
+CAVE_DARK = "#4c453d"
+FUNGUS = ["#b9673f", "#c9a25a", "#8f6aa0", "#d6d0b8"]
+
+
+def _rock(rng, cx, cy, r, sides=None, fill=STONE, stroke=INK, width=1.0):
+    """An irregular stone outline: a polygon with its corners pulled about."""
+    sides = sides or rng.randint(5, 8)
+    start = rng.uniform(0, math.pi * 2)
+    pts = []
+    for k in range(sides):
+        a = start + k * 2 * math.pi / sides + rng.uniform(-0.25, 0.25)
+        rr = r * rng.uniform(0.72, 1.0)
+        pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
+    return '<polygon points="%s" fill="%s" stroke="%s" stroke-width="%.1f"/>' % (_pts(pts), fill, stroke, width)
+
+
+def pillar(rng):
+    w = h = 70
+    c = 35
+    square = rng.random() < 0.34
+    parts = []
+    # The plinth, a little wider than the shaft, square in two of three.
+    parts.append('<rect x="3" y="3" width="64" height="64" rx="%d" fill="%s" stroke="%s" stroke-width="1.3"/>'
+                 % (3 if square else 32, CAVE_DARK, INK))
+    if square:
+        parts.append('<rect x="10" y="10" width="50" height="50" fill="%s" stroke="%s" stroke-width="1.2"/>' % (STONE, INK))
+        parts.append('<path d="M10,60 L10,10 L60,10" stroke="#d6ccb8" stroke-width="2.4" opacity="0.8"/>')
+        parts.append('<path d="M60,10 L60,60 L10,60" stroke="%s" stroke-width="2.4" opacity="0.7"/>' % STONE_DARK)
+    else:
+        r = rng.uniform(23, 26)
+        parts.append('<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="1.2"/>' % (c, c, r, "#c8beac", INK))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.45"/>' % (c + 4, c + 4, r - 6, STONE_DARK))
+        # Flutes, seen end on: notches round the rim.
+        flutes = rng.choice((0, 12, 16))
+        for k in range(flutes):
+            a = k * 2 * math.pi / flutes
+            parts.append('<circle cx="%.1f" cy="%.1f" r="1.6" fill="%s"/>'
+                         % (c + math.cos(a) * (r - 2.5), c + math.sin(a) * (r - 2.5), STONE_DARK))
+        parts.append('<path d="M%.1f,%.1f A%.1f,%.1f 0 0 1 %.1f,%.1f" stroke="#d6ccb8" stroke-width="2.4" opacity="0.8"/>'
+                     % (c - r * 0.85, c + r * 0.2, r - 4, r - 4, c + r * 0.2, c - r * 0.85))
+    # A crack, now and then.
+    if rng.random() < 0.5:
+        x, y = c + rng.uniform(-8, 8), c + rng.uniform(-8, 8)
+        parts.append('<path d="M%.1f,%.1f l%.1f,%.1f l%.1f,%.1f" stroke="%s" stroke-width="0.8" opacity="0.7"/>'
+                     % (x, y, rng.uniform(-6, 6), rng.uniform(4, 9), rng.uniform(-6, 6), rng.uniform(3, 7), INK_SOFT))
+    return _svg(w, h, "".join(parts))
+
+
+def stalagmites(rng):
+    w = h = 100
+    parts = []
+    spikes = []
+    for _ in range(rng.randint(3, 6)):
+        for _try in range(20):
+            r = rng.uniform(8, 19)
+            x, y = rng.uniform(r + 2, w - r - 2), rng.uniform(r + 2, h - r - 2)
+            if all(math.hypot(x - sx, y - sy) > (r + sr) * 0.7 for sx, sy, sr in spikes):
+                spikes.append((x, y, r))
+                break
+    # Seen from above, a stalagmite is rings closing on its tip, and the tip
+    # sits towards the light.
+    for x, y, r in sorted(spikes, key=lambda s: s[1]):
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="#000" opacity="0.22"/>'
+                     % (x + r * 0.25, y + r * 0.3, r, r * 0.9))
+        parts.append(_rock(rng, x, y, r, rng.randint(7, 10), CAVE, INK, 1.1))
+        tx, ty = x - r * 0.22, y - r * 0.25
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.6" opacity="0.9"/>'
+                     % ((x + tx) / 2, (y + ty) / 2, r * 0.6, CAVE_LIGHT, INK_SOFT))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#c3b8a6"/>' % (tx, ty, max(1.5, r * 0.22)))
+    return _svg(w, h, "".join(parts))
+
+
+def rubble(rng):
+    w, h = 112, 88
+    parts = []
+    # A heap: big stones near the middle, chips thrown out round it.
+    for _ in range(rng.randint(18, 26)):
+        a = rng.uniform(0, math.pi * 2)
+        d = abs(rng.gauss(0, 0.5))
+        x = w / 2 + math.cos(a) * d * (w / 2 - 8)
+        y = h / 2 + math.sin(a) * d * (h / 2 - 8)
+        r = max(3.0, 17 * (1.0 - 0.7 * min(1.0, d)) * rng.uniform(0.55, 1.0))
+        x = min(w - r - 1, max(r + 1, x))
+        y = min(h - r - 1, max(r + 1, y))
+        fill = rng.choice((CAVE, CAVE_LIGHT, STONE_DARK, STONE))
+        parts.append((d, _rock(rng, x, y, r, None, fill, INK, 0.9)))
+    parts.sort(key=lambda t: -t[0])
+    return _svg(w, h, "".join(p for _, p in parts))
+
+
+def campfire(rng):
+    w = h = 70
+    c = 35
+    parts = ['<circle cx="%d" cy="%d" r="22" fill="#3b3029" opacity="0.85"/>' % (c, c)]
+    n = rng.randint(8, 11)
+    for k in range(n):
+        a = k * 2 * math.pi / n + rng.uniform(-0.1, 0.1)
+        parts.append(_rock(rng, c + math.cos(a) * 26, c + math.sin(a) * 26, rng.uniform(5, 7),
+                           None, rng.choice((STONE, STONE_DARK)), INK, 0.9))
+    # Logs crossed over the coals.
+    turn = rng.uniform(0, 180)
+    for k in range(rng.choice((2, 3))):
+        ang = turn + k * 180 / 3 * (1 if k % 2 else -1)
+        parts.append('<g transform="rotate(%.1f %d %d)"><rect x="%d" y="%d" width="32" height="7" rx="3" '
+                     'fill="%s" stroke="%s" stroke-width="0.9"/><circle cx="%d" cy="%d" r="2.6" fill="#3a2c1e"/></g>'
+                     % (ang, c, c, c - 16, c - 3.5, WOOD_DARK, INK, c + 13, c))
+    for k in range(rng.randint(4, 6)):
+        x, y = c + rng.uniform(-7, 7), c + rng.uniform(-7, 7)
+        r = rng.uniform(4, 8)
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.85"/>' % (x, y, r, EMBER))
+    parts.append('<circle cx="%d" cy="%d" r="6" fill="%s" opacity="0.95"/>' % (c, c, FLAME))
+    parts.append('<circle cx="%.1f" cy="%.1f" r="2.6" fill="%s"/>' % (c - 1, c - 1, FLAME_HOT))
+    return _svg(w, h, "".join(parts))
+
+
+def altar(rng):
+    w, h = 124, 66
+    cloth = rng.choice(CLOTHS)
+    parts = [
+        '<rect x="0" y="0" width="%d" height="%d" rx="2" fill="%s" stroke="%s" stroke-width="1.4"/>' % (w, h, STONE_DARK, INK),
+        '<rect x="5" y="5" width="%d" height="%d" fill="%s" stroke="%s" stroke-width="1"/>' % (w - 10, h - 10, STONE, INK_SOFT),
+        '<path d="M5,%d L5,5 L%d,5" stroke="#d6ccb8" stroke-width="2" opacity="0.8"/>' % (h - 5, w - 5),
+    ]
+    if rng.random() < 0.67:
+        # A runner laid across the top and hanging over the front.
+        parts.append('<rect x="%.1f" y="0" width="30" height="%d" fill="%s" stroke="%s" stroke-width="1"/>'
+                     % (w / 2 - 15, h + 4, cloth, INK))
+        parts.append('<path d="M%.1f,%d l7.5,-4 l7.5,4 l7.5,-4 l7.5,4" stroke="%s" stroke-width="1" fill="%s"/>'
+                     % (w / 2 - 15, h + 4, INK, cloth))
+    else:
+        parts.append('<circle cx="%.1f" cy="%.1f" r="10" fill="#7a2a22" stroke="%s" stroke-width="1"/>' % (w / 2, h / 2, INK))
+        parts.append('<path d="M%.1f,%.1f l-6,9 M%.1f,%.1f l7,7" stroke="#7a2a22" stroke-width="2.4"/>'
+                     % (w / 2 - 6, h / 2 + 6, w / 2 + 6, h / 2 + 6))
+    for x in (16, w - 16):
+        parts.append('<circle cx="%d" cy="%.1f" r="5.5" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                     '<circle cx="%d" cy="%.1f" r="2.4" fill="%s"/><circle cx="%d" cy="%.1f" r="1" fill="%s"/>'
+                     % (x, h / 2, FILL_LIGHT, INK, x, h / 2, FLAME, x, h / 2, FLAME_HOT))
+    return _svg(w, h, "".join(parts))
+
+
+def stairs(rng):
+    w, h = 70, 140
+    steps = rng.choice((7, 8, 9))
+    parts = ['<rect x="0" y="0" width="%d" height="%d" fill="%s" stroke="%s" stroke-width="1.4"/>' % (w, h, STONE_DARK, INK)]
+    # Going down, each tread a little darker than the one above it.
+    for k in range(steps):
+        y = 4 + k * (h - 8) / steps
+        sh = (h - 8) / steps
+        t = k / max(1, steps - 1)
+        grey = int(196 - 110 * t)
+        parts.append('<rect x="5" y="%.1f" width="%d" height="%.1f" fill="rgb(%d,%d,%d)"/>'
+                     % (y, w - 10, sh, grey, grey - 8, grey - 20))
+        parts.append('<line x1="5" y1="%.1f" x2="%d" y2="%.1f" stroke="%s" stroke-width="1.1"/>' % (y + sh, w - 5, y + sh, INK))
+        parts.append('<line x1="5" y1="%.1f" x2="%d" y2="%.1f" stroke="#e4dccb" stroke-width="0.8" opacity="0.6"/>'
+                     % (y + 1, w - 5, y + 1))
+    parts.append('<path d="M%.1f,%d l0,30 l-6,-7 M%.1f,%d l6,-7" stroke="%s" stroke-width="1.6" opacity="0.65"/>'
+                 % (w / 2, 14, w / 2, 44, INK))
+    parts.append('<rect x="5" y="4" width="%d" height="%d" stroke="%s" stroke-width="1"/>' % (w - 10, h - 8, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def brazier(rng):
+    w = h = 56
+    c = 28
+    parts = []
+    turn = rng.uniform(0, 120)
+    for k in range(3):
+        a = math.radians(turn + k * 120)
+        parts.append('<line x1="%d" y1="%d" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="3.2"/>'
+                     % (c, c, c + math.cos(a) * 25, c + math.sin(a) * 25, IRON))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="2.4" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                     % (c + math.cos(a) * 25, c + math.sin(a) * 25, IRON, INK))
+    parts.append('<circle cx="%d" cy="%d" r="17" fill="%s" stroke="%s" stroke-width="1.4"/>' % (c, c, IRON, INK))
+    parts.append('<circle cx="%d" cy="%d" r="13" fill="#2b211b"/>' % (c, c))
+    for _ in range(rng.randint(7, 11)):
+        x, y = c + rng.uniform(-8, 8), c + rng.uniform(-8, 8)
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.9"/>'
+                     % (x, y, rng.uniform(2, 4), rng.choice((EMBER, EMBER, "#b2441f", FLAME))))
+    parts.append('<circle cx="%d" cy="%d" r="4" fill="%s" opacity="0.9"/>' % (c, c, FLAME_HOT))
+    parts.append('<circle cx="%d" cy="%d" r="15.5" stroke="%s" stroke-width="1" opacity="0.6"/>' % (c, c, BRASS))
+    return _svg(w, h, "".join(parts))
+
+
+def mushrooms(rng):
+    w = h = 84
+    cap = rng.choice(FUNGUS)
+    parts = []
+    caps = []
+    for _ in range(rng.randint(4, 8)):
+        for _try in range(20):
+            r = rng.uniform(7, 17)
+            x, y = rng.uniform(r + 2, w - r - 2), rng.uniform(r + 2, h - r - 2)
+            if all(math.hypot(x - cx, y - cy) > (r + cr) * 0.75 for cx, cy, cr in caps):
+                caps.append((x, y, r))
+                break
+    for x, y, r in sorted(caps, key=lambda c: c[2]):
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#000" opacity="0.2"/>' % (x + r * 0.2, y + r * 0.25, r))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="1"/>' % (x, y, r, cap, INK))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#fff" opacity="0.18"/>'
+                     % (x - r * 0.25, y - r * 0.3, r * 0.55))
+        for _ in range(int(r / 4)):
+            a, d = rng.uniform(0, math.pi * 2), rng.uniform(0.2, 0.7) * r
+            parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#f4ecd8" opacity="0.85"/>'
+                         % (x + math.cos(a) * d, y + math.sin(a) * d, rng.uniform(0.8, 1.8)))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -745,11 +962,19 @@ CATALOGUE = [
     ("bookshelf", "Bookshelf", "furnishing", bookshelf),
     ("rug", "Rug", "furnishing", rug),
     ("well", "Well", "furnishing", well),
+    ("pillar", "Pillar", "underground", pillar),
+    ("stalagmites", "Stalagmites", "underground", stalagmites),
+    ("rubble", "Rubble", "underground", rubble),
+    ("campfire", "Campfire", "underground", campfire),
+    ("altar", "Altar", "underground", altar),
+    ("stairs", "Stairs Down", "underground", stairs),
+    ("brazier", "Brazier", "underground", brazier),
+    ("mushrooms", "Cave Mushrooms", "underground", mushrooms),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing")
+VARIED = ("terrain", "flora", "furnishing", "underground")
 
 
 def build(seed):

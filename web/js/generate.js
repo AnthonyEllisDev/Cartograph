@@ -292,7 +292,7 @@ export function traceRings(hf, w, h) {
   return rings;
 }
 
-function ringArea(ring) {
+export function ringArea(ring) {
   let s = 0;
   for (let i = 0, n = ring.length; i < n; i++) {
     const a = ring[i], b = ring[(i + 1) % n];
@@ -329,7 +329,7 @@ function simplifyRun(pts, tol, out) {
 
 /** A closed ring, simplified: split at the point furthest from the first so
  *  that each half is an open run the usual algorithm can take. */
-function simplifyRing(ring, tol) {
+export function simplifyRing(ring, tol) {
   let far = 0, k = 0;
   const [x0, y0] = ring[0];
   for (let i = 1; i < ring.length; i++) {

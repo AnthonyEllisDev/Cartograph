@@ -31,6 +31,7 @@ import { pushEntry } from './history.js';
 import * as R from './render.js';
 import { field } from './ui.js';
 import { library, warm } from './assets.js';
+import { ringArea, simplifyRing, traceRings } from './generate.js';
 import { el, hashString, makeCanvas, modal, rng, throttleFrame, toast, uid } from './util.js';
 
 
@@ -52,7 +53,14 @@ export const DOOR_SHARES = {
   none: { label: 'Open arches only', share: 0 },
 };
 
+/* What is dug out: rooms joined by corridors, or a cave that nobody planned. */
+export const STYLES = {
+  rooms:   { label: 'Rooms and corridors' },
+  caverns: { label: 'Caverns' },
+};
+
 export const DUNGEON_DEFAULTS = {
+  style: 'rooms',
   seed: '',
   rooms: 10,
   size: 'medium',
@@ -63,6 +71,7 @@ export const DUNGEON_DEFAULTS = {
   numbers: true,           // a numbered note in every room
   rock: 'shaded',          // 'shaded' | 'hatched' | 'plain' -- see ROCK
   tex: 'starter/parchment',
+  open: 0.5,               // caverns only: how much of the rock is hollow
 };
 
 const SECRET_SHARE = 0.12;
@@ -98,6 +107,10 @@ export function normalise(params) {
   p.loops = clamp(+p.loops, 0, 0.6, DUNGEON_DEFAULTS.loops);
   if (!DOOR_SHARES[p.doors]) p.doors = DUNGEON_DEFAULTS.doors;
   p.secret = !!p.secret;
+  // Settings remembered from before caverns existed have no style, and meant
+  // rooms.
+  if (!STYLES[p.style]) p.style = DUNGEON_DEFAULTS.style;
+  p.open = clamp(+p.open, 0.35, 0.65, DUNGEON_DEFAULTS.open);
   p.numbers = !!p.numbers;
   // `shade` was a toggle before `rock` existed; settings remembered from then
   // still mean what they meant.
@@ -400,6 +413,210 @@ function dropCollinear(ring) {
 }
 
 
+/* ------------------------------------------------------------------ caverns */
+
+/* A cave is not laid out in cells the way rooms are: its walls follow the rock
+ * wherever it broke, and a cave squared off to the grid reads as a badly drawn
+ * room. So the cave is grown on a finer lattice -- CAVE_SUB points to a grid
+ * cell -- by the usual cellular automaton (start from noise, let every point
+ * take the majority of its neighbourhood a few times), and its outline is
+ * traced with the land generator's marching squares, which is what gives the
+ * smooth, irregular walls. The walls therefore do not sit on grid lines, and
+ * are not meant to; the Wall tool's snapping is for walls that were built.
+ *
+ * What it writes is the same as a dungeon's: a floor op with rings, the rock
+ * around it, wall ops (one closed run per outline, so a pillar of rock left
+ * standing is one wall the Select tool picks up whole) and a numbered note in
+ * each chamber. */
+const CAVE_SUB = 2;          // lattice points per grid cell
+const CAVE_MARGIN = 2;       // lattice points of solid rock round the frame
+const CAVE_STEPS = 5;        // smoothing passes of the automaton
+const CAVE_KEEP = 14;        // smaller pockets than this (in points) are filled
+const CAVE_FLOOR = 'starter/cave-floor';
+
+/** Grow a cave on the lattice of a `cols` x `rows` grid. Pure, like layout():
+ *  the same settings and grid always give the same cave. */
+export function caveLayout(params, cols, rows) {
+  const p = normalise(params);
+  const rand = rng(hashString('caverns|' + p.seed + '|' + p.open));
+  const W = cols * CAVE_SUB + 1, H = rows * CAVE_SUB + 1;
+  const inside = (x, y) => x >= CAVE_MARGIN && y >= CAVE_MARGIN && x < W - CAVE_MARGIN && y < H - CAVE_MARGIN;
+  let open = new Uint8Array(W * H);
+  // The majority rule rounds whichever side starts ahead up towards all of
+  // it, so a start much past one half is one great hall with a few islands
+  // and much under it is scattered holes. Hollow is therefore a gentle nudge
+  // either side of a little under half.
+  const start = 0.48 + (p.open - 0.5) * 0.3;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    open[y * W + x] = inside(x, y) && rand() < start ? 1 : 0;
+  }
+  for (let step = 0; step < CAVE_STEPS; step++) {
+    const next = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!inside(x, y)) continue;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) n += open[(y + dy) * W + x + dx];
+      next[y * W + x] = n >= 5 ? 1 : 0;
+    }
+    open = next;
+  }
+
+  // Pockets: every connected hollow, biggest first. The biggest is the cave;
+  // the others worth keeping are tunnelled to it, so every chamber can be
+  // walked to, and the crumbs are filled back in.
+  const label = new Int32Array(W * H).fill(-1);
+  const pockets = [];
+  for (let i = 0; i < W * H; i++) {
+    if (!open[i] || label[i] >= 0) continue;
+    const cells = [i];
+    label[i] = pockets.length;
+    for (let k = 0; k < cells.length; k++) {
+      const c = cells[k], x = c % W, y = (c - x) / W;
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        const j = ny * W + nx;
+        if (open[j] && label[j] < 0) { label[j] = pockets.length; cells.push(j); }
+      }
+    }
+    pockets.push(cells);
+  }
+  pockets.sort((a, b) => b.length - a.length || a[0] - b[0]);
+  if (!pockets.length) return { cols, rows, W, H, open, params: p };
+  for (const pocket of pockets.slice(1)) {
+    if (pocket.length < CAVE_KEEP) for (const c of pocket) open[c] = 0;
+  }
+  const joined = pockets[0].slice();
+  for (const pocket of pockets.slice(1)) {
+    if (pocket.length < CAVE_KEEP) continue;
+    // The nearest pair of points, one in the pocket and one in what is
+    // already joined, sampled so a big cave does not make this quadratic.
+    const strideA = Math.max(1, Math.floor(pocket.length / 60));
+    const strideB = Math.max(1, Math.floor(joined.length / 400));
+    let best = Infinity, from = pocket[0], to = joined[0];
+    for (let a = 0; a < pocket.length; a += strideA) {
+      const ax = pocket[a] % W, ay = (pocket[a] - ax) / W;
+      for (let b = 0; b < joined.length; b += strideB) {
+        const bx = joined[b] % W, by = (joined[b] - bx) / W;
+        const d = (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+        if (d < best) { best = d; from = pocket[a]; to = joined[b]; }
+      }
+    }
+    tunnel(open, W, H, from, to, rand, inside);
+    for (const c of pocket) joined.push(c);
+  }
+  return { cols, rows, W, H, open, params: p };
+}
+
+/** Carve a passage from one lattice point to another: a walk that always
+ *  closes on its target but picks its axis at random, weighted by how far
+ *  there is to go on each, so it wanders rather than ruling a line. */
+function tunnel(open, W, H, from, to, rand, inside) {
+  let x = from % W, y = (from - x) / W;
+  const tx = to % W, ty = (to - tx) / W;
+  let guard = (W + H) * 4;
+  while ((x !== tx || y !== ty) && guard-- > 0) {
+    const ax = Math.abs(tx - x), ay = Math.abs(ty - y);
+    if (rand() * (ax + ay) < ax) x += Math.sign(tx - x); else y += Math.sign(ty - y);
+    // Two points either way is a passage about a grid cell wide once the
+    // outline is smoothed: room for one person, which is what a squeeze is.
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (inside(x + dx, y + dy)) open[(y + dy) * W + x + dx] = 1;
+    }
+  }
+}
+
+/** The cave's outline as closed rings, in pixels on this map's frame.
+ *
+ * The lattice is smoothed once (each point the mean of its neighbourhood)
+ * before it is traced at one half, which rounds the stair-steps off the
+ * automaton's output; then each ring is thinned as the land's coast is. */
+export function caveRings(cave, f) {
+  const { W, H, open } = cave;
+  const field = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let sum = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) { n++; continue; }
+      sum += open[yy * W + xx]; n++;
+    }
+    field[y * W + x] = sum / n;
+  }
+  const step = f.cell / CAVE_SUB;
+  const raw = traceRings({ field, cols: W - 1, rows: H - 1, cell: step, level: 0.5 },
+                         (W - 1) * step, (H - 1) * step);
+  const out = [];
+  for (const ring of raw) {
+    if (ringArea(ring) < step * step * 3) continue;
+    const thin = simplifyRing(ring, step * 0.12);
+    if (thin.length < 3) continue;
+    out.push(thin.map(([x, y]) => [Math.round((f.ox + x) * 10) / 10, Math.round((f.oy + y) * 10) / 10]));
+  }
+  return out;
+}
+
+/** Where the chambers are: the points furthest from any rock, each kept clear
+ *  of the ones already taken, widest first. Returns lattice points with their
+ *  clearance, up to `count` of them. */
+function chambers(cave, count) {
+  const { W, H, open } = cave;
+  // Distance to the nearest rock, in lattice steps (chessboard metric), by a
+  // breadth-first fill outwards from every rock point.
+  const dist = new Int32Array(W * H).fill(-1);
+  const queue = [];
+  for (let i = 0; i < W * H; i++) if (!open[i]) { dist[i] = 0; queue.push(i); }
+  for (let k = 0; k < queue.length; k++) {
+    const c = queue[k], x = c % W, y = (c - x) / W;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      const j = yy * W + xx;
+      if (dist[j] < 0) { dist[j] = dist[c] + 1; queue.push(j); }
+    }
+  }
+  const order = [];
+  for (let i = 0; i < W * H; i++) if (dist[i] >= 2) order.push(i);
+  order.sort((a, b) => dist[b] - dist[a] || a - b);
+  const picked = [];
+  for (const i of order) {
+    if (picked.length >= count) break;
+    const x = i % W, y = (i - x) / W, d = dist[i];
+    // Two chambers closer than both their widths together are one chamber.
+    if (picked.every((q) => Math.hypot(q.x - x, q.y - y) > Math.max(6, (q.d + d) * 1.6))) picked.push({ x, y, d });
+  }
+  return picked;
+}
+
+/** A note in each chamber, numbered from the way in as rooms are: the one
+ *  nearest the bottom of the map first, then always the nearest one not yet
+ *  numbered -- a cave has no corridors to follow, only distance. */
+function caveNotes(cave, picked, doc, f) {
+  if (!picked.length) return [];
+  const rest = picked.slice();
+  let at = rest.reduce((m, q) => (q.y > m.y || (q.y === m.y && q.x < m.x) ? q : m), rest[0]);
+  const order = [];
+  while (rest.length) {
+    rest.splice(rest.indexOf(at), 1);
+    order.push(at);
+    if (!rest.length) break;
+    const here = at;
+    at = rest.reduce((m, q) => (Math.hypot(q.x - here.x, q.y - here.y) < Math.hypot(m.x - here.x, m.y - here.y) ? q : m), rest[0]);
+  }
+  const unit = (doc.scale && doc.scale.unit) || 'ft';
+  const per = (doc.scale && doc.scale.perCell) || 5;
+  const step = f.cell / CAVE_SUB;
+  return order.map((q, n) => {
+    // Clearance is to the nearest rock, so the chamber is about twice it
+    // across; said in map units and rounded to whole cells.
+    const across = Math.max(1, Math.round((q.d * 2) / CAVE_SUB)) * per;
+    const title = n === 0 ? 'Entrance' : q.d >= 6 ? 'Cavern' : q.d <= 2 ? 'Narrows' : 'Grotto';
+    return {
+      id: uid('n'), x: Math.round((f.ox + q.x * step) * 10) / 10, y: Math.round((f.oy + q.y * step) * 10) / 10,
+      title, body: 'About ' + across + ' ' + unit + ' across', color: NOTE_DEFAULTS.color, gen: 'dungeon',
+    };
+  });
+}
+
+
 /* ------------------------------------------------------------------ the map */
 
 /** Where the dungeon's grid sits on this map: the cell size and the origin of
@@ -424,6 +641,7 @@ export function generateDungeon(params, doc) {
   const p = normalise(params);
   const f = frame(doc);
   if (!f || f.cols < 6 || f.rows < 6) return null;
+  if (p.style === 'caverns') return generateCaverns(p, doc, f);
   const lay = layout(p, f.cols, f.rows);
   const px = (cx, cy) => ({ x: f.ox + cx * f.cell, y: f.oy + cy * f.cell });
 
@@ -454,16 +672,49 @@ export function generateDungeon(params, doc) {
   } : null;
   // The rock outside: the whole frame as one more ring, which the even-odd
   // fill turns into everything except the dungeon.
+  const shade = floor && p.shade ? shadeOp(doc, rings) : null;
+
+  const notes = p.numbers ? roomNotes(lay, doc, f, px) : [];
+  return { floor, shade, walls, notes, hatch: p.rock === 'hatched', rooms: lay.rooms.length, params: p };
+}
+
+/** The rock outside: the whole frame as one more ring, which the even-odd
+ *  fill turns into everything except the dungeon. */
+function shadeOp(doc, rings) {
   const W = doc.width, H = doc.height;
-  const shade = floor && p.shade ? {
+  return {
     t: 'stroke', mode: 'shape', shape: 'generated', gen: { kind: 'dungeon-shade' },
     rings: [[0, 0, W, 0, W, H, 0, H]].concat(rings),
     color: SHADE.color, opacity: SHADE.opacity, blend: 'source-over', hardness: 1, size: 0,
     points: [{ x: 0, y: 0 }, { x: W, y: H }],
-  } : null;
+  };
+}
 
-  const notes = p.numbers ? roomNotes(lay, doc, f, px) : [];
-  return { floor, shade, walls, notes, hatch: p.rock === 'hatched', rooms: lay.rooms.length, params: p };
+/** generateDungeon's other half: the same four things, from a cave. The
+ *  chambers are counted whether or not they are numbered, so the toast can
+ *  say how many there were. */
+function generateCaverns(p, doc, f) {
+  const cave = caveLayout(p, f.cols, f.rows);
+  const outline = caveRings(cave, f);
+  const walls = outline.map((ring) => ({
+    id: uid('w'), kind: 'wall', points: ring.concat([ring[0]]).map(([x, y]) => ({ x, y })),
+  }));
+  const rings = outline.map((ring) => ring.flat());
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const ring of outline) for (const [x, y] of ring) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const gen = { kind: 'dungeon', style: 'caverns', seed: p.seed, rooms: p.rooms, open: p.open };
+  const floor = rings.length ? {
+    t: 'stroke', mode: 'shape', shape: 'generated', gen, rings,
+    tex: p.tex, scale: 1, opacity: 1, blend: 'source-over', hardness: 1, size: 0,
+    points: [{ x: x0, y: y0 }, { x: x1, y: y1 }],
+  } : null;
+  const shade = floor && p.shade ? shadeOp(doc, rings) : null;
+  const picked = chambers(cave, p.rooms);
+  const notes = p.numbers ? caveNotes(cave, picked, doc, f) : [];
+  return { floor, shade, walls, notes, hatch: p.rock === 'hatched', rooms: picked.length, params: p };
 }
 
 /** A note in every room, numbered from the way in.
@@ -621,6 +872,7 @@ function drawPreview(canvas, params) {
   ctx.fillStyle = '#2b2824';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!f) return;
+  if (params.style === 'caverns') return drawCavePreview(ctx, canvas, params, f);
   const lay = layout(params, f.cols, f.rows);
   const s = Math.min(canvas.width / (f.cols * f.cell + f.ox), canvas.height / (f.rows * f.cell + f.oy)) * f.cell;
   const x0 = f.ox / f.cell * s, y0 = f.oy / f.cell * s;
@@ -661,6 +913,33 @@ function drawPreview(canvas, params) {
   }
 }
 
+/** The cave's plan: the traced outline itself, scaled down, so the preview
+ *  shows exactly the walls the map will get. */
+function drawCavePreview(ctx, canvas, params, f) {
+  const k = Math.min(canvas.width / (f.cols * f.cell + f.ox), canvas.height / (f.rows * f.cell + f.oy));
+  if (params.rock !== 'shaded') {
+    ctx.fillStyle = '#8c8475';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  const rings = caveRings(caveLayout(params, f.cols, f.rows), f);
+  const path = new Path2D();
+  for (const ring of rings) {
+    ring.forEach(([x, y], i) => (i ? path.lineTo(x * k, y * k) : path.moveTo(x * k, y * k)));
+    path.closePath();
+  }
+  if (params.rock === 'hatched') {
+    ctx.strokeStyle = '#2a2622';
+    ctx.lineWidth = Math.max(3, f.cell * k * 0.9);
+    ctx.stroke(path);
+  }
+  ctx.fillStyle = '#d9cfb8';
+  ctx.fill(path, 'evenodd');
+  ctx.strokeStyle = '#1b1a18';
+  ctx.lineWidth = Math.max(1, f.cell * k * 0.18);
+  ctx.lineJoin = 'round';
+  ctx.stroke(path);
+}
+
 export async function dungeonDialog() {
   const doc = app.doc;
   const f = doc && frame(doc);
@@ -675,7 +954,9 @@ export async function dungeonDialog() {
   // is roughly what fits with medium rooms and the gaps kept between them.
   const suggested = Math.round(clamp(f.cols * f.rows / 70, 4, 24, 10));
   const p = normalise(Object.assign({ rooms: suggested }, lastParams || {}, { seed: randomSeed() }));
-  const walls = doc.layers.find((l) => l.kind === 'walls');
+  // The walls the step will replace are the first unlocked walls layer's --
+  // commitDungeon's own choice -- so that is the layer to ask about.
+  const walls = doc.layers.find((l) => l.kind === 'walls' && !l.locked);
   let keepWalls = false;
 
   // Held to 250 px tall, so the dialog fits a laptop screen with the plan and
@@ -698,11 +979,10 @@ export async function dungeonDialog() {
     .map((a) => [a.id, a.label || a.id]);
   if (!textures.some(([id]) => id === p.tex)) textures.unshift([p.tex, p.tex]);
 
-  const body = el('div', { class: 'gen dungeon' }, [
-    preview,
-    el('div', { class: 'field span' }, [el('label', {}, [el('span', { text: 'Seed' })]),
-      el('div', { class: 'gen-seed' }, [seedInput, reroll])]),
-    field({ type: 'range', label: 'Rooms', min: 2, max: 40, step: 1, value: p.rooms }, set('rooms')),
+  const floorField = field({ type: 'select', label: 'Floor', value: p.tex, options: textures }, set('tex'));
+  // Rooms-only and caverns-only settings: each kind hides the other's, so
+  // the dialog never offers a control that does nothing.
+  const roomsOnly = [
     field({ type: 'select', label: 'Room size', value: p.size,
             options: Object.entries(ROOM_SIZES).map(([id, s]) => [id, s.label]) }, set('size')),
     field({ type: 'select', label: 'Corridors', value: p.corridors,
@@ -711,7 +991,44 @@ export async function dungeonDialog() {
     field({ type: 'select', label: 'Doors', value: p.doors,
             options: Object.entries(DOOR_SHARES).map(([id, d]) => [id, d.label]) }, set('doors')),
     field({ type: 'toggle', label: 'Hide a few doors on the loops', value: p.secret }, set('secret')),
-    field({ type: 'select', label: 'Floor', value: p.tex, options: textures }, set('tex')),
+  ];
+  const cavesOnly = [
+    field({ type: 'range', label: 'Hollow', min: 0.35, max: 0.65, step: 0.01, value: p.open, percent: true }, set('open')),
+  ];
+  const roomsField = field({ type: 'range', label: p.style === 'caverns' ? 'Chambers' : 'Rooms',
+                             min: 2, max: 40, step: 1, value: p.rooms }, set('rooms'));
+  const showStyle = () => {
+    for (const f2 of roomsOnly) f2.hidden = p.style === 'caverns';
+    for (const f2 of cavesOnly) f2.hidden = p.style !== 'caverns';
+    const name = roomsField.querySelector('label span');
+    if (name) name.textContent = p.style === 'caverns' ? 'Chambers' : 'Rooms';
+  };
+  const styleField = field({ type: 'select', label: 'Dig out', value: p.style,
+                             options: Object.entries(STYLES).map(([id, st]) => [id, st.label]) },
+                           (v) => {
+                             p.style = v;
+                             // A cave laid in parchment reads as a room; the
+                             // cave floor is the better guess, until someone
+                             // picks a floor for themselves.
+                             if (v === 'caverns' && p.tex === DUNGEON_DEFAULTS.tex && library.byId.has(CAVE_FLOOR)) {
+                               p.tex = CAVE_FLOOR;
+                               const sel = floorField.querySelector('select');
+                               if (sel) sel.value = CAVE_FLOOR;
+                             }
+                             showStyle(); redraw();
+                           });
+  styleField.setAttribute('data-dungeon', 'style');
+  showStyle();
+
+  const body = el('div', { class: 'gen dungeon' }, [
+    preview,
+    el('div', { class: 'field span' }, [el('label', {}, [el('span', { text: 'Seed' })]),
+      el('div', { class: 'gen-seed' }, [seedInput, reroll])]),
+    styleField,
+    roomsField,
+    ...roomsOnly,
+    ...cavesOnly,
+    floorField,
     field({ type: 'select', label: 'Rock', value: p.rock,
             options: Object.entries(ROCK).map(([id, r]) => [id, r.label]) }, set('rock')),
     field({ type: 'toggle', label: 'Number the rooms with notes', value: p.numbers }, set('numbers')),
@@ -722,7 +1039,8 @@ export async function dungeonDialog() {
     el('p', { class: 'empty span', text:
       'The same seed and settings always give the same dungeon on a map this size. The walls and doors ' +
       'are written as ordinary walls, so they cast shadows, export to a virtual tabletop and can be ' +
-      'edited one by one; a dungeon generated again replaces this one.' }),
+      'edited one by one; a dungeon generated again replaces this one. A cavern\'s walls follow the ' +
+      'rock rather than the grid.' }),
   ]);
   drawPreview(preview, p);
 
@@ -740,8 +1058,14 @@ export async function dungeonDialog() {
   if (app.doc !== doc) return;
   lastParams = Object.assign({}, params, { seed: '' });
   const result = generateDungeon(params, doc);
-  if (!result || !result.floor) return toast('No room fitted on this map -- try smaller rooms', 'bad');
+  if (!result || !result.floor) {
+    return toast(params.style === 'caverns' ? 'No cave opened up -- try it more hollow'
+                                            : 'No room fitted on this map -- try smaller rooms', 'bad');
+  }
   commitDungeon(result, keepWalls);
+  if (params.style === 'caverns') {
+    return toast(`Generated a cavern with ${result.rooms} chambers from seed "${params.seed}"`, 'good');
+  }
   // Rooms that did not fit are said so, not passed over: the slider asked
   // for more than the map had room for.
   const short = result.rooms < params.rooms ? ` (${params.rooms} asked for; that is all that fitted)` : '';
