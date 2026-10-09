@@ -5,6 +5,90 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-08 -- map frames, the fittings art, and a guard on layer kinds
+
+Anthony's working copy matched `origin/main` byte for byte across the 90
+tracked text files (the screenshots and the tracked `.pyc` files by size). A
+feature day.
+
+**Baseline: green.** Every suite passed against the clone before anything was
+changed: verify 82, lighting 29, hex 27, pro 25, ext 17, theme 16, labels 8,
+brushes 8, regions 25, notes 36, generate 27, dungeon 34, props 37, guards 66,
+regress 135, clipboard 40, selection 43, prefabs 41, transform 52, hatch 32,
+print 29, players 31, setedit 21, art 17, caverns 25, plus `battle`. `backups`
+went 20/21 in that pass only because it ran while this run was mid-edit on
+`extensions.js` (a `ReferenceError` from the half-written guard below); it
+passes in both final rounds.
+
+**Review.** `node --check` passed on every module; the non-ASCII scan found
+nothing outside comments, docstrings and UI strings. Read again: the backups
+module and `confirmDiscard` (yesterday's newest code), the frame's path
+through `compositeAll`, `flatten`, the players' copy and printing, and the
+extension host. One thing fixed, two written up:
+
+- *An extension could register a layer kind with a built-in id* (`paper`,
+  `walls`, now `frame`). `registerLayerKind` overwrote `LAYER_KINDS[id]`, the
+  switch in `rebuildLayer` still drew the built-in, the panel showed the
+  extension's label, and unloading the extension then deleted the built-in's
+  entry outright -- after which `kindOf` fell back to a stand-in for every
+  paper layer. It now throws for any id the program owns (taken as a set
+  before any extension runs), and EXTENSIONS.md says so. Additive: no shipped
+  extension used a built-in id, and `API_VERSION` stays 1.
+- *Written up:* a crash between `mkstemp` and the link in `backups.write`
+  leaves a `.backup-*.tmp` in `backups/` that nothing removes. Harmless (the
+  listing ignores it) and rare; not changed.
+- *Written up, again:* the `.pyc` files are still tracked; README's count for
+  `guards.mjs` said 63 where it is 66 (fixed).
+
+**The feature: map frames.** Research: Wonderdraft and Inkarnate both make
+much of decorative borders, and frames and cartouches are sold as asset packs
+in their own right. Cartograph's only border was the paper layer's double
+rule, drawn at the paper's 42% Multiply -- so a light colour in it vanishes
+and a dark one goes grey. A frame is now a layer kind of its own, `frame`,
+added from the Layers panel's **+** or *Add a frame round the map* in the
+palette, one per map, placed on top of everything but the note pins:
+
+- Five styles, all drawn in code: **atlas bars** (the graduated survey-sheet
+  border, each side divided into a whole number of blocks so the run ends at
+  the corner square), **double rule**, **ornate corners** (beads, a lozenge
+  mid-side, a boss in each corner), **rope** (strands clipped to the band) and
+  **stone blocks** (uneven dressed blocks from a fixed seed, so a reloaded map
+  draws the same frame).
+- Width, margin, *Fill the margin* (the mat, so the land stops at the frame),
+  ink and ground colour. Measured from the short side of the map, so a resize
+  keeps the proportions. Every change is one undo entry holding the one field
+  it touched, as the walls' hatching does; adding the frame is one too.
+- `render.frameValue` defaults and clamps every field, so a hand-edited file
+  cannot ask for a band wider than the map; `frameBand` is exported for the
+  tests. `flatten({ paper: false })` leaves frames off along with the paper,
+  so the Export dialog's *Include the paper and border* governs both -- which
+  matters for a battle map going to a VTT, where a frame covers the outer
+  squares.
+- The first screenshot caught the right-hand side of every style drawn one
+  band-width inside the frame (its start point was the band's inner edge, not
+  its outer). Invisible in the source, obvious in the picture.
+
+Rejected: a title cartouche (wants text layout inside a decorated box --
+a natural second slice, not finished today); elevation and contour shading
+(a large change to the land pipeline for one day); `registerExporter` (still
+a no-op, but nobody is asking).
+
+**Art version 4.** Three floors and eight fittings, per Anthony's note of
+2026-10-06. Floors: `brick` (running bond, eight courses of four, every other
+course half a brick over), `carpet` (a lozenge lattice in gold thread on x + y
+and x - y at a whole number of repeats, medallions, weave and worn pile) and
+`marble` (a pale and dark chequer veined by one ridged field across the whole
+tile). Stamps, new group `fittings`, three variants each: door (in its frame
+across a one-square gap, swung open), portcullis, trapdoor (open with a ladder
+in a third of variants), wall torch (against the top of its box), statue,
+anvil, cauldron and chair. Old and new bakes at the same seed and size: all
+132 old files byte-identical. Checked in `test/frames.mjs` alongside the
+frame.
+
+**Tests.** New suite `frames.mjs`, 34 checks. Two full rounds of all
+twenty-seven suites back to back, identical and all green: 958 of 958 each
+time, plus `battle`.
+
 ## 2026-10-07 -- caverns, the underground art, and five things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across the 87

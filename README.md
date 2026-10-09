@@ -84,12 +84,13 @@ extensions/           extensions; one folder each, loaded at startup
 test/verify.mjs       82 end-to-end checks against the running program
 test/lighting.mjs     29 more, for darkness, shadows and the VTT lights
 test/hex.mjs          27 more, for hex snapping and hex-native measurement
-test/guards.mjs       63 more, for the server's guards, over raw sockets
+test/guards.mjs       66 more, for the server's guards, over raw sockets
 test/regress.mjs      135 more, for bugs that have been in here once already
 test/generate.mjs     27 more, for seeded land generation
 test/dungeon.mjs      34 more, for seeded dungeons
 test/caverns.mjs      25 more, for caverns and the underground art
 test/backups.mjs      21 more, for the unsaved-work question and backups
+test/frames.mjs       34 more, for map frames and the fittings art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -433,6 +434,28 @@ same map looked at another way, so the two copies cannot drift apart. Marking a
 layer changes nothing on screen or in the GM's copy, and is a step in the
 history like anything else.
 
+### Framing the map
+
+A map meant for a wall, a handout or a poster wants a border, and the paper's
+double rule is only the start of one. **+** in the Layers panel → *Frame* (or
+*Add a frame round the map* in the palette) puts a frame on a layer of its own,
+over everything but the note pins. Five styles: **atlas bars**, the alternating
+graduated border of an old survey sheet; a **double rule**; **ornate corners**,
+with a boss in each corner and a lozenge mid-side; **rope**; and **stone
+blocks**, for a dungeon level framed as if cut into the rock.
+
+Its settings are in the layer's properties: the width of the band, the margin
+outside it, whether that margin is filled (so the land stops at the frame
+rather than running on to the edge of the sheet), and two colours, the ink and
+the ground. All of it is measured from the short side of the map, so a frame
+keeps its shape when the canvas is resized, and every change is one step in the
+history, as adding the frame is.
+
+A frame is part of the picture, so it is in the export, the print and the
+players' copy. Untick **Include the paper and border** in the Export dialog to
+leave it off -- worth doing for a battle map going to a virtual tabletop, where
+the frame would cover the outer squares.
+
 ### Working at scale
 
 **Layer groups** are folders. Add one from the **+** in the Layers panel and
@@ -520,9 +543,15 @@ Stamp tool mixes the variants as it does for trees.
 For going underground there is a **cave floor**, an **underground pool** and a
 **lava flow** among the textures, and under *underground* in the stamp picker a
 pillar, stalagmites, rubble, a campfire, an altar, stairs down, a brazier and
-cave mushrooms, again three variants of each and drawn to the same scale. A
-starter pack baked before these existed gains them on the next launch, from its
-own seed.
+cave mushrooms, again three variants of each and drawn to the same scale.
+
+For a house, a keep or a temple there is **brick**, a **woven carpet** and
+**marble tiles** among the floors, and under *fittings* in the stamp picker the
+things built into a room or too heavy to carry out of it: a door, a portcullis,
+a trapdoor, a wall torch, a statue, an anvil, a cauldron and a chair. The door,
+the portcullis and the wall torch are drawn to sit on a wall: the door across a
+one-square gap, the torch against the top edge of its box. A starter pack baked
+before any of these existed gains them on the next launch, from its own seed.
 
 ## Adding your own art
 
@@ -603,7 +632,13 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 924 assertions in all: `backups.mjs`
+There are narrower scripts beside it, 958 assertions in all: `frames.mjs`
+(map frames: offered by the new-layer dialog, one per map, on top and
+selected, the margin filled and the middle untouched, five styles each drawn
+differently, every panel change one undo step, left out of an export without
+the paper, a hand-edited frame held to range, the palette command, adding it
+undone and redone, and the round trip; then the brick, carpet and marble
+floors tiling and the eight fittings placed with the real tools), `backups.mjs`
 (unsaved work: an untouched map replaced quietly, the question before a new
 map, an open and a restore, a backup kept before the answer and on Cancel too,
 a failed backup said so, a restore exactly as it was and saved as a project of

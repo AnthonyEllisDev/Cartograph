@@ -25,6 +25,7 @@
     "art": "node test/art.mjs",
     "caverns": "node test/caverns.mjs",
     "backups": "node test/backups.mjs",
+    "frames": "node test/frames.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

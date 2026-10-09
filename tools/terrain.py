@@ -163,6 +163,25 @@ TERRAINS = {
         stops=[(30, 24, 22), (48, 36, 32), (70, 52, 44)],
         glow=[(255, 236, 150), (250, 150, 40), (180, 50, 20)], cells=7,
         grain=[(90, (24, 18, 16), 0.25, 0.5, 1.6)]),
+    # Floors for a house, a keep or a temple, where the cavern set left off:
+    # laid brick, a woven carpet and a chequer of polished stone. Added
+    # 2026-10-08 (art version 4).
+    "brick": dict(
+        group="floor", label="Brick Floor", pattern="brick",
+        stops=[(118, 58, 40), (146, 76, 52), (172, 100, 70)],
+        grout=(150, 138, 118), rows=8, bricks=4,
+        grain=[(140, (96, 46, 32), 0.14, 0.4, 1.2), (60, (190, 160, 130), 0.10, 0.5, 1.4)]),
+    "carpet": dict(
+        group="floor", label="Woven Carpet", pattern="carpet",
+        stops=[(92, 26, 28), (118, 36, 36), (138, 48, 44)],
+        thread=(196, 154, 78), inlay=(40, 52, 82), motifs=3,
+        grain=[(80, (70, 20, 22), 0.12, 0.6, 1.8)]),
+    "marble": dict(
+        group="floor", label="Marble Tiles", pattern="marble",
+        stops=[(214, 210, 200), (232, 229, 221), (246, 244, 238)],
+        dark=[(44, 50, 48), (62, 70, 66), (82, 92, 86)],
+        grout=(150, 144, 132), tiles=4,
+        grain=[]),
 }
 
 
@@ -379,7 +398,117 @@ def _lava(spec, size, rng):
     return px
 
 
-PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava}
+def _brick(spec, size, rng):
+    """Running bond: courses of bricks, each course set half a brick over."""
+    lo, mid, hi = spec["stops"]
+    rows, per = spec["rows"], spec["bricks"]
+    rh, bw = size / rows, size / per
+    # Rows must be even for the half-brick offset to meet itself at the seam.
+    tones = [[rng.random() for _ in range(per)] for _ in range(rows)]
+    tone = fbm(size, 8, 3, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        r = int(y / rh) % rows
+        top = y - r * rh
+        bottom = rh - top
+        shift = bw / 2 if r % 2 else 0.0
+        for x in range(size):
+            i = y * size + x
+            sx = (x + shift) % size
+            k = int(sx / bw) % per
+            left = sx - k * bw
+            right = bw - left
+            edge = min(top, bottom, left, right)
+            if edge < 1.4:
+                _put(px, i, spec["grout"])
+                continue
+            v = clamp(0.5 + (tones[r][k] - 0.5) * 0.9 + (tone[i] - 0.5) * 0.6)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if edge < 3.0:
+                k2 = 1.0 - edge / 3.0
+                rgb = _shade(rgb, 0.10 * k2 if edge == top or edge == left else -0.20 * k2)
+            _put(px, i, rgb)
+    return px
+
+
+def _carpet(spec, size, rng):
+    """A lattice of lozenges in gold thread, a medallion in each, on a dyed
+    ground with the weave showing through and the pile worn in places.
+
+    The lattice runs on x + y and x - y at a whole number of repeats to the
+    tile, which is what lets a diagonal pattern meet itself at every edge."""
+    lo, mid, hi = spec["stops"]
+    thread, inlay = spec["thread"], spec["inlay"]
+    n = spec["motifs"]
+    wear = fbm(size, 4, 4, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            u = (x + y) * n / size
+            v = (x - y) * n / size
+            fu, fv = u - math.floor(u), v - math.floor(v)
+            # Distance to the lattice lines and to the middle of the lozenge,
+            # both in lattice units.
+            line = min(fu, 1 - fu, fv, 1 - fv)
+            centre = max(abs(fu - 0.5), abs(fv - 0.5))
+            weave = 0.06 if (x + y) % 2 else -0.04
+            t = clamp(0.5 + weave + (wear[i] - 0.5) * 0.9)
+            rgb = mix_rgb(lo, mid, t * 2.0) if t < 0.5 else mix_rgb(mid, hi, (t - 0.5) * 2.0)
+            if line < 0.035:
+                rgb = thread
+            elif line < 0.075:
+                rgb = inlay
+            elif centre < 0.13:
+                rgb = thread if centre > 0.085 or centre < 0.04 else inlay
+            elif 0.2 < centre < 0.235:
+                rgb = mix_rgb(rgb, thread, 0.55)
+            # Where the pile has worn, the colours fade towards the backing.
+            if wear[i] > 0.62:
+                rgb = mix_rgb(rgb, (150, 118, 92), min(0.45, (wear[i] - 0.62) * 2.2))
+            _put(px, i, rgb)
+    return px
+
+
+def _marble(spec, size, rng):
+    """A chequer of polished squares, pale and dark, veined right across.
+
+    The veins are one ridged field for the whole tile rather than one per
+    square, which is how a floor cut from the same two blocks looks."""
+    pale, dark = spec["stops"], spec["dark"]
+    n = spec["tiles"]
+    cell = size / n
+    vein = ridged(size, 3, 5, rng)
+    vein = warp(vein, size, fbm(size, 4, 3, rng), fbm(size, 4, 3, rng), size * 0.12)
+    cloud = fbm(size, 5, 4, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        cy = int(y / cell)
+        top = y - cy * cell
+        for x in range(size):
+            cx = int(x / cell)
+            left = x - cx * cell
+            i = y * size + x
+            edge = min(top, cell - top, left, cell - left)
+            if edge < 1.0:
+                _put(px, i, spec["grout"])
+                continue
+            lo, mid, hi = pale if (cx + cy) % 2 == 0 else dark
+            t = clamp(0.5 + (cloud[i] - 0.5) * 0.8)
+            rgb = mix_rgb(lo, mid, t * 2.0) if t < 0.5 else mix_rgb(mid, hi, (t - 0.5) * 2.0)
+            k = vein[i] ** 10
+            if (cx + cy) % 2 == 0:
+                rgb = mix_rgb(rgb, (128, 126, 118), k * 0.75)
+            else:
+                rgb = mix_rgb(rgb, (196, 204, 196), k * 0.6)
+            if edge < 2.5:
+                rgb = _shade(rgb, 0.10 if edge in (top, left) else -0.14)
+            _put(px, i, rgb)
+    return px
+
+
+PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
+            "brick": _brick, "carpet": _carpet, "marble": _marble}
 
 
 def render(name, size, seed):

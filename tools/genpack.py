@@ -32,7 +32,8 @@ PACK_ID = "starter"
 #   1  the first pack: 17 textures, 29 symbols
 #   2  2026-10-06: flagstone, floorboards, cobblestones; eight furnishings
 #   3  2026-10-07: cave floor, underground pool, lava; eight underground symbols
-ART_VERSION = 3
+#   4  2026-10-08: brick, carpet, marble tiles; eight fittings
+ART_VERSION = 4
 
 
 def build(out_dir, seed="v1", size=256, log=print):

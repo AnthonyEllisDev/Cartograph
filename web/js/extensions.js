@@ -24,6 +24,9 @@ import { TOOLS, clearSelection, currentTool, selectObject, selectObjects, select
 import { mirrorSelection, turnSelection } from './transform.js';
 import { clamp, el, hashString, modal, rng, toast, uid } from './util.js';
 
+// Taken before any extension has run, so it holds only the program's own.
+const BUILT_IN_KINDS = new Set(Object.keys(LAYER_KINDS));
+
 export const API_VERSION = 1;
 
 export const extensions = {
@@ -60,6 +63,12 @@ function makeApi(manifest) {
     registerLayerKind(spec) {
       if (!spec || !spec.id) throw new Error('a layer kind needs an id');
       const id = spec.id;
+      // A built-in kind taken over by an extension would be drawn by the
+      // switch in render.rebuildLayer and labelled by the extension, and
+      // unloading the extension would then delete the built-in's entry.
+      if (BUILT_IN_KINDS.has(id)) {
+        throw new Error('"' + id + '" is a built-in layer kind');
+      }
       LAYER_KINDS[id] = { label: spec.label || id, paint: !!spec.paint, icon: spec.icon || 'paper' };
       extensions.layerKinds.set(id, Object.assign({}, spec, { extension: manifest.id }));
       owned.layerKinds.push(id);

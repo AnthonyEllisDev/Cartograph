@@ -19,21 +19,23 @@ pack's `pack.json`, so a pack you liked can always be rebuilt.
 The generated pack is **CC0 1.0** — public domain. Maps you make with it are
 yours, commercially or otherwise.
 
-Twenty-three terrain tiles: parchment, ocean, shallows, grass, meadow,
+Twenty-six terrain tiles: parchment, ocean, shallows, grass, meadow,
 broadleaf and pine forest, sand, dunes, rock, highland, snow, tundra, marsh,
-farmland and ashland for the land; flagstones, wooden floorboards and
-cobblestones for the floors of battle maps; and a cave floor, an underground
-pool and a lava flow for going below them.
+farmland and ashland for the land; flagstones, wooden floorboards,
+cobblestones, brick, a woven carpet and marble tiles for the floors of battle
+maps; and a cave floor, an underground pool and a lava flow for going below
+them.
 
-Forty-five symbols. Drawn side-on, the way an atlas draws them: mountains,
+Fifty-three symbols. Drawn side-on, the way an atlas draws them: mountains,
 hills, volcanoes, caves, standing stones, five kinds of tree, villages, towns,
 cities, castles, towers, ruins, windmills, lighthouses, mines, bridges, ships,
 a sea serpent and a compass rose. Drawn from above, at five feet to seventy
 pixels, for battle maps: a barrel, a crate, a table, a bed, a chest, a
 bookshelf, a rug and a well; and, underground, a pillar, stalagmites, rubble, a
-campfire, an altar, stairs down, a brazier and cave mushrooms. The land and
-plant symbols, the furnishings and the underground ones come in three random
-variants each.
+campfire, an altar, stairs down, a brazier and cave mushrooms; and, as
+fittings, a door, a portcullis, a trapdoor, a wall torch, a statue, an anvil, a
+cauldron and a chair. The land and plant symbols, the furnishings, the
+underground ones and the fittings come in three random variants each.
 
 ## Adding to the generated art
 

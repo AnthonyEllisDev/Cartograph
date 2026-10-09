@@ -924,6 +924,209 @@ def mushrooms(rng):
     return _svg(w, h, "".join(parts))
 
 
+# ------------------------------------------------------------------ fittings
+#
+# Plans at the same five feet to seventy pixels: what is built into a room
+# rather than carried into it, and the heavier things a workshop or a keep has
+# standing about. Added 2026-10-08 (art version 4).
+
+STEEL = "#7c7a78"
+STEEL_LIGHT = "#a9a6a2"
+SOOT = "#2a2522"
+
+
+def door(rng):
+    # A door is drawn in its frame across a 70 px wall gap, the leaf swung open
+    # a little, so it can be laid over a wall at a scale of 1.
+    w, h = 84, 70
+    body, light, dark = _wood(rng)
+    swing = rng.uniform(10, 26)
+    parts = [
+        '<rect x="0" y="27" width="8" height="16" fill="%s" stroke="%s" stroke-width="1.2"/>' % (STONE_DARK, INK),
+        '<rect x="%d" y="27" width="8" height="16" fill="%s" stroke="%s" stroke-width="1.2"/>' % (w - 8, STONE_DARK, INK),
+        '<line x1="8" y1="35" x2="%d" y2="35" stroke="%s" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>'
+        % (w - 8, INK_SOFT),
+        # The arc the leaf sweeps, so it reads as a door and not a plank.
+        '<path d="M%d,35 A%d,%d 0 0 0 %.1f,%.1f" stroke="%s" stroke-width="0.9" stroke-dasharray="3 2" opacity="0.7"/>'
+        % (w - 8, w - 16, w - 16, 8 + (w - 16) * math.cos(math.radians(swing)),
+           35 - (w - 16) * math.sin(math.radians(swing)), INK_SOFT),
+        '<g transform="rotate(%.1f 8 35)">' % -swing,
+        '<rect x="8" y="31" width="%d" height="8" fill="%s" stroke="%s" stroke-width="1.2"/>' % (w - 16, body, INK),
+        _boards(8, 31, w - 16, 8, 2, True, dark, 0.5),
+        '<line x1="9" y1="32.5" x2="%d" y2="32.5" stroke="%s" stroke-width="1" opacity="0.7"/>' % (w - 9, light),
+        '<rect x="13" y="30" width="5" height="10" fill="%s"/>' % IRON,
+        '<rect x="%d" y="30" width="5" height="10" fill="%s"/>' % (w - 30, IRON),
+        '<circle cx="%d" cy="35" r="2" fill="%s" stroke="%s" stroke-width="0.6"/>' % (w - 14, BRASS, INK),
+        '</g>',
+    ]
+    return _svg(w, h, "".join(parts))
+
+
+def portcullis(rng):
+    w, h = 148, 40
+    bars = rng.choice((6, 7, 8))
+    parts = [
+        '<rect x="0" y="8" width="14" height="24" fill="%s" stroke="%s" stroke-width="1.3"/>' % (STONE_DARK, INK),
+        '<rect x="%d" y="8" width="14" height="24" fill="%s" stroke="%s" stroke-width="1.3"/>' % (w - 14, STONE_DARK, INK),
+        # The slot the grate drops through, seen from above.
+        '<rect x="14" y="15" width="%d" height="10" fill="%s" opacity="0.85"/>' % (w - 28, SOOT),
+    ]
+    for k in range(bars):
+        x = 18 + (w - 36) * k / (bars - 1)
+        parts.append('<rect x="%.1f" y="12" width="4" height="16" rx="1" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                     % (x - 2, STEEL, INK))
+        parts.append('<path d="M%.1f,12 l2,-4 l2,4" fill="%s" stroke="%s" stroke-width="0.7"/>' % (x - 2, STEEL_LIGHT, INK))
+    parts.append('<rect x="14" y="18" width="%d" height="4" fill="%s" stroke="%s" stroke-width="0.8"/>' % (w - 28, IRON, INK))
+    for x in (6, w - 8):
+        parts.append('<circle cx="%d" cy="20" r="2.4" fill="%s" stroke="%s" stroke-width="0.7"/>' % (x + 1, IRON, INK))
+    if rng.random() < 0.5:
+        parts.append('<path d="M%d,30 l6,4 l8,-2" stroke="%s" stroke-width="0.8" opacity="0.7"/>' % (w // 3, INK_SOFT))
+    return _svg(w, h, "".join(parts))
+
+
+def trapdoor(rng):
+    w = h = 70
+    body, light, dark = _wood(rng)
+    open_ = rng.random() < 0.34
+    parts = ['<rect x="2" y="2" width="66" height="66" fill="%s" stroke="%s" stroke-width="1.4"/>' % (dark, INK)]
+    if open_:
+        # The hatch thrown back, and a ladder going down into the dark.
+        parts.append('<rect x="8" y="8" width="54" height="54" fill="%s"/>' % SOOT)
+        for k in range(5):
+            y = 14 + k * 10
+            parts.append('<rect x="20" y="%d" width="30" height="3" fill="%s" opacity="%.2f"/>' % (y, body, 1 - k * 0.16))
+        parts.append('<rect x="18" y="10" width="3" height="52" fill="%s"/><rect x="49" y="10" width="3" height="52" fill="%s"/>'
+                     % (body, body))
+    else:
+        parts.append('<rect x="8" y="8" width="54" height="54" fill="%s" stroke="%s" stroke-width="1"/>' % (body, INK))
+        parts.append(_boards(8, 8, 54, 54, rng.choice((4, 5)), rng.random() < 0.5, dark))
+        for y in (16, 54):
+            parts.append('<rect x="8" y="%d" width="54" height="4" fill="%s"/>' % (y - 2, IRON))
+            for x in (12, 58):
+                parts.append('<circle cx="%d" cy="%d" r="1" fill="%s"/>' % (x, y, BRASS))
+        parts.append('<circle cx="35" cy="35" r="5" stroke="%s" stroke-width="2"/>' % IRON)
+        parts.append('<path d="M8,62 L8,8 L62,8" stroke="%s" stroke-width="1.6" opacity="0.6"/>' % light)
+    return _svg(w, h, "".join(parts))
+
+
+def sconce(rng):
+    # Set against the north edge of its box, which is where the wall goes: a
+    # bracket off the stone, the torch in it, and the light it throws.
+    w, h = 56, 48
+    lit = rng.random() < 0.8
+    parts = []
+    if lit:
+        parts.append('<circle cx="28" cy="20" r="18" fill="%s" opacity="0.18"/>' % FLAME)
+        parts.append('<circle cx="28" cy="20" r="11" fill="%s" opacity="0.22"/>' % FLAME)
+    parts += [
+        '<rect x="16" y="0" width="24" height="6" fill="%s" stroke="%s" stroke-width="1.1"/>' % (IRON, INK),
+        '<path d="M22,6 L25,16 M34,6 L31,16" stroke="%s" stroke-width="2.2"/>' % IRON,
+        '<circle cx="28" cy="19" r="6" fill="%s" stroke="%s" stroke-width="1.1"/>' % (IRON, INK),
+        '<circle cx="28" cy="19" r="3.6" fill="%s"/>' % (WOOD_DARK if not lit else EMBER),
+    ]
+    if lit:
+        parts.append('<circle cx="28" cy="20" r="2.4" fill="%s"/>' % FLAME)
+        parts.append('<circle cx="27.5" cy="19.5" r="1.1" fill="%s"/>' % FLAME_HOT)
+    return _svg(w, h, "".join(parts))
+
+
+def statue(rng):
+    w = h = 92
+    c = 46
+    stone = rng.choice(((STONE, "#d6ccb8", STONE_DARK), ("#c8c2b4", "#e4ded0", "#948e80"),
+                        ("#8f8a82", "#b2ada4", "#66625b")))
+    body, light, dark = stone
+    turn = rng.uniform(0, 360)
+    parts = [
+        '<rect x="4" y="4" width="84" height="84" rx="4" fill="%s" stroke="%s" stroke-width="1.4"/>' % (CAVE_DARK, INK),
+        '<rect x="12" y="12" width="68" height="68" rx="2" fill="%s" stroke="%s" stroke-width="1.1"/>' % (dark, INK),
+        '<path d="M12,80 L12,12 L80,12" stroke="%s" stroke-width="2" opacity="0.6"/>' % light,
+        '<g transform="rotate(%.1f %d %d)">' % (turn, c, c),
+        # A robed figure from above: the hem, the shoulders, the head, and one
+        # arm held out with something in the hand.
+        '<ellipse cx="%d" cy="%d" rx="24" ry="20" fill="%s" stroke="%s" stroke-width="1.1"/>' % (c, c + 3, body, INK),
+        '<path d="M%d,%d q8,-6 16,0 M%d,%d q-8,6 -16,0" stroke="%s" stroke-width="0.8" opacity="0.7"/>'
+        % (c - 18, c + 8, c + 18, c - 2, dark),
+        '<ellipse cx="%d" cy="%d" rx="17" ry="9" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c - 2, light, INK),
+        '<circle cx="%d" cy="%d" r="7" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c - 3, body, INK),
+        '<path d="M%d,%d l16,-12" stroke="%s" stroke-width="4.5" stroke-linecap="round"/>' % (c + 12, c - 4, body),
+        '<path d="M%d,%d l16,-12" stroke="%s" stroke-width="0.9" fill="none"/>' % (c + 12, c - 6.5, INK),
+        '<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="0.9"/>'
+        % (c + 29, c - 17, rng.uniform(3, 5), light, INK),
+        '</g>',
+    ]
+    if rng.random() < 0.5:
+        parts.append('<path d="M%d,%d l5,7 l-3,6" stroke="%s" stroke-width="0.8" opacity="0.7"/>'
+                     % (rng.randint(20, 70), rng.randint(16, 30), INK_SOFT))
+    return _svg(w, h, "".join(parts))
+
+
+def anvil(rng):
+    w, h = 84, 70
+    parts = [
+        # The stump it stands on, then the anvil across it: horn to the west.
+        '<circle cx="46" cy="35" r="28" fill="%s" stroke="%s" stroke-width="1.2"/>' % (WOOD, INK),
+        '<circle cx="46" cy="35" r="20" stroke="%s" stroke-width="0.8" opacity="0.6"/>' % WOOD_DARK,
+        '<circle cx="46" cy="35" r="11" stroke="%s" stroke-width="0.8" opacity="0.6"/>' % WOOD_DARK,
+        '<path d="M4,35 Q14,25 28,24 L72,24 L72,46 L28,46 Q14,45 4,35 Z" fill="%s" stroke="%s" stroke-width="1.3"/>'
+        % (STEEL, INK),
+        '<path d="M8,34 Q16,28 28,27.5 L70,27.5" stroke="%s" stroke-width="2" opacity="0.8"/>' % STEEL_LIGHT,
+        '<rect x="60" y="30" width="5" height="5" fill="%s"/>' % SOOT,
+        '<circle cx="54" cy="40" r="1.6" fill="%s"/>' % SOOT,
+    ]
+    if rng.random() < 0.6:
+        # A hammer left on it.
+        a = rng.uniform(-30, 30)
+        parts.append('<g transform="rotate(%.1f 46 35)"><rect x="30" y="49" width="30" height="4" rx="1.5" fill="%s" '
+                     'stroke="%s" stroke-width="0.8"/><rect x="56" y="45" width="8" height="12" rx="1" fill="%s" '
+                     'stroke="%s" stroke-width="0.9"/></g>' % (a, WOOD_LIGHT, INK, IRON, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def cauldron(rng):
+    w = h = 76
+    c = 38
+    brew = rng.choice(("#5d7a3a", "#7a3a5a", "#3a6a7a", "#8a6a2a"))
+    parts = []
+    for k in range(3):
+        a = math.radians(rng.uniform(0, 30) + k * 120)
+        parts.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                     % (c + math.cos(a) * 30, c + math.sin(a) * 30, IRON, INK))
+    parts += [
+        '<circle cx="%d" cy="%d" r="29" fill="%s" stroke="%s" stroke-width="1.4"/>' % (c, c, IRON, INK),
+        '<path d="M%d,%d A26,26 0 0 1 %d,%d" stroke="%s" stroke-width="2" opacity="0.6"/>' % (c - 24, c + 4, c + 4, c - 24, STEEL),
+        '<circle cx="%d" cy="%d" r="22" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, brew, SOOT),
+    ]
+    for _ in range(rng.randint(4, 7)):
+        a, d = rng.uniform(0, math.pi * 2), rng.uniform(0, 15)
+        r = rng.uniform(1.5, 4)
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" stroke="#ffffff" stroke-width="0.8" opacity="0.45"/>'
+                     % (c + math.cos(a) * d, c + math.sin(a) * d, r))
+    parts.append('<path d="M%d,%d q4,-4 8,0" stroke="#ffffff" stroke-width="1" opacity="0.35"/>' % (c - 10, c - 6))
+    # The handle laid down across the rim.
+    parts.append('<path d="M%d,%d A31,31 0 0 0 %d,%d" stroke="%s" stroke-width="2.2"/>' % (c - 29, c + 6, c + 29, c + 6, IRON))
+    return _svg(w, h, "".join(parts))
+
+
+def chair(rng):
+    w, h = 44, 44
+    body, light, dark = _wood(rng)
+    back = rng.choice(("plain", "spindle"))
+    parts = [
+        '<rect x="5" y="9" width="34" height="31" rx="3" fill="%s" stroke="%s" stroke-width="1.2"/>' % (body, INK),
+        _boards(5, 9, 34, 31, 3, False, dark, 0.45),
+        '<path d="M6,39 L6,10 L38,10" stroke="%s" stroke-width="1.4" opacity="0.6"/>' % light,
+        '<rect x="3" y="2" width="38" height="8" rx="2" fill="%s" stroke="%s" stroke-width="1.2"/>' % (dark, INK),
+    ]
+    if back == "spindle":
+        for x in (12, 19, 26, 33):
+            parts.append('<circle cx="%d" cy="6" r="1.4" fill="%s"/>' % (x, light))
+    if rng.random() < 0.4:
+        parts.append('<rect x="10" y="15" width="24" height="20" rx="4" fill="%s" stroke="%s" stroke-width="0.8" opacity="0.95"/>'
+                     % (rng.choice(CLOTHS), INK))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -970,11 +1173,19 @@ CATALOGUE = [
     ("stairs", "Stairs Down", "underground", stairs),
     ("brazier", "Brazier", "underground", brazier),
     ("mushrooms", "Cave Mushrooms", "underground", mushrooms),
+    ("door", "Door", "fittings", door),
+    ("portcullis", "Portcullis", "fittings", portcullis),
+    ("trapdoor", "Trapdoor", "fittings", trapdoor),
+    ("sconce", "Wall Torch", "fittings", sconce),
+    ("statue", "Statue", "fittings", statue),
+    ("anvil", "Anvil", "fittings", anvil),
+    ("cauldron", "Cauldron", "fittings", cauldron),
+    ("chair", "Chair", "fittings", chair),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings")
 
 
 def build(seed):

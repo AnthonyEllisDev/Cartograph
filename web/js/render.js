@@ -573,6 +573,7 @@ export function rebuildLayer(layer) {
     case 'group':   return undefined;              // a folder draws nothing
     case 'grid':    return renderGrid(layer, ctx);
     case 'paper':   return renderPaper(layer, ctx);
+    case 'frame':   return renderFrame(layer, ctx);
     default:
       // A kind an extension taught us about.
       if (view.renderCustomLayer) view.renderCustomLayer(layer, ctx);
@@ -1759,6 +1760,258 @@ function renderPaper(layer, ctx) {
   }
 }
 
+/* ------------------------------------------------------------------- frame */
+
+/* A decorative border round the whole map, the way an atlas plate or a
+ * module's poster map is framed. Its own layer rather than more options on the
+ * paper: the paper is composited at low opacity with Multiply, which turns a
+ * frame's light colours into nothing and its dark ones into a grey, and a
+ * frame has to sit over the land rather than under the ink.
+ *
+ * Everything is measured from the shorter side of the map, so a frame keeps
+ * its proportions when the canvas is resized, and nothing in it is random
+ * except through a fixed seed: a reloaded map must draw the same frame. */
+
+export const FRAME_STYLES = {
+  rule:   { label: 'Double rule' },
+  atlas:  { label: 'Atlas bars' },
+  ornate: { label: 'Ornate corners' },
+  rope:   { label: 'Rope' },
+  stone:  { label: 'Stone blocks' },
+};
+
+export const FRAME_DEFAULTS = {
+  style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
+};
+
+const FRAME_RANGE = { size: [0.4, 3], margin: [0, 4] };
+
+/** A frame field as the renderer will use it: defaulted, and held to range so
+ *  a hand-edited file cannot ask for a band wider than the map. */
+export function frameValue(layer, key) {
+  const v = layer[key];
+  if (key === 'style') return FRAME_STYLES[v] ? v : FRAME_DEFAULTS.style;
+  if (key === 'mat') return v === undefined ? FRAME_DEFAULTS.mat : !!v;
+  if (FRAME_RANGE[key]) {
+    return Number.isFinite(v) ? clamp(v, FRAME_RANGE[key][0], FRAME_RANGE[key][1]) : FRAME_DEFAULTS[key];
+  }
+  return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : FRAME_DEFAULTS[key];
+}
+
+/** Where the frame's band lies: `outer` and `inner` are insets from the edge
+ *  of the map. Exported for the tests, which check the band by its pixels. */
+export function frameBand(layer, w, h) {
+  const unit = Math.min(w, h) * 0.02;
+  const outer = unit * frameValue(layer, 'margin');
+  const band = unit * 1.1 * frameValue(layer, 'size');
+  return { outer, inner: outer + band, band, unit };
+}
+
+function frameRect(ctx, inset, w, h) {
+  ctx.rect(inset, inset, w - inset * 2, h - inset * 2);
+}
+
+/** The four sides of the band as runs: where each starts, which way it goes,
+ *  and how long it is between the corner squares. */
+function frameSides(o, i, w, h) {
+  const b = i - o;
+  return [
+    { x: o + b, y: o, dx: 1, dy: 0, len: w - 2 * i, across: [0, 1] },
+    { x: w - o, y: o + b, dx: 0, dy: 1, len: h - 2 * i, across: [-1, 0] },
+    { x: w - o - b, y: h - o, dx: -1, dy: 0, len: w - 2 * i, across: [0, -1] },
+    { x: o, y: h - o - b, dx: 0, dy: -1, len: h - 2 * i, across: [1, 0] },
+  ];
+}
+
+function frameCorners(o, i, w, h) {
+  const b = i - o;
+  return [[o, o], [w - o - b, o], [w - o - b, h - o - b], [o, h - o - b]].map(([x, y]) => ({ x, y, b }));
+}
+
+const FRAME_DRAW = {
+  rule(ctx, g, w, h, ink) {
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(2, g.band * 0.22);
+    ctx.beginPath(); frameRect(ctx, g.outer + ctx.lineWidth / 2, w, h); ctx.stroke();
+    ctx.lineWidth = Math.max(1, g.band * 0.08);
+    ctx.beginPath(); frameRect(ctx, g.inner - ctx.lineWidth / 2, w, h); ctx.stroke();
+  },
+
+  atlas(ctx, g, w, h, ink, accent) {
+    // The graduated border of an old survey sheet: blocks alternating dark
+    // and light, each side divided into a whole number of them so the run
+    // finishes cleanly at the corner square.
+    const b = g.band;
+    for (const s of frameSides(g.outer, g.inner, w, h)) {
+      const n = Math.max(3, Math.round(s.len / (b * 2.6)));
+      const step = s.len / n;
+      for (let k = 0; k < n; k++) {
+        const along = k * step;
+        const x0 = s.x + s.dx * along, y0 = s.y + s.dy * along;
+        const x1 = x0 + s.dx * step + s.across[0] * b, y1 = y0 + s.dy * step + s.across[1] * b;
+        ctx.fillStyle = k % 2 ? ink : accent;
+        ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+      }
+    }
+    ctx.fillStyle = ink;
+    for (const c of frameCorners(g.outer, g.inner, w, h)) ctx.fillRect(c.x, c.y, c.b, c.b);
+    // A thin rule through the middle of the blocks, as the originals had, so
+    // the band reads as two scales side by side.
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(1, b * 0.07);
+    ctx.beginPath(); frameRect(ctx, g.outer + b / 2, w, h); ctx.stroke();
+    ctx.lineWidth = Math.max(1.5, b * 0.12);
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); ctx.stroke();
+    ctx.beginPath(); frameRect(ctx, g.inner, w, h); ctx.stroke();
+  },
+
+  ornate(ctx, g, w, h, ink, accent) {
+    const b = g.band;
+    ctx.fillStyle = accent;
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); frameRect(ctx, g.inner, w, h); ctx.fill('evenodd');
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(2, b * 0.16);
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); ctx.stroke();
+    ctx.lineWidth = Math.max(1, b * 0.07);
+    ctx.beginPath(); frameRect(ctx, g.outer + b * 0.28, w, h); ctx.stroke();
+    ctx.beginPath(); frameRect(ctx, g.inner - b * 0.28, w, h); ctx.stroke();
+    ctx.lineWidth = Math.max(1.5, b * 0.12);
+    ctx.beginPath(); frameRect(ctx, g.inner, w, h); ctx.stroke();
+    // Beads down the middle of the band, a whole number to each side.
+    ctx.fillStyle = ink;
+    for (const s of frameSides(g.outer, g.inner, w, h)) {
+      const n = Math.max(4, Math.round(s.len / (b * 1.2)));
+      for (let k = 1; k < n; k++) {
+        const along = (k / n) * s.len;
+        const cx = s.x + s.dx * along + s.across[0] * b / 2, cy = s.y + s.dy * along + s.across[1] * b / 2;
+        ctx.beginPath(); ctx.arc(cx, cy, Math.max(0.8, b * 0.07), 0, Math.PI * 2); ctx.fill();
+      }
+      // A lozenge at the middle of each side.
+      const mx = s.x + s.dx * s.len / 2 + s.across[0] * b / 2, my = s.y + s.dy * s.len / 2 + s.across[1] * b / 2;
+      const r = b * 0.9;
+      lozenge(ctx, mx, my, s.dx ? r * 1.5 : r * 0.62, s.dx ? r * 0.62 : r * 1.5, ink, accent, b);
+    }
+    // A boss in each corner: a square turned to a diamond, a ring, a dot.
+    for (const c of frameCorners(g.outer, g.inner, w, h)) {
+      const cx = c.x + c.b / 2, cy = c.y + c.b / 2, r = c.b * 0.95;
+      ctx.fillStyle = accent; ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1, b * 0.1);
+      ctx.fillRect(c.x, c.y, c.b, c.b);
+      lozenge(ctx, cx, cy, r, r, ink, accent, b);
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2);
+      ctx.fillStyle = accent; ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = ink; ctx.fill();
+    }
+  },
+
+  rope(ctx, g, w, h, ink, accent) {
+    const b = g.band;
+    ctx.save();
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); frameRect(ctx, g.inner, w, h);
+    ctx.clip('evenodd');
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 0, w, h);
+    // The lay of the rope: strands at a slant, one twist per band-width and a
+    // little, each side fitted to a whole number of twists.
+    for (const s of frameSides(g.outer, g.inner, w, h)) {
+      const n = Math.max(4, Math.round(s.len / (b * 0.75)));
+      const step = s.len / n;
+      ctx.lineCap = 'round';
+      for (let k = -2; k <= n + 2; k++) {
+        const a0 = k * step, a1 = a0 + step * 1.6;
+        const x0 = s.x + s.dx * a0, y0 = s.y + s.dy * a0;
+        const x1 = s.x + s.dx * a1 + s.across[0] * b, y1 = s.y + s.dy * a1 + s.across[1] * b;
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = Math.max(1, b * 0.12);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.35)';
+        ctx.lineWidth = Math.max(1, b * 0.08);
+        ctx.beginPath();
+        ctx.moveTo(x0 + s.dx * step * 0.35, y0 + s.dy * step * 0.35);
+        ctx.lineTo(x1 + s.dx * step * 0.35, y1 + s.dy * step * 0.35);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(1.5, b * 0.1);
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); ctx.stroke();
+    ctx.beginPath(); frameRect(ctx, g.inner, w, h); ctx.stroke();
+    // A whipped knot over each corner, where the rope is turned.
+    for (const c of frameCorners(g.outer, g.inner, w, h)) {
+      ctx.beginPath(); ctx.arc(c.x + c.b / 2, c.y + c.b / 2, c.b * 0.62, 0, Math.PI * 2);
+      ctx.fillStyle = accent; ctx.fill();
+      ctx.lineWidth = Math.max(1, b * 0.1); ctx.stroke();
+      ctx.beginPath(); ctx.arc(c.x + c.b / 2, c.y + c.b / 2, c.b * 0.34, 0, Math.PI * 2); ctx.stroke();
+    }
+  },
+
+  stone(ctx, g, w, h, ink, accent) {
+    // Dressed blocks of uneven length, for a dungeon level framed as if it
+    // were cut into the rock. The seed is fixed: the frame of a reloaded map
+    // has to be the frame that was saved.
+    const b = g.band;
+    const r = rng(0x5713);
+    ctx.lineWidth = Math.max(1, b * 0.08);
+    for (const s of frameSides(g.outer, g.inner, w, h)) {
+      const cuts = [0];
+      let at = 0;
+      while (at < s.len - b * 1.6) { at += b * (1.1 + r() * 1.4); cuts.push(Math.min(at, s.len)); }
+      cuts[cuts.length - 1] = s.len;
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const x0 = s.x + s.dx * cuts[k], y0 = s.y + s.dy * cuts[k];
+        const x1 = s.x + s.dx * cuts[k + 1] + s.across[0] * b, y1 = s.y + s.dy * cuts[k + 1] + s.across[1] * b;
+        const rx = Math.min(x0, x1), ry = Math.min(y0, y1), rw = Math.abs(x1 - x0), rh = Math.abs(y1 - y0);
+        ctx.fillStyle = accent;
+        ctx.fillRect(rx, ry, rw, rh);
+        const shade = r() * 0.28;
+        ctx.fillStyle = `rgba(30,24,18,${shade.toFixed(3)})`;
+        ctx.fillRect(rx, ry, rw, rh);
+        // Lit from the north-west, like every symbol in the pack.
+        ctx.fillStyle = 'rgba(255,255,255,.22)';
+        ctx.fillRect(rx, ry, rw, Math.max(1, b * 0.1));
+        ctx.fillRect(rx, ry, Math.max(1, b * 0.1), rh);
+        ctx.strokeStyle = ink;
+        ctx.strokeRect(rx, ry, rw, rh);
+      }
+    }
+    for (const c of frameCorners(g.outer, g.inner, w, h)) {
+      ctx.fillStyle = accent; ctx.fillRect(c.x, c.y, c.b, c.b);
+      ctx.fillStyle = 'rgba(30,24,18,.35)'; ctx.fillRect(c.x, c.y, c.b, c.b);
+      ctx.strokeStyle = ink; ctx.strokeRect(c.x, c.y, c.b, c.b);
+    }
+    ctx.lineWidth = Math.max(1.5, b * 0.12);
+    ctx.beginPath(); frameRect(ctx, g.outer, w, h); ctx.stroke();
+    ctx.beginPath(); frameRect(ctx, g.inner, w, h); ctx.stroke();
+  },
+};
+
+function lozenge(ctx, cx, cy, rx, ry, ink, accent, b) {
+  ctx.beginPath();
+  ctx.moveTo(cx - rx, cy); ctx.lineTo(cx, cy - ry); ctx.lineTo(cx + rx, cy); ctx.lineTo(cx, cy + ry);
+  ctx.closePath();
+  ctx.fillStyle = accent; ctx.fill();
+  ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1, b * 0.1); ctx.stroke();
+}
+
+function renderFrame(layer, ctx) {
+  const w = view.doc.width, h = view.doc.height;
+  const g = frameBand(layer, w, h);
+  const ink = frameValue(layer, 'color'), accent = frameValue(layer, 'accent');
+  if (g.inner * 2 >= Math.min(w, h)) return;
+  ctx.save();
+  // The mat: the margin outside the band, filled so the land stops at the
+  // frame instead of running on underneath it to the edge of the sheet.
+  if (frameValue(layer, 'mat') && g.outer > 0) {
+    ctx.fillStyle = accent;
+    ctx.beginPath(); ctx.rect(0, 0, w, h); frameRect(ctx, g.outer, w, h);
+    ctx.fill('evenodd');
+  }
+  ctx.lineJoin = 'miter';
+  FRAME_DRAW[frameValue(layer, 'style')](ctx, g, w, h, ink, accent);
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------- notes */
 
 /* A numbered pin, drawn the same way on the map and in the exported key so
@@ -2109,7 +2362,7 @@ export function flatten({ scale = 1, grid = true, paper = true, lights = true, n
     if (layer.kind === 'group') continue;
     if (!layerVisible(view.doc, layer)) continue;
     if (layer.kind === 'grid' && !grid) continue;
-    if (layer.kind === 'paper' && !paper) continue;
+    if ((layer.kind === 'paper' || layer.kind === 'frame') && !paper) continue;
     if (layer.kind === 'lights' && !lights) continue;
     if (layer.kind === 'notes' && !notes) continue;
     if (players && !forPlayers(layer)) continue;

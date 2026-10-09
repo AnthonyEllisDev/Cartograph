@@ -30,6 +30,8 @@ export const ICONS = {
   group: P('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   grid: P('<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>'),
   paper: P('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+  frame: P('<rect x="3" y="3" width="18" height="18" rx="1"/><rect x="7" y="7" width="10" height="10"/>'
+          + '<path d="M3 3l4 4M21 3l-4 4M3 21l4-4M21 21l-4-4"/>'),
   trash: P('<path d="M4 7h16"/><path d="M9 7V5h6v2"/><rect x="6" y="7" width="12" height="14" rx="2"/>'),
   up: P('<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>'),
   down: P('<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>'),

@@ -786,6 +786,7 @@ function renderLayerProps() {
         + 'the scale and the measure tool count in.' }));
     }
   }
+  if (layer.kind === 'frame') renderFrameProps(root, layer);
   if (layer.kind === 'paper') {
     root.appendChild(field({ type: 'range', label: 'Vignette', min: 0, max: 1, step: 0.01,
       value: layer.vignette, percent: true, commit: true },
@@ -796,10 +797,10 @@ function renderLayerProps() {
   }
 
   const acts = el('div', { class: 'row' });
-  if (layer.kind !== 'group') {
+  if (layer.kind !== 'group' && layer.kind !== 'frame') {
     acts.appendChild(el('button', { class: 'btn', text: 'Clear', onclick: () => clearLayer(layer) }));
   }
-  if (layer.kind === 'raster' || layer.kind === 'group') {
+  if (layer.kind === 'raster' || layer.kind === 'group' || layer.kind === 'frame') {
     acts.appendChild(el('button', {
       class: 'btn btn-danger', text: 'Delete layer', onclick: () => deleteLayer(layer),
     }));
@@ -899,6 +900,89 @@ export function insertLayer(layer) {
   return layer;
 }
 
+/* ------------------------------------------------------------------ frame */
+
+/** Put a frame round the map: one per map, on top of everything but the note
+ *  pins, which have to stay readable over it. Undoable, as deleting it is. */
+export function addFrame() {
+  if (!app.doc) return null;
+  const had = app.doc.layers.find((l) => l.kind === 'frame');
+  if (had) {
+    setActiveLayer(had.id);
+    toast('This map already has a frame -- its settings are in the Layers panel');
+    return had;
+  }
+  const layer = makeLayer('frame');
+  let at = app.doc.layers.length;
+  while (at > 0 && app.doc.layers[at - 1].kind === 'notes') at--;
+  const was = app.activeLayerId;
+  const put = () => {
+    app.doc.layers.splice(at, 0, layer);
+    R.rebuildLayer(layer);
+    R.compositeAll(); R.requestDraw();
+    setActiveLayer(layer.id);
+  };
+  const take = () => {
+    const i = app.doc.layers.indexOf(layer);
+    if (i >= 0) app.doc.layers.splice(i, 1);
+    R.forgetLayer(layer.id);
+    if (app.activeLayerId === layer.id) app.activeLayerId = was;
+    R.compositeAll(); R.requestDraw();
+    emit('layers');
+  };
+  put();
+  pushEntry({ label: 'Add frame', bytes: 0, undo: take, redo: put });
+  markDirty(); scheduleAutosave();
+  return layer;
+}
+
+/* The frame's panel. Every change is one undo entry holding the one field it
+ * touched, as the walls' hatching does, and a change to nothing makes none. */
+function renderFrameProps(root, layer) {
+  const set = (key, value, label) => {
+    const was = layer[key];
+    if (was === value) return;
+    const put = (v) => {
+      if (v === undefined) delete layer[key]; else layer[key] = v;
+      R.invalidate(layer); R.requestDraw();
+      if (activeLayer() === layer) renderLayerProps();
+    };
+    put(value);
+    pushEntry({ label, bytes: 0, undo() { put(was); }, redo() { put(value); } });
+    markDirty(); scheduleAutosave();
+  };
+  const v = (key) => R.frameValue(layer, key);
+  root.appendChild(el('h3', { text: 'Frame' }));
+  const style = field({ type: 'select', label: 'Style', value: v('style'),
+    options: Object.entries(R.FRAME_STYLES).map(([id, s]) => [id, s.label]) },
+    (x) => set('style', x, 'Frame style'));
+  style.dataset.frame = 'style';
+  root.appendChild(style);
+  const size = field({ type: 'range', label: 'Width', min: 0.4, max: 3, step: 0.05,
+    value: v('size'), suffix: '×', commit: true }, (x) => set('size', x, 'Frame width'));
+  size.dataset.frame = 'size';
+  root.appendChild(size);
+  const margin = field({ type: 'range', label: 'Margin', min: 0, max: 4, step: 0.05,
+    value: v('margin'), suffix: '×', commit: true }, (x) => set('margin', x, 'Frame margin'));
+  margin.dataset.frame = 'margin';
+  root.appendChild(margin);
+  const mat = field({ type: 'toggle', label: 'Fill the margin', value: v('mat') },
+    (x) => set('mat', x, x ? 'Frame margin filled' : 'Frame margin open'));
+  mat.dataset.frame = 'mat';
+  root.appendChild(mat);
+  const ink = field({ type: 'color', label: 'Ink', value: v('color'), commit: true },
+    (x) => set('color', x, 'Frame ink'));
+  ink.dataset.frame = 'color';
+  root.appendChild(ink);
+  const accent = field({ type: 'color', label: 'Ground', value: v('accent'), commit: true },
+    (x) => set('accent', x, 'Frame ground'));
+  accent.dataset.frame = 'accent';
+  root.appendChild(accent);
+  root.appendChild(el('p', { class: 'empty', text:
+    'Measured from the short side of the map, so the frame keeps its shape when the canvas is '
+    + 'resized. Leave "Include the paper and border" unticked on export to leave it off.' }));
+}
+
 /* The "+" adds a paint layer, which is what it wants to do nine times in ten.
  * Once an extension has taught the program another kind of layer, it asks. */
 async function addLayerClicked() {
@@ -907,6 +991,7 @@ async function addLayerClicked() {
   const choice = el('select', {}, [
     el('option', { value: 'raster', text: 'Paint layer' }),
     el('option', { value: 'group', text: 'Group — a folder for other layers' }),
+    el('option', { value: 'frame', text: 'Frame — a decorative border round the map' }),
   ].concat(kinds.map((k) => el('option', { value: k.id, text: k.label || k.id }))));
   let go = false;
   await modal({
@@ -918,6 +1003,7 @@ async function addLayerClicked() {
   if (!go) return;
   if (choice.value === 'raster') return addPaintLayer();
   if (choice.value === 'group') return addGroup();
+  if (choice.value === 'frame') return addFrame();
   const kind = kinds.find((k) => k.id === choice.value);
   try {
     const layer = kind.make();

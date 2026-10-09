@@ -139,6 +139,10 @@ api.registerLayerKind({
 });
 ```
 
+An id the program already uses for a layer of its own -- `paper`, `frame`,
+`walls` and the rest -- is refused with an error, which the Extensions tab
+shows. Before 2026-10-08 it was accepted and quietly broke the built-in kind.
+
 Unlike tool ids, layer-kind ids are **not** namespaced for you: the id goes
 into `project.json` verbatim, so a map keeps working if you rename your
 extension, and breaks if two extensions pick the same word. Give `make()` and

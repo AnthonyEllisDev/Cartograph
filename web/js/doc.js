@@ -23,6 +23,7 @@ export const LAYER_KINDS = {
   group:   { label: 'Group',    paint: false, icon: 'group' },
   grid:    { label: 'Grid',     paint: false, icon: 'grid'  },
   paper:   { label: 'Paper',    paint: false, icon: 'paper' },
+  frame:   { label: 'Frame',    paint: false, icon: 'frame' },
 };
 
 /** The entry for a layer's kind, or a usable stand-in.
@@ -96,6 +97,12 @@ export function makeLayer(kind, extra = {}) {
     texture: 'starter/parchment', scale: 2, opacity: 0.42, blend: 'multiply',
     vignette: 0.35, edge: 0.4,
   });
+  // Mirrors render.FRAME_DEFAULTS, which doc.js cannot import without a cycle;
+  // the renderer defaults every field again, so the two can only disagree
+  // about what a brand-new frame looks like, never about a saved one.
+  if (kind === 'frame') Object.assign(base, {
+    style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
+  });
   return Object.assign(base, extra);
 }
 
@@ -146,6 +153,7 @@ const LAYER_RECIPES = {
   notes: () => makeLayer('notes', { pinSize: NOTE_DEFAULTS.pinSize, showTitles: false }),
   grid: () => makeLayer('grid'),
   paper: () => makeLayer('paper'),
+  frame: () => makeLayer('frame'),
 };
 
 export function newDocument(opts = {}) {
