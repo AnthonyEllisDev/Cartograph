@@ -1780,17 +1780,39 @@ export const FRAME_STYLES = {
   stone:  { label: 'Stone blocks' },
 };
 
-export const FRAME_DEFAULTS = {
-  style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
+/* Where the title cartouche sits. Top and bottom straddle the frame's band,
+ * as the plate on an atlas sheet does; the corners sit just inside it. 'none'
+ * is the default, so a frame saved before cartouches existed draws as it did. */
+export const CARTOUCHE_PLACES = {
+  none:           { label: 'No title' },
+  top:            { label: 'Top, across the frame' },
+  bottom:         { label: 'Bottom, across the frame' },
+  'top-left':     { label: 'Top left, inside' },
+  'top-right':    { label: 'Top right, inside' },
+  'bottom-left':  { label: 'Bottom left, inside' },
+  'bottom-right': { label: 'Bottom right, inside' },
 };
 
-const FRAME_RANGE = { size: [0.4, 3], margin: [0, 4] };
+export const FRAME_DEFAULTS = {
+  style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
+  cartouche: 'none', title: '', subtitle: '', titleSize: 1,
+};
+
+const FRAME_RANGE = { size: [0.4, 3], margin: [0, 4], titleSize: [0.5, 2] };
+
+// Long enough for any real title; short enough that a pasted paragraph does
+// not become a plate wider than the map.
+const CARTOUCHE_MAX_CHARS = 80;
 
 /** A frame field as the renderer will use it: defaulted, and held to range so
  *  a hand-edited file cannot ask for a band wider than the map. */
 export function frameValue(layer, key) {
   const v = layer[key];
   if (key === 'style') return FRAME_STYLES[v] ? v : FRAME_DEFAULTS.style;
+  if (key === 'cartouche') return Object.hasOwn(CARTOUCHE_PLACES, v) ? v : FRAME_DEFAULTS.cartouche;
+  if (key === 'title' || key === 'subtitle') {
+    return typeof v === 'string' ? Array.from(v.trim()).slice(0, CARTOUCHE_MAX_CHARS).join('') : '';
+  }
   if (key === 'mat') return v === undefined ? FRAME_DEFAULTS.mat : !!v;
   if (FRAME_RANGE[key]) {
     return Number.isFinite(v) ? clamp(v, FRAME_RANGE[key][0], FRAME_RANGE[key][1]) : FRAME_DEFAULTS[key];
@@ -2010,6 +2032,183 @@ function renderFrame(layer, ctx) {
   ctx.lineJoin = 'miter';
   FRAME_DRAW[frameValue(layer, 'style')](ctx, g, w, h, ink, accent);
   ctx.restore();
+  const plate = cartoucheBox(layer, view.doc);
+  if (plate) {
+    ctx.save();
+    drawCartouche(ctx, plate, frameValue(layer, 'style'), ink, accent);
+    ctx.restore();
+  }
+}
+
+/* ---------------------------------------------------------------- cartouche */
+
+/* The title plate. It belongs to the frame rather than being a label because
+ * it is laid out from the frame -- across its band, or tucked inside it -- and
+ * drawn in the frame's style and colours, so changing the frame changes both.
+ *
+ * With no title of its own it shows the map's name. That is read at draw time
+ * and never copied into the layer, so the two cannot disagree; the one thing
+ * that has to happen is that renaming the map redraws the frame, which the
+ * name field does through frameFollowsName(). */
+
+/** What the plate says: its own title, or the map's name. */
+export function cartoucheText(layer, doc) {
+  const own = frameValue(layer, 'title');
+  if (own) return own;
+  return Array.from(String((doc && doc.name) || '').trim()).slice(0, CARTOUCHE_MAX_CHARS).join('');
+}
+
+/** Whether this frame's picture depends on the map's name. */
+export function frameFollowsName(layer) {
+  return layer.kind === 'frame' && frameValue(layer, 'cartouche') !== 'none' && !frameValue(layer, 'title');
+}
+
+let measureCtx = null;
+
+/** Where the plate goes and how its text is set, or null for no plate.
+ *  Exported for the tests, which look for it by its pixels. */
+export function cartoucheBox(layer, doc) {
+  const place = frameValue(layer, 'cartouche');
+  if (place === 'none') return null;
+  const title = cartoucheText(layer, doc);
+  const sub = frameValue(layer, 'subtitle');
+  if (!title && !sub) return null;
+  const w = doc.width, h = doc.height;
+  const g = frameBand(layer, w, h);
+  if (g.inner * 2 >= Math.min(w, h)) return null;
+  const across = place === 'top' || place === 'bottom';
+  // The widest the plate may be: most of the map across the top or bottom,
+  // under half of it in a corner, so two corners never meet.
+  const room = (w - 2 * g.inner) * (across ? 0.8 : 0.44);
+  if (!measureCtx) measureCtx = makeCanvas(4, 4).getContext('2d');
+  const m = measureCtx;
+  const style = LABEL_STYLES.title;
+  let size = g.unit * 2.2 * frameValue(layer, 'titleSize');
+  const measure = (px) => {
+    m.font = style.font.replace('%s', px.toFixed(2));
+    const tw = title ? spacedWidth(m, title, px * style.spacing) : 0;
+    m.font = 'italic 400 ' + (px * 0.46).toFixed(2) + 'px Georgia, "Times New Roman", serif';
+    const sw = sub ? spacedWidth(m, sub, px * 0.46 * 0.08) : 0;
+    return Math.max(tw, sw);
+  };
+  let text = measure(size);
+  const padX = () => size * 1.1;
+  // Shrink a title that will not fit rather than let the plate run off the
+  // map; never below a size that still reads at print scale.
+  if (text + padX() * 2 > room) {
+    size = Math.max(g.unit * 0.6, size * (room / (text + padX() * 2)));
+    text = measure(size);
+  }
+  const bw = Math.min(room, text + padX() * 2);
+  const bh = size * (title && sub ? 2.2 : 1.7);
+  // The ornate plate's ribbon ends show past its sides; a corner plate is
+  // moved in by that much so they do not lie over the band.
+  const tail = frameValue(layer, 'style') === 'ornate' ? bh * 0.52 : 0;
+  const inset = g.inner + g.unit * 1.2 + tail;
+  let x, y;
+  if (across) {
+    x = (w - bw) / 2;
+    // Centred on the band's middle line and pushed a quarter of its own
+    // height inwards, so it overlaps the band without leaving the sheet.
+    const mid = g.outer + g.band / 2;
+    y = place === 'top' ? Math.max(0, mid - bh * 0.25) : Math.min(h - bh, h - mid - bh * 0.75);
+  } else {
+    x = place.endsWith('left') ? inset : w - inset - bw;
+    y = place.startsWith('top') ? inset : h - inset - bh;
+  }
+  return { x, y, w: bw, h: bh, size, title, sub, place };
+}
+
+function spacedWidth(ctx, text, px) {
+  const chars = Array.from(text);
+  return chars.reduce((a, ch) => a + ctx.measureText(ch).width, 0) + px * Math.max(0, chars.length - 1);
+}
+
+/* One plate, five dresses: each frame style gives the plate the same edge the
+ * band has, so a map never has a stone frame round a rope-edged title. */
+function drawCartouche(ctx, p, style, ink, accent) {
+  const { x, y, w, h, size } = p;
+  const lw = Math.max(1.5, size * 0.07);
+  ctx.lineJoin = 'miter';
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = accent;
+  if (style === 'ornate') {
+    // A scroll: the plate, with a swallow-tailed end showing behind it on
+    // each side and the roll of the ribbon where it turns under.
+    const r = h * 0.32;
+    for (const side of [-1, 1]) {
+      const cx = side < 0 ? x : x + w;
+      ctx.beginPath();
+      ctx.moveTo(cx, y + h * 0.18);
+      ctx.lineTo(cx + side * r * 1.6, y + h * 0.18 + r * 0.4);
+      ctx.lineTo(cx + side * r * 0.9, y + h * 0.5 + r * 0.2);
+      ctx.lineTo(cx + side * r * 1.6, y + h * 0.82 + r * 0.4);
+      ctx.lineTo(cx, y + h * 0.82 + r * 0.4);
+      ctx.closePath();
+      ctx.fill(); ctx.lineWidth = lw; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, y + h * 0.82 + r * 0.05, r * 0.36, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.fill(); ctx.lineWidth = lw * 1.3; ctx.stroke();
+    ctx.lineWidth = lw * 0.6;
+    ctx.beginPath(); ctx.rect(x + size * 0.22, y + size * 0.22, w - size * 0.44, h - size * 0.44); ctx.stroke();
+    for (const side of [-1, 1]) {
+      const cx = side < 0 ? x + size * 0.22 : x + w - size * 0.22;
+      lozenge(ctx, cx, y + h / 2, size * 0.2, size * 0.32, ink, accent, size * 0.5);
+    }
+  } else if (style === 'rope') {
+    const r = Math.min(h / 2, size * 0.6);
+    roundRect(ctx, x, y, w, h, r); ctx.fill();
+    ctx.lineWidth = lw * 2.2; ctx.stroke();
+    ctx.strokeStyle = accent; ctx.lineWidth = lw * 0.8; ctx.setLineDash([lw * 1.6, lw * 2.2]);
+    roundRect(ctx, x, y, w, h, r); ctx.stroke();
+    ctx.setLineDash([]); ctx.strokeStyle = ink;
+    ctx.lineWidth = lw * 0.6;
+    roundRect(ctx, x + size * 0.25, y + size * 0.25, w - size * 0.5, h - size * 0.5, r * 0.6); ctx.stroke();
+  } else if (style === 'stone') {
+    // A tablet with a bevelled edge, lit from the north-west like the band.
+    const b = Math.min(h * 0.18, size * 0.3);
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,.28)';
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w - b, y + b);
+    ctx.lineTo(x + b, y + b); ctx.lineTo(x + b, y + h - b); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(30,24,18,.3)';
+    ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x + b, y + h - b);
+    ctx.lineTo(x + w - b, y + h - b); ctx.lineTo(x + w - b, y + b); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = lw; ctx.strokeRect(x, y, w, h); ctx.strokeRect(x + b, y + b, w - 2 * b, h - 2 * b);
+  } else {
+    ctx.fillRect(x, y, w, h);
+    ctx.lineWidth = lw * 1.4; ctx.strokeRect(x, y, w, h);
+    ctx.lineWidth = lw * 0.6;
+    const i = size * 0.2;
+    ctx.strokeRect(x + i, y + i, w - 2 * i, h - 2 * i);
+    if (style === 'atlas') {
+      // The corner blocks of the band, repeated small on the plate.
+      ctx.fillStyle = ink;
+      const c = size * 0.36;
+      for (const [cx, cy] of [[x, y], [x + w - c, y], [x, y + h - c], [x + w - c, y + h - c]]) ctx.fillRect(cx, cy, c, c);
+    }
+  }
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const st = LABEL_STYLES.title;
+  const cx = x + w / 2;
+  if (p.title) {
+    ctx.save();
+    ctx.translate(cx, y + (p.sub ? h * 0.4 : h / 2));
+    ctx.font = st.font.replace('%s', size.toFixed(2));
+    drawSpaced(ctx, spaceOut(p.title, size * st.spacing), false);
+    ctx.restore();
+  }
+  if (p.sub) {
+    const ss = size * 0.46;
+    ctx.save();
+    ctx.translate(cx, p.title ? y + h * 0.76 : y + h / 2);
+    ctx.font = 'italic 400 ' + ss.toFixed(2) + 'px Georgia, "Times New Roman", serif';
+    drawSpaced(ctx, spaceOut(p.sub, ss * 0.08), false);
+    ctx.restore();
+  }
 }
 
 /* ------------------------------------------------------------------- notes */

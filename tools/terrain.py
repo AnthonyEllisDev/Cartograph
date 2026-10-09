@@ -182,6 +182,24 @@ TERRAINS = {
         dark=[(44, 50, 48), (62, 70, 66), (82, 92, 86)],
         grout=(150, 144, 132), tiles=4,
         grain=[]),
+    # Three more, for the rest of a settlement and the cold places past it:
+    # dressed sandstone for a desert temple, straw for a stable or a barn, and
+    # a frozen lake. Added 2026-10-09 (art version 5).
+    "sandstone": dict(
+        group="floor", label="Sandstone Blocks", pattern="ashlar",
+        stops=[(176, 132, 82), (202, 160, 106), (226, 190, 136)],
+        grout=(120, 88, 56), courses=(4, 6), blocks=(2, 3), strata=7,
+        grain=[(140, (156, 112, 70), 0.12, 0.4, 1.3), (60, (236, 208, 160), 0.10, 0.5, 1.4)]),
+    "straw": dict(
+        group="floor", label="Straw", pattern="straw",
+        stops=[(150, 118, 58), (186, 152, 80), (214, 184, 110)],
+        strands=1400, light=(236, 210, 136), dark=(112, 84, 40),
+        grain=[]),
+    "ice": dict(
+        group="land", label="Frozen Lake", pattern="ice",
+        stops=[(150, 186, 206), (190, 218, 232), (226, 240, 248)],
+        deep=(92, 140, 170), crack=(248, 252, 255), cracks=14,
+        grain=[(60, (255, 255, 255), 0.18, 0.8, 2.4)]),
 }
 
 
@@ -507,8 +525,146 @@ def _marble(spec, size, rng):
     return px
 
 
+def _ashlar(spec, size, rng):
+    """Dressed sandstone: courses of differing heights, long blocks with tight
+    joints, and the bedding of the stone running through each one.
+
+    A course's height is a share of the tile and the shares add up to it, so
+    the courses meet themselves at the seam; the bedding is a sine at a whole
+    number of periods for the same reason."""
+    lo, mid, hi = spec["stops"]
+    rows = rng.randint(*spec["courses"])
+    shares = [rng.uniform(0.7, 1.3) for _ in range(rows)]
+    total = sum(shares)
+    tops, at = [], 0.0
+    for sh in shares:
+        tops.append(at)
+        at += size * sh / total
+    tops.append(float(size))
+    courses = []
+    for r in range(rows):
+        rh = tops[r + 1] - tops[r]
+        n = rng.randint(*spec["blocks"])
+        # Blocks longer than they are high, as far as the tile allows: at a
+        # small tile size the longer rule cannot be met at all, and a
+        # rejection loop with no way out is a launch that never finishes.
+        need = min(rh * 1.2, size / n * 0.6)
+        cuts = sorted(rng.uniform(0, size) for _ in range(n))
+        tries = 0
+        while any(_wrap_gap(a, b, size) < need for a, b in zip(cuts, cuts[1:] + cuts[:1])):
+            tries += 1
+            if tries > 200:
+                start = rng.uniform(0, size)
+                cuts = sorted((start + k * size / n) % size for k in range(n))
+                break
+            cuts = sorted(rng.uniform(0, size) for _ in range(n))
+        courses.append((cuts, [rng.random() for _ in cuts], [rng.random() for _ in cuts]))
+    tone = fbm(size, 4, 4, rng)
+    bend = fbm(size, 4, 3, rng)
+    strata = spec["strata"]
+    px = bytearray(size * size * 4)
+    r = 0
+    for y in range(size):
+        while y >= tops[r + 1]:
+            r += 1
+        top = y - tops[r]
+        bottom = tops[r + 1] - y
+        cuts, tones, phases = courses[r]
+        for x in range(size):
+            i = y * size + x
+            k = 0
+            while k < len(cuts) and cuts[k] <= x:
+                k += 1
+            blk = (k - 1) % len(cuts)
+            left = min(_wrap_gap(x, c, size) for c in cuts)
+            edge = min(left, top, bottom)
+            if edge < 1.1:
+                _put(px, i, spec["grout"])
+                continue
+            # Each block was cut from its own part of the bed, so its layers
+            # are its own phase of the same banding.
+            band = math.sin(2 * math.pi * (strata * y / size + phases[blk] + (bend[i] - 0.5) * 0.8))
+            v = clamp(0.5 + (tones[blk] - 0.5) * 0.6 + (tone[i] - 0.5) * 0.5 + band * 0.2)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if edge < 3.5:
+                k2 = 1.0 - edge / 3.5
+                rgb = _shade(rgb, 0.14 * k2 if edge == top else -0.18 * k2)
+            _put(px, i, rgb)
+    return px
+
+
+def _line(px, size, x0, y0, x1, y1, rgb, alpha):
+    """A one-pixel line composited over the tile, wrapping at its edges."""
+    n = int(max(abs(x1 - x0), abs(y1 - y0)) * 1.5) + 1
+    for s in range(n + 1):
+        t = s / n
+        x = int(round(x0 + (x1 - x0) * t)) % size
+        y = int(round(y0 + (y1 - y0) * t)) % size
+        j = (y * size + x) * 4
+        px[j] = int(px[j] + (rgb[0] - px[j]) * alpha)
+        px[j + 1] = int(px[j + 1] + (rgb[1] - px[j + 1]) * alpha)
+        px[j + 2] = int(px[j + 2] + (rgb[2] - px[j + 2]) * alpha)
+
+
+def _straw(spec, size, rng):
+    """Loose straw on a floor: a bed of it in shadow, then strands laid over
+    in no order, each a stalk with a lit side and a shadowed one."""
+    lo, mid, hi = spec["stops"]
+    field = fbm(size, 6, 4, rng)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = clamp(0.5 + (field[i] - 0.5) * 1.4)
+        _put(px, i, mix_rgb(lo, mid, v))
+    # A loose drift: most strands lie roughly one way, as straw does when it
+    # has been forked across a floor, and the rest any way at all.
+    drift = rng.uniform(0, math.pi)
+    for _ in range(spec["strands"]):
+        a = drift + rng.gauss(0, 0.5) if rng.random() < 0.7 else rng.uniform(0, math.pi)
+        ln = rng.uniform(7, 22)
+        x, y = rng.random() * size, rng.random() * size
+        dx, dy = math.cos(a) * ln / 2, math.sin(a) * ln / 2
+        nx, ny = -math.sin(a), math.cos(a)
+        _line(px, size, x - dx + nx, y - dy + ny, x + dx + nx, y + dy + ny, spec["dark"], 0.35)
+        _line(px, size, x - dx, y - dy, x + dx, y + dy,
+              hi if rng.random() < 0.5 else spec["light"], rng.uniform(0.55, 0.9))
+    return px
+
+
+def _ice(spec, size, rng):
+    """A frozen lake: clear ice over dark water in patches, snow-dust where it
+    is white, and cracks that run and fork, each with a pale lip and a dark
+    underside where the light catches the break."""
+    lo, mid, hi = spec["stops"]
+    field = warp(fbm(size, 3, 5, rng), size, fbm(size, 6, 3, rng), fbm(size, 6, 3, rng), size * 0.05)
+    clear = fbm(size, 2, 3, rng)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = clamp(0.5 + (field[i] - 0.5) * 1.8)
+        rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+        if clear[i] < 0.42:
+            rgb = mix_rgb(rgb, spec["deep"], min(0.6, (0.42 - clear[i]) * 4.0))
+        _put(px, i, rgb)
+    for _ in range(spec["cracks"]):
+        x, y = rng.random() * size, rng.random() * size
+        a = rng.uniform(0, math.pi * 2)
+        stack = [(x, y, a, rng.randint(6, 14))]
+        while stack:
+            x, y, a, steps = stack.pop()
+            for _ in range(steps):
+                a += rng.gauss(0, 0.35)
+                ln = rng.uniform(4, 9)
+                x1, y1 = x + math.cos(a) * ln, y + math.sin(a) * ln
+                _line(px, size, x, y, x1, y1, spec["deep"], 0.7)
+                _line(px, size, x - 1, y - 1, x1 - 1, y1 - 1, spec["crack"], 0.8)
+                if rng.random() < 0.12 and len(stack) < 6:
+                    stack.append((x1, y1, a + rng.choice((-1, 1)) * rng.uniform(0.6, 1.2), rng.randint(2, 6)))
+                x, y = x1, y1
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
-            "brick": _brick, "carpet": _carpet, "marble": _marble}
+            "brick": _brick, "carpet": _carpet, "marble": _marble,
+            "ashlar": _ashlar, "straw": _straw, "ice": _ice}
 
 
 def render(name, size, seed):

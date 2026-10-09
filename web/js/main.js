@@ -82,6 +82,13 @@ function wireTopbar() {
   nameField.addEventListener('change', () => {
     if (!app.doc) return;
     app.doc.name = nameField.value.trim() || 'Untitled Map';
+    // A frame whose cartouche shows the map's name reads it when it draws,
+    // so it has to be drawn again; nothing else on the map depends on it.
+    // The panel is redrawn too, for the title field's placeholder, which
+    // shows the name the plate is following.
+    const framed = app.doc.layers.filter((l) => R.frameFollowsName(l));
+    for (const layer of framed) R.invalidate(layer);
+    if (framed.length) emit('layers');
     markDirty(); scheduleAutosave();
   });
 

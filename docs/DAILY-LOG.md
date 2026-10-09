@@ -5,6 +5,111 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-09 -- a title cartouche on the frame, and the camp art
+
+Anthony's working copy matched `origin/main` byte for byte across all 93
+tracked files but the `.pyc`s (staged and compared with line endings
+normalised; the `.pyc`s by size). A feature day.
+
+**Baseline: green.** Every suite passed before anything was changed: verify
+82, lighting 29, hex 27, pro 25, ext 17, theme 16, labels 8, brushes 8, regions
+25, notes 36, generate 27, dungeon 34, props 37, guards 66, regress 135,
+clipboard 40, selection 43, prefabs 41, transform 52, hatch 32, print 29,
+players 31, setedit 21, art 17, caverns 25, backups 21, frames 34, plus
+`battle`. (The counts in the scheduled prompt -- pro 24, ext 16 -- are a day
+or two stale; these are the real ones.) The second half of the baseline ran
+against a pristine checkout of `HEAD` on its own port, because this run's first
+edits landed while the first half was still running against the working tree.
+`guards.mjs` has to be run from the folder the server under test is serving --
+it writes its malformed files beside itself -- and failed with `ENOENT` the
+one time it was not; noted for the next run.
+
+**Review.** `node --check` passed on every module and test; the non-ASCII scan
+of the day's diff found nothing. Read again: yesterday's frame code end to end
+(`frameValue`, `frameBand`, `frameSides`, the five drawers, `renderFrame`,
+`addFrame` and its undo, `renderFrameProps`), the extension host's new
+built-in-kind guard, and the Ctrl-key handler in `main.js`. Nothing new found;
+the frame's only randomness is still the fixed `rng(0x5713)`, every panel
+change is one entry, and `flatten({ paper: false })` leaves it off. Written up
+again rather than changed: Ctrl+S/E/P/N still act while a dialog is up (the
+dialog is settled as cancelled by `modal()`, so nothing is lost; whether Ctrl+S
+should save behind a dialog is a design call), and the items on yesterday's
+list. One trap of the run's own making: `node --check` does not catch a second
+top-level `function roundRect` in a module -- the browser refuses the whole
+module at load. The editor would not boot; the first test run said so in
+thirty seconds. A helper name new to `render.js` wants a grep first.
+
+**The feature: a title cartouche.** Research: cartouches, banners and compass
+roses are sold together as asset packs for Wonderdraft and Inkarnate, and the
+title plate is the one of the three Cartograph lacked (there is a compass rose
+stamp; there are frames since yesterday). Yesterday's entry named it as the
+natural second slice of frames. It lives **on the frame layer**, not as a
+label, because it is laid out from the frame and dressed in its style:
+
+- `cartouche` is one of `CARTOUCHE_PLACES` -- `none` (the default, so a frame
+  saved yesterday draws exactly as it did; checked), `top` and `bottom`
+  (centred, straddling the band, a quarter of the plate outside its middle
+  line), and the four corners (just inside the band). `title`, `subtitle` and
+  `titleSize` (0.5-2) beside it, all through `frameValue`, so a hand-edited
+  file is held to sense (80 characters, a known place).
+- **With no title of its own the plate shows the map's name**, read at draw
+  time by `cartoucheText` and never copied into the layer -- the
+  value-in-two-places class designed out. What that leaves is one route that
+  must redraw: the project-name field in `main.js` invalidates every frame
+  `frameFollowsName` names, and re-renders the panel so the title field's
+  placeholder follows. Opening, restoring and new maps rebuild every layer
+  anyway. The suite checks that after a rename the canvas on screen is exactly
+  what a fresh `rebuildLayer` draws.
+- `cartoucheBox(layer, doc)` is the one layout, used by the renderer and
+  exported for the tests. A title too wide for its room (80% of the map across
+  the top or bottom, 44% in a corner, so two corners cannot meet) is set smaller
+  rather than allowed off the map. The ornate plate's ribbon ends stand past its
+  sides, so a corner plate in that style is moved in by their width.
+- Five dresses, one per frame style: plain double rule, atlas (corner blocks),
+  ornate (a swallow-tailed ribbon scroll with lozenges), rope (a corded rounded
+  edge) and stone (a bevelled tablet lit from the north-west). Lettering is
+  `LABEL_STYLES.title` with `drawSpaced`, as the Label tool's titles are.
+- Panel: *Title cartouche* under the frame's settings, fields carrying
+  `data-frame="cartouche|title|subtitle|titleSize"`, each change one undo entry
+  through the existing `set`. A blank or all-space title is stored as no title,
+  so it goes back to following the name rather than drawing an empty plate.
+- The first screenshot showed the ornate scroll's tails drawn inwards, hidden
+  behind the plate (a sign error in the side vector); fixed and looked at again.
+
+Rejected: coordinate ticks on the atlas band (useful, but wants the grid's
+lattice and a decision about hex grids -- another day); `registerExporter`
+(still a no-op, still nobody asking); elevation (as before, too large for a
+day).
+
+**Art version 5.** Three textures and eight symbols, per Anthony's note of
+2026-10-06. Textures: `sandstone` (`_ashlar`: courses of uneven height whose
+shares sum to the tile, long blocks, the stone's bedding a sine at a whole
+number of periods in each block's own phase), `straw` (`_straw`: a shadowed bed
+and 1,400 strands, most lying one way as forked straw does, each with a lit and
+a dark side; group `floor`) and `ice` (`_ice`: clear dark patches in white ice,
+and forking cracks with a pale lip and a dark underside; group `land`, label
+*Frozen Lake*). A wrapping one-pixel `_line` helper in `terrain.py` serves the
+last two. Stamps, new group `camp` (in `VARIED`, three variants each): tent (a
+ridge tent with guy ropes, or a bell tent a third of the time), market stall
+(striped awning over a counter of fruit, cloth or pots), signpost (two to four
+arms), weapon rack (spears, swords and axes across two rails), bedroll (laid
+out, or rolled with a pack), haystack, cart (shafts, wheels edge-on, sacks or
+barrels or empty) and woodpile. Old and new bakes at the same seed: all 159 old
+files byte-identical. Each texture tiled 2 x 2 and looked at; a contact sheet
+of all 24 stamp variants looked at, which caught a two-armed signpost whose arms
+lay straight across each other and read as one plank (a pair is now set 80 to
+140 degrees apart). The first full round caught the worse one: `art.mjs` bakes
+a pack at a 32-px tile, and `_ashlar`'s rejection loop asked for blocks longer
+than a 32-px tile can hold three of -- it never finished, and on a real
+`config.json` with a small `tileSize` the launch would never have finished
+either. The rule is now held to what the tile allows, with a bounded number of
+tries and evenly spaced joints after that; every size from 16 to 512 checked.
+
+**Tests.** New suite `cartouche.mjs`, 39 checks (`npm run cartouche`). Two
+full rounds of all twenty-eight suites back to back, identical and all green:
+997 of 997 each time, plus `battle`. The rename checks were run once with the
+`main.js` handler taken out, and all three failed, as they should.
+
 ## 2026-10-08 -- map frames, the fittings art, and a guard on layer kinds
 
 Anthony's working copy matched `origin/main` byte for byte across the 90

@@ -978,6 +978,36 @@ function renderFrameProps(root, layer) {
     (x) => set('accent', x, 'Frame ground'));
   accent.dataset.frame = 'accent';
   root.appendChild(accent);
+
+  // The title plate. Its settings live on the frame because it is laid out
+  // from the frame and dressed in its style; see render.cartoucheBox.
+  root.appendChild(el('h3', { text: 'Title cartouche' }));
+  const place = field({ type: 'select', label: 'Place', value: v('cartouche'),
+    options: Object.entries(R.CARTOUCHE_PLACES).map(([id, s]) => [id, s.label]) },
+    (x) => set('cartouche', x, 'Cartouche place'));
+  place.dataset.frame = 'cartouche';
+  root.appendChild(place);
+  if (v('cartouche') !== 'none') {
+    // Trimmed before it is stored, so a stray space is not an undo step and
+    // an all-blank title goes back to following the map's name.
+    const text = (x) => x.trim() || undefined;
+    const title = field({ type: 'text', label: 'Title', value: v('title') },
+      (x) => set('title', text(x), 'Cartouche title'));
+    title.dataset.frame = 'title';
+    title.querySelector('input').placeholder = app.doc.name || 'The map\'s name';
+    root.appendChild(title);
+    const sub = field({ type: 'text', label: 'Second line', value: v('subtitle') },
+      (x) => set('subtitle', text(x), 'Cartouche second line'));
+    sub.dataset.frame = 'subtitle';
+    sub.querySelector('input').placeholder = 'Optional -- a region, a date, a scale';
+    root.appendChild(sub);
+    const tsize = field({ type: 'range', label: 'Lettering', min: 0.5, max: 2, step: 0.05,
+      value: v('titleSize'), suffix: '\u00d7', commit: true }, (x) => set('titleSize', x, 'Cartouche lettering'));
+    tsize.dataset.frame = 'titleSize';
+    root.appendChild(tsize);
+    root.appendChild(el('p', { class: 'empty', text:
+      'Leave the title empty to show the map\'s name; renaming the map renames the plate.' }));
+  }
   root.appendChild(el('p', { class: 'empty', text:
     'Measured from the short side of the map, so the frame keeps its shape when the canvas is '
     + 'resized. Leave "Include the paper and border" unticked on export to leave it off.' }));

@@ -102,6 +102,7 @@ export function makeLayer(kind, extra = {}) {
   // about what a brand-new frame looks like, never about a saved one.
   if (kind === 'frame') Object.assign(base, {
     style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
+    cartouche: 'none', titleSize: 1,
   });
   return Object.assign(base, extra);
 }

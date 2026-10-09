@@ -33,7 +33,8 @@ PACK_ID = "starter"
 #   2  2026-10-06: flagstone, floorboards, cobblestones; eight furnishings
 #   3  2026-10-07: cave floor, underground pool, lava; eight underground symbols
 #   4  2026-10-08: brick, carpet, marble tiles; eight fittings
-ART_VERSION = 4
+#   5  2026-10-09: sandstone, straw, frozen lake; eight camp and market symbols
+ART_VERSION = 5
 
 
 def build(out_dir, seed="v1", size=256, log=print):

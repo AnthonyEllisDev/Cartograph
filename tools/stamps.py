@@ -1127,6 +1127,285 @@ def chair(rng):
     return _svg(w, h, "".join(parts))
 
 
+# ---------------------------------------------- the camp and the market
+#
+# What stands outdoors on a battle map: the camp the party walks into, the
+# market square, the road out of town. Plans again, at seventy pixels to five
+# feet, lit from the north-west. Added 2026-10-09 (art version 5).
+
+CANVAS = ["#d9c9a3", "#c2b48c", "#a99c7a", "#b58a5c", "#8c9a7a"]
+HAY = "#d6b25e"
+HAY_LIGHT = "#ecd38c"
+HAY_DARK = "#a8843e"
+
+
+def tent(rng):
+    w = h = 140
+    cloth = rng.choice(CANVAS)
+    if rng.random() < 0.34:
+        # A bell tent: a cone of canvas round one pole, its seams running in.
+        c, r = 70, 54
+        parts = []
+        for k in range(10):
+            a = math.radians(k * 36 + rng.uniform(-4, 4))
+            px, py = c + math.cos(a) * (r + 10), c + math.sin(a) * (r + 10)
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8" opacity="0.7"/>'
+                         % (c + math.cos(a) * r, c + math.sin(a) * r, px, py, INK_SOFT))
+            parts.append('<circle cx="%.1f" cy="%.1f" r="1.6" fill="%s"/>' % (px, py, WOOD_DARK))
+        parts.append('<circle cx="%d" cy="%d" r="%d" fill="%s" stroke="%s" stroke-width="1.4"/>' % (c, c, r, cloth, INK))
+        # The shaded half, away from the light.
+        parts.append('<path d="M%.1f,%.1f A%d,%d 0 0 1 %.1f,%.1f L%d,%d Z" fill="%s" opacity="0.28"/>'
+                     % (c + r * 0.707, c - r * 0.707, r, r, c - r * 0.707, c + r * 0.707, c, c, INK))
+        for k in range(8):
+            a = math.radians(k * 45 + 22.5)
+            parts.append('<line x1="%d" y1="%d" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8" opacity="0.6"/>'
+                         % (c, c, c + math.cos(a) * r, c + math.sin(a) * r, INK_SOFT))
+        # The door flap, tied back.
+        parts.append('<path d="M%d,%d L%d,%d L%d,%d" fill="%s" stroke="%s" stroke-width="1"/>'
+                     % (c - 9, c + r - 2, c, c + r + 8, c + 9, c + r - 2, FILL_DARK, INK))
+        parts.append('<circle cx="%d" cy="%d" r="3.5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (c, c, WOOD_LIGHT, INK))
+        return _svg(w, h, "".join(parts))
+    # A ridge tent: two pitched halves either side of the ridge pole, guy
+    # ropes out to pegs, the flap open at the south end.
+    x0, x1, y0, y1 = 34, 106, 18, 122
+    parts = []
+    for gx, gy, px, py in ((x0, y0 + 10, 8, y0), (x1, y0 + 10, 132, y0), (x0, y1 - 10, 8, y1),
+                           (x1, y1 - 10, 132, y1), (x0, 70, 6, 70), (x1, 70, 134, 70)):
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.8" opacity="0.75"/>'
+                     % (gx, gy, px, py, INK_SOFT))
+        parts.append('<rect x="%d" y="%d" width="3" height="3" fill="%s"/>' % (px - 1, py - 1, WOOD_DARK))
+    parts += [
+        '<rect x="%d" y="%d" width="%d" height="%d" fill="%s" stroke="%s" stroke-width="1.4"/>'
+        % (x0, y0, x1 - x0, y1 - y0, cloth, INK),
+        '<rect x="70" y="%d" width="%d" height="%d" fill="%s" opacity="0.26"/>' % (y0, x1 - 70, y1 - y0, INK),
+        '<line x1="70" y1="%d" x2="70" y2="%d" stroke="%s" stroke-width="2"/>' % (y0 - 4, y1 + 4, WOOD_DARK),
+        '<line x1="%d" y1="%d" x2="68" y2="%d" stroke="%s" stroke-width="1.2" opacity="0.7"/>' % (x0 + 2, y0 + 2, y0 + 2, FILL_LIGHT),
+    ]
+    for k in range(1, 4):
+        y = y0 + (y1 - y0) * k / 4
+        parts.append('<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="%s" stroke-width="0.7" opacity="0.5"/>'
+                     % (x0, y, x1, y, INK_SOFT))
+    parts.append('<path d="M70,%d L%d,%d L70,%d Z" fill="%s" stroke="%s" stroke-width="1"/>'
+                 % (y1, x0 + 8, y1 + 12, y1 - 4, FILL_DARK, INK))
+    if rng.random() < 0.5:
+        parts.append('<path d="M%d,%d l6,6 l-3,3 l-6,-6 Z" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                     % (x1 - 18, y0 + 14, rng.choice(CLOTHS), INK))
+    return _svg(w, h, "".join(parts))
+
+
+def market_stall(rng):
+    w, h = 140, 96
+    cloth = rng.choice(CLOTHS)
+    body, light, dark = _wood(rng)
+    parts = [
+        # The counter and the goods set out on it, south of the awning.
+        '<rect x="8" y="56" width="124" height="30" fill="%s" stroke="%s" stroke-width="1.2"/>' % (body, INK),
+        _boards(8, 56, 124, 30, 2, True, dark, 0.5),
+    ]
+    goods = rng.choice(("fruit", "cloth", "pots"))
+    for k in range(5):
+        cx = 18 + k * 26
+        parts.append('<rect x="%d" y="60" width="22" height="22" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                     % (cx - 4, dark, INK))
+        if goods == "fruit":
+            col = rng.choice(("#b8442e", "#d79a2c", "#7a9a3a", "#8a3a5a"))
+            for j in range(5):
+                parts.append('<circle cx="%.1f" cy="%.1f" r="3.2" fill="%s" stroke="%s" stroke-width="0.5"/>'
+                             % (cx + 2 + (j % 3) * 5, 65 + (j // 3) * 7 + (j % 2), col, INK))
+        elif goods == "cloth":
+            parts.append('<rect x="%d" y="63" width="16" height="16" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                         % (cx - 1, rng.choice(CLOTHS), INK))
+            parts.append('<line x1="%d" y1="67" x2="%d" y2="67" stroke="#ffffff" stroke-width="0.8" opacity="0.4"/>' % (cx, cx + 14))
+        else:
+            parts.append('<circle cx="%d" cy="71" r="7" fill="#a8613f" stroke="%s" stroke-width="0.8"/>' % (cx + 7, INK))
+            parts.append('<circle cx="%d" cy="71" r="3" fill="%s"/>' % (cx + 7, SOOT))
+    # The awning: stripes of a dyed cloth and undyed, overhanging the back.
+    parts.append('<rect x="2" y="4" width="136" height="50" fill="%s" stroke="%s" stroke-width="1.3"/>' % (FILL_LIGHT, INK))
+    for k in range(0, 8, 2):
+        parts.append('<rect x="%d" y="4" width="17" height="50" fill="%s"/>' % (2 + k * 17, cloth))
+    parts.append('<rect x="2" y="29" width="136" height="25" fill="%s" opacity="0.22"/>' % INK)
+    parts.append('<path d="M2,54 %s" stroke="%s" stroke-width="1.2"/>'
+                 % (" ".join("q8.5,6 17,0" for _ in range(8)), INK))
+    parts.append('<rect x="2" y="4" width="136" height="50" stroke="%s" stroke-width="1.3"/>' % INK)
+    return _svg(w, h, "".join(parts))
+
+
+def signpost(rng):
+    w = h = 84
+    c = 42
+    body, light, dark = _wood(rng)
+    parts = []
+    arms = rng.choice((2, 3, 3, 4))
+    start = rng.uniform(0, 360)
+    # Two arms set straight across each other read as one plank, so a pair
+    # is set at an angle; more than two share the circle out.
+    spread = [0, rng.uniform(80, 140)] if arms == 2 else [k * 360 / arms + rng.uniform(-25, 25) for k in range(arms)]
+    for k in range(arms):
+        a = start + spread[k]
+        parts.append('<g transform="rotate(%.1f %d %d)">' % (a, c, c))
+        parts.append('<path d="M%d,%d L%d,%d L%d,%d L%d,%d L%d,%d Z" fill="%s" stroke="%s" stroke-width="1"/>'
+                     % (c, c - 4, c + 30, c - 4, c + 37, c, c + 30, c + 4, c, c + 4, body, INK))
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.8" opacity="0.7"/>'
+                     % (c + 4, c - 2.5, c + 30, c - 2.5, light))
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.7" opacity="0.6"/>'
+                     % (c + 10, c + 1, c + 26, c + 1, INK_SOFT))
+        parts.append('</g>')
+    parts.append('<circle cx="%d" cy="%d" r="6" fill="%s" stroke="%s" stroke-width="1.2"/>' % (c, c, dark, INK))
+    parts.append('<circle cx="%d" cy="%d" r="2.5" stroke="%s" stroke-width="0.7" opacity="0.7"/>' % (c, c, light))
+    return _svg(w, h, "".join(parts))
+
+
+def weapon_rack(rng):
+    w, h = 112, 48
+    body, light, dark = _wood(rng)
+    parts = [
+        '<rect x="2" y="8" width="108" height="8" fill="%s" stroke="%s" stroke-width="1.1"/>' % (body, INK),
+        '<rect x="2" y="32" width="108" height="8" fill="%s" stroke="%s" stroke-width="1.1"/>' % (body, INK),
+        '<rect x="2" y="8" width="6" height="32" fill="%s" stroke="%s" stroke-width="1"/>' % (dark, INK),
+        '<rect x="104" y="8" width="6" height="32" fill="%s" stroke="%s" stroke-width="1"/>' % (dark, INK),
+        '<line x1="3" y1="10" x2="109" y2="10" stroke="%s" stroke-width="1" opacity="0.7"/>' % light,
+    ]
+    x = 16
+    while x < 100:
+        kind = rng.choice(("spear", "sword", "axe", "spear"))
+        if kind == "spear":
+            parts.append('<line x1="%d" y1="0" x2="%d" y2="48" stroke="%s" stroke-width="2.4"/>' % (x, x, WOOD_DARK))
+            parts.append('<path d="M%d,-2 l-3.5,8 l3.5,4 l3.5,-4 Z" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                         % (x, STEEL_LIGHT, INK))
+            x += rng.randint(10, 14)
+        elif kind == "sword":
+            parts.append('<path d="M%d,2 l3,4 l0,30 l-6,0 l0,-30 Z" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                         % (x, STEEL_LIGHT, INK))
+            parts.append('<rect x="%d" y="36" width="12" height="3" fill="%s" stroke="%s" stroke-width="0.6"/>' % (x - 6, BRASS, INK))
+            parts.append('<rect x="%d" y="39" width="3" height="8" fill="%s"/>' % (x - 1.5, WOOD_DARK))
+            x += rng.randint(13, 16)
+        else:
+            parts.append('<line x1="%d" y1="4" x2="%d" y2="46" stroke="%s" stroke-width="2.6"/>' % (x, x, WOOD))
+            parts.append('<path d="M%d,6 q9,2 9,9 q-9,-1 -9,4 Z" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                         % (x, STEEL, INK))
+            x += rng.randint(15, 18)
+    return _svg(w, h, "".join(parts))
+
+
+def bedroll(rng):
+    w, h = 44, 92
+    cloth = rng.choice(CLOTHS + CANVAS[:2])
+    parts = []
+    if rng.random() < 0.5:
+        # Laid out to sleep in, the blanket turned back at the head.
+        parts += [
+            '<rect x="6" y="6" width="32" height="80" rx="5" fill="%s" stroke="%s" stroke-width="1.2"/>' % (cloth, INK),
+            '<rect x="6" y="24" width="32" height="62" rx="4" fill="%s" opacity="0.25"/>' % INK,
+            '<path d="M6,26 q16,-6 32,0" stroke="%s" stroke-width="1.4"/>' % INK,
+            '<rect x="11" y="9" width="22" height="13" rx="5" fill="%s" stroke="%s" stroke-width="1"/>' % (FILL_LIGHT, INK),
+            '<line x1="8" y1="40" x2="36" y2="40" stroke="%s" stroke-width="0.7" opacity="0.5"/>' % INK_SOFT,
+            '<line x1="8" y1="62" x2="36" y2="62" stroke="%s" stroke-width="0.7" opacity="0.5"/>' % INK_SOFT,
+        ]
+    else:
+        # Rolled and tied, with a pack beside it.
+        parts += [
+            '<rect x="4" y="30" width="36" height="22" rx="10" fill="%s" stroke="%s" stroke-width="1.2"/>' % (cloth, INK),
+            '<path d="M8,34 q14,-4 28,0" stroke="#ffffff" stroke-width="1.2" opacity="0.35"/>',
+            '<line x1="13" y1="30" x2="13" y2="52" stroke="%s" stroke-width="1.8"/>' % WOOD_DARK,
+            '<line x1="31" y1="30" x2="31" y2="52" stroke="%s" stroke-width="1.8"/>' % WOOD_DARK,
+            '<rect x="10" y="60" width="24" height="24" rx="5" fill="%s" stroke="%s" stroke-width="1.1"/>' % (WOOD_LIGHT, INK),
+            '<path d="M10,68 q12,6 24,0" fill="%s" stroke="%s" stroke-width="0.9"/>' % (WOOD, INK),
+            '<rect x="20" y="70" width="4" height="5" fill="%s"/>' % BRASS,
+        ]
+    return _svg(w, h, "".join(parts))
+
+
+def haystack(rng):
+    w = h = 92
+    c = 46
+    r = rng.uniform(36, 41)
+    parts = ['<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="1.3"/>' % (c, c, r, HAY, INK)]
+    # The thatch of the top, laid in rings round the crown.
+    for ring in (0.82, 0.6, 0.38):
+        rr = r * ring
+        for k in range(int(28 * ring)):
+            a = rng.uniform(0, math.pi * 2)
+            ln = rng.uniform(0.3, 0.6)
+            parts.append('<path d="M%.1f,%.1f A%.1f,%.1f 0 0 1 %.1f,%.1f" stroke="%s" stroke-width="0.9" opacity="0.8"/>'
+                         % (c + math.cos(a) * rr, c + math.sin(a) * rr, rr, rr,
+                            c + math.cos(a + ln) * rr, c + math.sin(a + ln) * rr,
+                            HAY_DARK if k % 3 else HAY_LIGHT))
+    parts.append('<path d="M%.1f,%.1f A%.1f,%.1f 0 0 1 %.1f,%.1f L%d,%d Z" fill="%s" opacity="0.22"/>'
+                 % (c + r * 0.707, c - r * 0.707, r, r, c - r * 0.707, c + r * 0.707, c, c, INK))
+    for _ in range(rng.randint(5, 9)):
+        a = rng.uniform(0, math.pi * 2)
+        d = r + rng.uniform(1, 6)
+        b = a + rng.uniform(-0.6, 0.6)
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.9"/>'
+                     % (c + math.cos(a) * d, c + math.sin(a) * d, c + math.cos(a) * d + math.cos(b) * 7,
+                        c + math.sin(a) * d + math.sin(b) * 7, HAY_DARK))
+    parts.append('<circle cx="%d" cy="%d" r="4" fill="%s" stroke="%s" stroke-width="0.8"/>' % (c, c, HAY_LIGHT, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def cart(rng):
+    w, h = 84, 150
+    body, light, dark = _wood(rng)
+    parts = [
+        # Shafts out to the north, for the horse or the ox.
+        '<line x1="30" y1="2" x2="34" y2="48" stroke="%s" stroke-width="3"/>' % dark,
+        '<line x1="54" y1="2" x2="50" y2="48" stroke="%s" stroke-width="3"/>' % dark,
+        '<line x1="30" y1="10" x2="54" y2="10" stroke="%s" stroke-width="2"/>' % dark,
+        # The wheels, seen edge on, either side of the axle.
+        '<rect x="2" y="78" width="9" height="44" rx="3" fill="%s" stroke="%s" stroke-width="1.1"/>' % (WOOD_DARK, INK),
+        '<rect x="73" y="78" width="9" height="44" rx="3" fill="%s" stroke="%s" stroke-width="1.1"/>' % (WOOD_DARK, INK),
+        '<rect x="4" y="78" width="5" height="44" fill="%s" opacity="0.8"/>' % IRON,
+        '<rect x="75" y="78" width="5" height="44" fill="%s" opacity="0.8"/>' % IRON,
+        '<rect x="12" y="44" width="60" height="102" fill="%s" stroke="%s" stroke-width="1.3"/>' % (body, INK),
+        '<rect x="16" y="48" width="52" height="94" fill="%s" stroke="%s" stroke-width="0.9"/>' % (dark, INK),
+        _boards(16, 48, 52, 94, 5, False, body, 0.6),
+        '<line x1="13" y1="45" x2="71" y2="45" stroke="%s" stroke-width="1.2" opacity="0.8"/>' % light,
+        '<line x1="13" y1="45" x2="13" y2="145" stroke="%s" stroke-width="1.2" opacity="0.8"/>' % light,
+    ]
+    load = rng.choice(("sacks", "barrels", "empty", "sacks"))
+    if load == "sacks":
+        for k in range(rng.randint(3, 5)):
+            x, y = 20 + (k % 2) * 22, 54 + (k // 2) * 28 + rng.uniform(-3, 3)
+            parts.append('<rect x="%.1f" y="%.1f" width="22" height="26" rx="8" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                         % (x, y, rng.choice(CANVAS), INK))
+            parts.append('<path d="M%.1f,%.1f l4,-3 l4,3" stroke="%s" stroke-width="0.9"/>' % (x + 7, y + 4, INK_SOFT))
+    elif load == "barrels":
+        for k in range(4):
+            x, y = 29 + (k % 2) * 26, 70 + (k // 2) * 40
+            parts.append('<circle cx="%d" cy="%d" r="12" fill="%s" stroke="%s" stroke-width="1"/>' % (x, y, WOOD_LIGHT, INK))
+            parts.append('<circle cx="%d" cy="%d" r="9" stroke="%s" stroke-width="1.2"/>' % (x, y, IRON))
+    return _svg(w, h, "".join(parts))
+
+
+def woodpile(rng):
+    w, h = 96, 60
+    parts = ['<rect x="2" y="6" width="92" height="50" rx="3" fill="%s" opacity="0.35"/>' % SOOT]
+    for row in range(3):
+        y = 8 + row * 16
+        x = 4 + rng.uniform(-2, 3)
+        while x < 86:
+            ln = rng.uniform(26, 40)
+            ln = min(ln, 92 - x)
+            if ln < 12:
+                break
+            bark = rng.choice((WOOD_DARK, "#5e4630", TRUNK))
+            parts.append('<rect x="%.1f" y="%d" width="%.1f" height="14" rx="6" fill="%s" stroke="%s" stroke-width="1"/>'
+                         % (x, y, ln, bark, INK))
+            parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="0.8" opacity="0.6"/>'
+                         % (x + 4, y + 4, x + ln - 6, y + 4, WOOD_LIGHT))
+            # The sawn end, rings and all.
+            parts.append('<ellipse cx="%.1f" cy="%d" rx="4" ry="6.5" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                         % (x + ln - 4, y + 7, "#d8b688", INK))
+            parts.append('<ellipse cx="%.1f" cy="%d" rx="1.8" ry="3" stroke="%s" stroke-width="0.6"/>'
+                         % (x + ln - 4, y + 7, WOOD))
+            x += ln + rng.uniform(0, 3)
+    if rng.random() < 0.5:
+        parts.append('<g transform="rotate(%.1f 70 30)"><rect x="56" y="27" width="30" height="4" rx="1.5" fill="%s" '
+                     'stroke="%s" stroke-width="0.8"/><path d="M84,23 l8,4 l0,4 l-8,4 Z" fill="%s" stroke="%s" '
+                     'stroke-width="0.8"/></g>' % (rng.uniform(-30, 30), WOOD_LIGHT, INK, STEEL, INK))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -1181,11 +1460,19 @@ CATALOGUE = [
     ("anvil", "Anvil", "fittings", anvil),
     ("cauldron", "Cauldron", "fittings", cauldron),
     ("chair", "Chair", "fittings", chair),
+    ("tent", "Tent", "camp", tent),
+    ("market-stall", "Market Stall", "camp", market_stall),
+    ("signpost", "Signpost", "camp", signpost),
+    ("weapon-rack", "Weapon Rack", "camp", weapon_rack),
+    ("bedroll", "Bedroll", "camp", bedroll),
+    ("haystack", "Haystack", "camp", haystack),
+    ("cart", "Cart", "camp", cart),
+    ("woodpile", "Woodpile", "camp", woodpile),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground", "fittings")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp")
 
 
 def build(seed):

@@ -91,6 +91,7 @@ test/dungeon.mjs      34 more, for seeded dungeons
 test/caverns.mjs      25 more, for caverns and the underground art
 test/backups.mjs      21 more, for the unsaved-work question and backups
 test/frames.mjs       34 more, for map frames and the fittings art
+test/cartouche.mjs    39 more, for the title cartouche and the camp art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -456,6 +457,18 @@ players' copy. Untick **Include the paper and border** in the Export dialog to
 leave it off -- worth doing for a battle map going to a virtual tabletop, where
 the frame would cover the outer squares.
 
+**A title cartouche** sits on the frame: under *Title cartouche* in the frame's
+properties, pick a place -- across the top or the bottom of the band, as the
+plate on an atlas sheet does, or tucked inside any of the four corners -- and
+the plate appears, dressed in the frame's style (a ribbon scroll for ornate
+corners, a bevelled tablet for stone, a corded edge for rope) and in its ink
+and ground. It shows the map's name unless it is given a title of its own, so
+renaming the map renames the plate; a second line takes a region, a date or a
+scale, and *Lettering* sizes the type. A title too long for the room is set
+smaller rather than allowed off the map. Every change is one step in the
+history, and the plate goes wherever the frame goes -- including staying off
+an export without the paper.
+
 ### Working at scale
 
 **Layer groups** are folders. Add one from the **+** in the Layers panel and
@@ -553,6 +566,12 @@ the portcullis and the wall torch are drawn to sit on a wall: the door across a
 one-square gap, the torch against the top edge of its box. A starter pack baked
 before any of these existed gains them on the next launch, from its own seed.
 
+For the road and the market square there are **sandstone blocks** and **straw**
+among the floors and a **frozen lake** among the land textures, and under
+*camp* in the stamp picker a tent (a ridge tent or a bell tent), a market stall,
+a signpost, a weapon rack, a bedroll, a haystack, a cart and a woodpile, three
+variants of each and drawn to the battle-map scale.
+
 ## Adding your own art
 
 See [ASSETS.md](ASSETS.md). Short version: drop a folder of PNGs into
@@ -632,7 +651,15 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 958 assertions in all: `frames.mjs`
+There are narrower scripts beside it, 997 assertions in all: `cartouche.mjs`
+(the title plate: none on a new frame and none on a frame saved before it
+existed, the map's name read rather than copied, renaming the map redrawing it
+to exactly what a fresh draw gives, a title of its own, a blank one going back
+to the name, a second line, lettering size, all seven places, each frame style
+dressing it differently, a long title shrunk to fit, a hand-edited one held to
+sense, left out of an export without the paper, and the round trip; then the
+sandstone, straw and frozen-lake textures tiling and the eight camp symbols
+placed with the real tools), `frames.mjs`
 (map frames: offered by the new-layer dialog, one per map, on top and
 selected, the margin filled and the middle untouched, five styles each drawn
 differently, every panel change one undo step, left out of an export without
