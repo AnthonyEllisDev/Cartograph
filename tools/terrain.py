@@ -200,6 +200,28 @@ TERRAINS = {
         stops=[(150, 186, 206), (190, 218, 232), (226, 240, 248)],
         deep=(92, 140, 170), crack=(248, 252, 255), cracks=14,
         grain=[(60, (255, 255, 255), 0.18, 0.8, 2.4)]),
+    # The coast, close up: a Roman-style floor for the villa above the harbour,
+    # a beach of pebbles, and a reef under clear water. Added 2026-10-10 (art
+    # version 6).
+    "mosaic": dict(
+        group="floor", label="Mosaic Floor", pattern="mosaic",
+        stops=[(206, 192, 164), (224, 212, 188), (238, 230, 210)],
+        grout=(150, 138, 116),
+        inks=[(150, 62, 44), (52, 62, 78), (176, 128, 58)],
+        grain=[(80, (190, 176, 148), 0.10, 0.4, 1.2)]),
+    "shingle": dict(
+        group="land", label="Shingle Beach", pattern="shingle",
+        stops=[(150, 142, 128), (176, 168, 152), (204, 196, 180)],
+        stones=[(132, 128, 124), (164, 156, 146), (188, 180, 164), (120, 110, 98), (196, 190, 182),
+                (142, 120, 100)],
+        pebbles=360,
+        grain=[(90, (110, 104, 94), 0.12, 0.4, 1.2)]),
+    "coral-reef": dict(
+        group="water", label="Coral Reef", pattern="reef",
+        stops=[(36, 128, 150), (64, 162, 176), (110, 196, 196)],
+        sand=(206, 200, 160),
+        coral=[(214, 112, 92), (226, 164, 96), (150, 92, 132), (196, 136, 140), (120, 150, 96)],
+        grain=[(70, (220, 244, 240), 0.12, 0.8, 2.2)]),
 }
 
 
@@ -662,9 +684,149 @@ def _ice(spec, size, rng):
     return px
 
 
+def _mosaic(spec, size, rng):
+    """Tesserae: small squares each set by hand, laid in a pattern of nested
+    lozenges with a cross through each. The tile is a whole number of motifs
+    in both directions, so the pattern runs on across a seam."""
+    lo, mid, hi = spec["stops"]
+    n = 32 if size >= 256 else 16 if size >= 128 else 8
+    ts = size / n
+    period = n // 2
+    inks = spec["inks"]
+    cells = {}
+    for j in range(n):
+        for i in range(n):
+            u, v = i % period, j % period
+            c = period / 2.0 - 0.5
+            ring = int(abs(u - c) + abs(v - c))
+            outer = period // 2 - 1
+            if ring == 0 or ring == outer:
+                rgb = inks[1]
+            elif ring in (1, 3) and period >= 8:
+                rgb = inks[0]
+            elif (u == 0 or v == 0) and period >= 8:
+                rgb = inks[2]
+            else:
+                rgb = mix_rgb(lo, hi, rng.random() * 0.8 + 0.1)
+            # No two stones are quite the same colour.
+            cells[(i, j)] = _shade(rgb, rng.uniform(-0.08, 0.08))
+    px = bytearray(size * size * 4)
+    gap = max(0.6, ts * 0.12)
+    for y in range(size):
+        j = int(y / ts) % n
+        fy = y - j * ts
+        for x in range(size):
+            i = int(x / ts) % n
+            fx = x - i * ts
+            k = y * size + x
+            edge = min(fx, fy, ts - 1 - fx, ts - 1 - fy)
+            if edge < gap - 0.5:
+                _put(px, k, spec["grout"])
+                continue
+            rgb = cells[(i, j)]
+            # Each tessera is a little domed: lit along its top, shadowed below.
+            if fy < 1.5:
+                rgb = _shade(rgb, 0.08)
+            elif ts - 1 - fy < 1.5:
+                rgb = _shade(rgb, -0.12)
+            _put(px, k, rgb)
+    return px
+
+
+def _shingle(spec, size, rng):
+    """A pebble beach: a bed of grit, then rounded stones laid over it largest
+    first, each lit from the north-west with a shadow on the far side."""
+    lo, mid, hi = spec["stops"]
+    field = fbm(size, 5, 4, rng)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        _put(px, i, mix_rgb(lo, mid, clamp(0.5 + (field[i] - 0.5) * 1.4)))
+    scale = size / 256.0
+    stones = []
+    for _ in range(int(spec["pebbles"] * scale * scale) + 8):
+        r = rng.uniform(3.0, 9.5) * max(0.5, scale)
+        stones.append((r, rng.random() * size, rng.random() * size,
+                       rng.uniform(0.55, 1.0), rng.uniform(0, math.pi), rng.choice(spec["stones"])))
+    stones.sort(key=lambda s: -s[0])
+    for r, cx, cy, flat, ang, rgb in stones:
+        ca, sa = math.cos(ang), math.sin(ang)
+        ext = int(r) + 3
+        # The shadow goes down whole before the stone, or a stone shades
+        # stripes into itself.
+        for shadow in (True, False):
+            ox = oy = 1.6 if shadow else 0.0
+            for dy in range(-ext, ext + 1):
+                for dx in range(-ext, ext + 1):
+                    sx, sy = dx - ox, dy - oy
+                    u = (sx * ca + sy * sa) / r
+                    v = (-sx * sa + sy * ca) / (r * flat)
+                    d = u * u + v * v
+                    if d > 1.0:
+                        continue
+                    j = ((int(cy + dy) % size) * size + (int(cx + dx) % size)) * 4
+                    if shadow:
+                        px[j] = int(px[j] * 0.8); px[j + 1] = int(px[j + 1] * 0.8); px[j + 2] = int(px[j + 2] * 0.8)
+                        continue
+                    light = clamp(0.55 - (sx + sy) / (r * 2.6) + (1.0 - d) * 0.25)
+                    c = _shade(rgb, (light - 0.55) * 0.6)
+                    if d > 0.8:
+                        c = _shade(c, -0.16)
+                    px[j], px[j + 1], px[j + 2] = c
+    return px
+
+
+def _reef(spec, size, rng):
+    """A reef seen through clear water: sand in the gaps, heads of coral in
+    clumps, each clump in one colour broken into knobs, and the deep blue
+    where the reef drops away."""
+    lo, mid, hi = spec["stops"]
+    depth = warp(fbm(size, 3, 5, rng), size, fbm(size, 6, 3, rng), fbm(size, 6, 3, rng), size * 0.04)
+    knobs = ridged(size, 20, 3, rng)
+    coral = spec["coral"]
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = clamp(0.5 + (depth[i] - 0.5) * 1.6)
+        rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+        if 0.56 < v < 0.8:
+            rgb = mix_rgb(rgb, spec["sand"], min(0.55, (v - 0.56) * 3.0))
+        _put(px, i, rgb)
+    # Heads of coral in clusters, each head one colour broken into knobs,
+    # with a darker rim where it stands off the sand. Seen through the water,
+    # so none quite reaches its own colour.
+    scale = size / 256.0
+    for _ in range(max(3, int(16 * scale * scale))):
+        gx, gy = rng.random() * size, rng.random() * size
+        spread = rng.uniform(7, 16) * scale
+        for _ in range(rng.randint(8, 18)):
+            cx, cy = gx + rng.gauss(0, spread), gy + rng.gauss(0, spread)
+            r = rng.uniform(3.5, 10.0) * max(0.5, scale)
+            base = rng.choice(coral)
+            # A head is lumpy, not a disc: its edge rises and falls round it.
+            lobes, phase = rng.randint(3, 7), rng.uniform(0, math.pi * 2)
+            ext = int(r * 1.3) + 1
+            for dy in range(-ext, ext + 1):
+                for dx in range(-ext, ext + 1):
+                    a = math.atan2(dy, dx)
+                    edge = r * (0.82 + 0.2 * math.sin(lobes * a + phase) + 0.08 * math.sin(2.7 * lobes * a))
+                    d = math.hypot(dx, dy) / edge
+                    if d > 1.0:
+                        continue
+                    k = (int(cy + dy) % size) * size + (int(cx + dx) % size)
+                    col = _shade(base, (knobs[k] - 0.5) * 1.3 - (dx + dy) / (r * 5.0))
+                    if d > 0.8:
+                        col = _shade(col, -0.3)
+                    j = k * 4
+                    t = 0.7
+                    px[j] = int(px[j] + (col[0] - px[j]) * t)
+                    px[j + 1] = int(px[j + 1] + (col[1] - px[j + 1]) * t)
+                    px[j + 2] = int(px[j + 2] + (col[2] - px[j + 2]) * t)
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
             "brick": _brick, "carpet": _carpet, "marble": _marble,
-            "ashlar": _ashlar, "straw": _straw, "ice": _ice}
+            "ashlar": _ashlar, "straw": _straw, "ice": _ice,
+            "mosaic": _mosaic, "shingle": _shingle, "reef": _reef}
 
 
 def render(name, size, seed):

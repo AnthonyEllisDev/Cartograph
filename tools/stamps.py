@@ -1406,6 +1406,237 @@ def woodpile(rng):
     return _svg(w, h, "".join(parts))
 
 
+# The coast, added 2026-10-10 (art version 6): what lies along a shore, at
+# both scales -- boats, a jetty and its gear for a harbour battle map, and a
+# reef, a sea cliff and a wreck for a chart.
+SEA_FOAM = "#e8f1f2"
+SEA_SHALLOW = "#7fb3c4"
+ROPE = "#b89a62"
+CORK = "#c8954e"
+
+
+def rowboat(rng):
+    w, h = 140, 64
+    body, light, dark = _wood(rng)
+    paint = rng.choice((body, "#4a5f7d", "#8c4a3a", "#5d7046"))
+    # The hull from above: a pointed bow to the east, a square transom west.
+    hull = "M14,14 C50,6 96,8 134,32 C96,56 50,58 14,50 Z"
+    inner = "M20,19 C52,13 92,15 122,32 C92,49 52,51 20,45 Z"
+    parts = [
+        '<path d="%s" fill="%s" stroke="%s" stroke-width="1.6"/>' % (hull, paint, INK),
+        '<path d="%s" fill="%s" stroke="%s" stroke-width="0.9"/>' % (inner, body, INK),
+        # Planking follows the hull's curve.
+        '<path d="M22,26 C54,20 90,22 118,32 M22,38 C54,44 90,42 118,32" stroke="%s" stroke-width="0.7" opacity="0.6"/>' % dark,
+        '<path d="M20,19 C52,13 92,15 122,32" stroke="%s" stroke-width="1" opacity="0.7"/>' % light,
+        '<rect x="12" y="14" width="5" height="36" fill="%s" stroke="%s" stroke-width="1"/>' % (dark, INK),
+    ]
+    for x in (44, 76):
+        parts.append('<rect x="%d" y="14" width="7" height="36" fill="%s" stroke="%s" stroke-width="0.9"/>' % (x, light, INK))
+    if rng.random() < 0.5:
+        # Oars shipped, lying along the thwarts.
+        for y in (26, 36):
+            parts.append('<line x1="24" y1="%d" x2="110" y2="%d" stroke="%s" stroke-width="2.4"/>' % (y, y + 1, WOOD_LIGHT))
+            parts.append('<ellipse cx="102" cy="%d" rx="10" ry="3" fill="%s" stroke="%s" stroke-width="0.8"/>' % (y, WOOD_LIGHT, INK))
+    else:
+        # Oars out, blades in the water.
+        for side in (-1, 1):
+            y0 = 32 + side * 16
+            parts.append('<line x1="58" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="2.4"/>' % (32 + side * 8, 48, y0 + side * 10, WOOD_LIGHT))
+            parts.append('<ellipse cx="46" cy="%d" rx="8" ry="3" fill="%s" stroke="%s" stroke-width="0.8" '
+                         'transform="rotate(%d 46 %d)"/>' % (y0 + side * 11, WOOD_LIGHT, INK, side * 30, y0 + side * 11))
+    if rng.random() < 0.6:
+        parts.append('<circle cx="104" cy="32" r="5" stroke="%s" stroke-width="1.6"/>' % ROPE)
+        parts.append('<circle cx="104" cy="32" r="2.4" stroke="%s" stroke-width="1.2"/>' % ROPE)
+    return _svg(w, h, "".join(parts))
+
+
+def jetty(rng):
+    w, h = 150, 60
+    body, light, dark = _wood(rng)
+    parts = []
+    # Piles first, standing in the water below the deck's edge.
+    for x in range(10, 146, 34):
+        for y in (8, 52):
+            parts.append('<circle cx="%d" cy="%d" r="5" fill="%s" stroke="%s" stroke-width="1"/>' % (x, y, dark, INK))
+            parts.append('<circle cx="%d" cy="%d" r="7.5" stroke="%s" stroke-width="0.8" opacity="0.6"/>' % (x, y, SEA_FOAM))
+    parts.append('<rect x="2" y="10" width="146" height="40" fill="%s" stroke="%s" stroke-width="1.4"/>' % (body, INK))
+    x = 2.0
+    while x < 146:
+        bw = rng.uniform(5, 7.5)
+        tone = rng.choice((body, light, dark))
+        parts.append('<rect x="%.1f" y="10" width="%.1f" height="40" fill="%s" opacity="0.45"/>' % (x, bw, tone))
+        parts.append('<line x1="%.1f" y1="10" x2="%.1f" y2="50" stroke="%s" stroke-width="0.7" opacity="0.7"/>' % (x, x, INK_SOFT))
+        if rng.random() < 0.7:
+            parts.append('<circle cx="%.1f" cy="14" r="0.8" fill="%s"/><circle cx="%.1f" cy="46" r="0.8" fill="%s"/>'
+                         % (x + bw / 2, IRON, x + bw / 2, IRON))
+        x += bw
+    parts.append('<rect x="2" y="10" width="146" height="40" stroke="%s" stroke-width="1.4"/>' % INK)
+    # A bollard, and a coil of rope beside it some of the time.
+    bx = rng.choice((40, 76, 110))
+    parts.append('<circle cx="%d" cy="16" r="4" fill="%s" stroke="%s" stroke-width="1"/>' % (bx, IRON, INK))
+    if rng.random() < 0.6:
+        parts.append('<circle cx="%d" cy="36" r="7" stroke="%s" stroke-width="2"/><circle cx="%d" cy="36" r="3.5" '
+                     'stroke="%s" stroke-width="1.6"/>' % (bx + 16, ROPE, bx + 16, ROPE))
+    return _svg(w, h, "".join(parts))
+
+
+def anchor(rng):
+    w, h = 72, 96
+    metal = rng.choice((IRON, STEEL, "#5a4a3a"))
+    parts = [
+        # The shank, the ring at the top, the stock across it.
+        '<line x1="36" y1="16" x2="36" y2="82" stroke="%s" stroke-width="5"/>' % INK,
+        '<line x1="36" y1="16" x2="36" y2="82" stroke="%s" stroke-width="3"/>' % metal,
+        '<circle cx="36" cy="10" r="6" stroke="%s" stroke-width="4"/>' % INK,
+        '<circle cx="36" cy="10" r="6" stroke="%s" stroke-width="2"/>' % metal,
+        '<rect x="16" y="22" width="40" height="6" rx="2" fill="%s" stroke="%s" stroke-width="1.1"/>' % (WOOD_DARK, INK),
+        # The arms and their flukes.
+        '<path d="M10,62 Q14,86 36,86 Q58,86 62,62" stroke="%s" stroke-width="5"/>' % INK,
+        '<path d="M10,62 Q14,86 36,86 Q58,86 62,62" stroke="%s" stroke-width="3"/>' % metal,
+        '<path d="M4,66 L10,54 L16,64 Z" fill="%s" stroke="%s" stroke-width="1"/>' % (metal, INK),
+        '<path d="M68,66 L62,54 L56,64 Z" fill="%s" stroke="%s" stroke-width="1"/>' % (metal, INK),
+        '<line x1="35" y1="20" x2="35" y2="80" stroke="#ffffff" stroke-width="0.8" opacity="0.3"/>',
+    ]
+    if rng.random() < 0.6:
+        # A length of chain from the ring, hanging off to one side.
+        side = rng.choice((-1, 1))
+        x, y = 36 + side * 5, 8
+        for _ in range(rng.randint(3, 5)):
+            nx, ny = x + side * rng.uniform(4, 6), y + rng.uniform(5, 7)
+            parts.append('<ellipse cx="%.1f" cy="%.1f" rx="4" ry="2.4" stroke="%s" stroke-width="1.3" '
+                         'transform="rotate(%.1f %.1f %.1f)"/>' % ((x + nx) / 2, (y + ny) / 2, INK,
+                                                                     math.degrees(math.atan2(ny - y, nx - x)), (x + nx) / 2, (y + ny) / 2))
+            x, y = nx, ny
+    return _svg(w, h, "".join(parts))
+
+
+def fishing_net(rng):
+    w, h = 120, 90
+    parts = []
+    # A net spread to dry: a ragged sheet of mesh, corks along its head rope.
+    pts = []
+    for k in range(14):
+        a = k / 14 * math.pi * 2
+        r = rng.uniform(34, 44)
+        pts.append((60 + math.cos(a) * r * 1.3, 45 + math.sin(a) * r * 0.95))
+    cid = "net%d" % rng.randint(0, 99999)
+    parts.append('<clipPath id="%s"><polygon points="%s"/></clipPath>' % (cid, _pts(pts)))
+    parts.append('<polygon points="%s" fill="%s" opacity="0.25"/>' % (_pts(pts), ROPE))
+    mesh = []
+    for k in range(-12, 13):
+        o = k * 6
+        mesh.append('<line x1="%d" y1="0" x2="%d" y2="90"/>' % (o, o + 90))
+        mesh.append('<line x1="%d" y1="0" x2="%d" y2="90"/>' % (o + 120, o + 30))
+    parts.append('<g clip-path="url(#%s)" stroke="%s" stroke-width="0.7" opacity="0.85">%s</g>' % (cid, INK_SOFT, "".join(mesh)))
+    parts.append('<polygon points="%s" stroke="%s" stroke-width="1.6" opacity="0.9"/>' % (_pts(pts), ROPE))
+    for x, y in pts[::2]:
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="3.4" ry="2.2" fill="%s" stroke="%s" stroke-width="0.7"/>' % (x, y, CORK, INK))
+    if rng.random() < 0.5:
+        # A pole it is hung from, across the north.
+        parts.append('<line x1="4" y1="10" x2="116" y2="14" stroke="%s" stroke-width="3"/>' % WOOD_DARK)
+        for x in (6, 114):
+            parts.append('<circle cx="%d" cy="%d" r="4" fill="%s" stroke="%s" stroke-width="1"/>' % (x, 10 if x < 60 else 14, WOOD, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def buoy(rng):
+    w = h = 48
+    c = 24
+    colours = rng.choice((("#b8442e", FILL_LIGHT), ("#d79a2c", SOOT), ("#3e6e4a", FILL_LIGHT), ("#b8442e", "#3e6e4a")))
+    parts = [
+        '<circle cx="%d" cy="%d" r="21" stroke="%s" stroke-width="1.2" opacity="0.7"/>' % (c, c, SEA_FOAM),
+        '<circle cx="%d" cy="%d" r="16" fill="%s" stroke="%s" stroke-width="1.4"/>' % (c, c, colours[0], INK),
+    ]
+    # Quartered, as a channel mark is, so it reads from across the water.
+    parts.append('<path d="M%d,%d L%d,%d A16,16 0 0 1 %d,%d Z" fill="%s"/>' % (c, c, c, c - 16, c + 16, c, colours[1]))
+    parts.append('<path d="M%d,%d L%d,%d A16,16 0 0 1 %d,%d Z" fill="%s"/>' % (c, c, c, c + 16, c - 16, c, colours[1]))
+    parts.append('<circle cx="%d" cy="%d" r="16" stroke="%s" stroke-width="1.4"/>' % (c, c, INK))
+    parts.append('<circle cx="%d" cy="%d" r="5" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, IRON, INK))
+    parts.append('<path d="M%d,%d A12,12 0 0 1 %d,%d" stroke="#ffffff" stroke-width="1.4" opacity="0.4"/>' % (c - 11, c - 4, c - 4, c - 11))
+    if rng.random() < 0.5:
+        parts.append('<path d="M%d,%d q4,6 0,12 q-4,6 0,12" stroke="%s" stroke-width="1.2"/>' % (c + 16, c, ROPE))
+    return _svg(w, h, "".join(parts))
+
+
+def reef(rng):
+    w, h = 130, 80
+    parts = []
+    rocks = [(rng.uniform(18, 112), rng.uniform(18, 62), rng.uniform(5, 12)) for _ in range(rng.randint(6, 10))]
+    # Broken water round the rocks first, then the rocks breaking it.
+    for x, y, r in rocks:
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="%s" opacity="0.55"/>' % (x, y, r + 7, (r + 7) * 0.7, SEA_SHALLOW))
+    for x, y, r in rocks:
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" stroke="%s" stroke-width="1.3" opacity="0.9"/>'
+                     % (x, y + 1, r + 4, (r + 4) * 0.68, SEA_FOAM))
+        parts.append('<path d="M%.1f,%.1f q%.1f,-4 %.1f,0" stroke="%s" stroke-width="1" opacity="0.8"/>'
+                     % (x - r - 6, y + r * 0.9, r + 6, 2 * r + 12, SEA_FOAM))
+    for x, y, r in rocks:
+        parts.append(_rock(rng, x, y, r, fill=rng.choice((STONE_DARK, CAVE, CAVE_DARK))))
+    return _svg(w, h, "".join(parts))
+
+
+def sea_cliff(rng):
+    w, h = 150, 80
+    # The land along the north, its edge ragged; the face falls south to a
+    # line of surf, drawn in hatching the way a chart draws a cliff.
+    top = [(0, 30)]
+    x = 0
+    while x < 150:
+        x = min(150, x + rng.uniform(8, 16))
+        top.append((x, 26 + rng.uniform(-6, 8)))
+    foot = [(px_, py + rng.uniform(16, 26)) for px_, py in top]
+    face = top + list(reversed(foot))
+    parts = [
+        '<polygon points="%s" fill="%s"/>' % (_pts([(0, 0), (150, 0)] + list(reversed(top))), LEAF_LIGHT),
+        '<polygon points="%s" fill="%s" stroke="%s" stroke-width="1"/>' % (_pts(face), STONE, INK),
+        _hatch(face, 3.2, math.radians(80), INK_SOFT, 0.8, 0.75),
+    ]
+    for (x0, y0), (x1, y1) in zip(top, foot):
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1" opacity="0.8"/>'
+                     % (x0, y0, x1 + rng.uniform(-3, 3), y1, INK))
+    parts.append('<polyline points="%s" stroke="%s" stroke-width="2"/>' % (_pts(top), INK))
+    # Grass tufts along the top, scree and surf along the foot.
+    for px_, py in top[1:-1]:
+        parts.append('<path d="M%.1f,%.1f l-2,-5 M%.1f,%.1f l0,-6 M%.1f,%.1f l2,-5" stroke="%s" stroke-width="0.9"/>'
+                     % (px_ - 2, py - 2, px_, py - 2, px_ + 2, py - 2, LEAF_DARK))
+    for px_, py in foot:
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                     % (px_ + rng.uniform(-4, 4), py + rng.uniform(1, 4), rng.uniform(1.2, 2.6), STONE_DARK, INK))
+    surf = [(px_, py + 9 + rng.uniform(-1.5, 1.5)) for px_, py in foot]
+    parts.append('<polyline points="%s" stroke="%s" stroke-width="1.6" opacity="0.9"/>' % (_pts(surf), WATER))
+    parts.append('<polyline points="%s" stroke="%s" stroke-width="1" opacity="0.7"/>'
+                 % (_pts([(px_, py + 6) for px_, py in surf]), WATER))
+    return _svg(w, h, "".join(parts))
+
+
+def shipwreck(rng):
+    w, h = 150, 76
+    body, light, dark = _wood(rng)
+    tilt = rng.uniform(-14, 14)
+    parts = ['<g transform="rotate(%.1f 75 38)">' % tilt]
+    # Half a hull on its side: the planking stove in amidships, the ribs
+    # showing through, the stern broken away to the west.
+    hull = "M18,22 C60,10 104,10 140,36 C104,62 60,64 24,54 L30,46 L20,40 L28,32 Z"
+    parts.append('<path d="%s" fill="%s" stroke="%s" stroke-width="1.5"/>' % (hull, dark, INK))
+    parts.append('<path d="M40,20 C70,14 100,16 128,34 L120,40 C94,26 70,24 44,30 Z" fill="%s" stroke="%s" stroke-width="0.9"/>' % (body, INK))
+    gap = rng.uniform(60, 90)
+    parts.append('<ellipse cx="%.1f" cy="40" rx="18" ry="10" fill="%s" stroke="%s" stroke-width="1"/>' % (gap, SOOT, INK))
+    for k in range(-2, 3):
+        x = gap + k * 7
+        parts.append('<path d="M%.1f,30 q3,10 0,20" stroke="%s" stroke-width="2.2"/>' % (x, light))
+    parts.append('<path d="M30,32 C64,24 104,26 132,36" stroke="%s" stroke-width="0.7" opacity="0.6"/>' % light)
+    parts.append('<path d="M28,46 C64,52 104,50 132,38" stroke="%s" stroke-width="0.7" opacity="0.6"/>' % INK_SOFT)
+    parts.append('</g>')
+    # The mast down across the water, its yard and a rag of sail.
+    mx = rng.uniform(70, 100)
+    parts.append('<line x1="%.1f" y1="38" x2="%.1f" y2="72" stroke="%s" stroke-width="3"/>' % (mx, mx - 30, WOOD_DARK))
+    parts.append('<line x1="%.1f" y1="56" x2="%.1f" y2="68" stroke="%s" stroke-width="2"/>' % (mx - 28, mx - 6, WOOD_DARK))
+    parts.append('<path d="M%.1f,58 l12,4 l-6,8 Z" fill="%s" stroke="%s" stroke-width="0.8" opacity="0.9"/>' % (mx - 22, rng.choice(CANVAS), INK))
+    for x in range(8, 146, 22):
+        parts.append('<path d="M%d,%.1f q5,-3 10,0" stroke="%s" stroke-width="1" opacity="0.7"/>' % (x, 70 + rng.uniform(-2, 3), WATER))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -1468,11 +1699,19 @@ CATALOGUE = [
     ("haystack", "Haystack", "camp", haystack),
     ("cart", "Cart", "camp", cart),
     ("woodpile", "Woodpile", "camp", woodpile),
+    ("rowboat", "Rowing Boat", "coast", rowboat),
+    ("jetty", "Jetty", "coast", jetty),
+    ("anchor", "Anchor", "coast", anchor),
+    ("fishing-net", "Fishing Net", "coast", fishing_net),
+    ("buoy", "Buoy", "coast", buoy),
+    ("reef", "Reef", "coast", reef),
+    ("sea-cliff", "Sea Cliff", "coast", sea_cliff),
+    ("shipwreck", "Shipwreck", "coast", shipwreck),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast")
 
 
 def build(seed):

@@ -7,7 +7,7 @@
  */
 
 import { imageNow, pattern } from './assets.js';
-import { LAYER_KINDS, NOTE_DEFAULTS, gridStepPx, layerAlpha, layerGM, layerVisible } from './doc.js';
+import { LAYER_KINDS, NOTE_DEFAULTS, gridLayer, gridStepPx, layerAlpha, layerGM, layerVisible } from './doc.js';
 import * as hex from './hex.js';
 import * as light from './light.js';
 import { clamp, makeCanvas, rng } from './util.js';
@@ -1793,12 +1793,24 @@ export const CARTOUCHE_PLACES = {
   'bottom-right': { label: 'Bottom right, inside' },
 };
 
+/* Grid references round the inside of the frame: letters across, numbers
+ * down, so "the inn at C4" means one square on the table. 'sheet' divides the
+ * map into squares of its own, as an atlas plate is; 'grid' letters the map's
+ * own grid, square or hex. 'none' is the default, so a frame saved before
+ * references existed draws as it did. */
+export const FRAME_REFS = {
+  none:  { label: 'None' },
+  sheet: { label: 'Divide the sheet' },
+  grid:  { label: 'Follow the map\'s grid' },
+};
+
 export const FRAME_DEFAULTS = {
   style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
   cartouche: 'none', title: '', subtitle: '', titleSize: 1,
+  refs: 'none', refCols: 8,
 };
 
-const FRAME_RANGE = { size: [0.4, 3], margin: [0, 4], titleSize: [0.5, 2] };
+const FRAME_RANGE = { size: [0.4, 3], margin: [0, 4], titleSize: [0.5, 2], refCols: [2, 26] };
 
 // Long enough for any real title; short enough that a pasted paragraph does
 // not become a plate wider than the map.
@@ -1813,6 +1825,9 @@ export function frameValue(layer, key) {
   if (key === 'title' || key === 'subtitle') {
     return typeof v === 'string' ? Array.from(v.trim()).slice(0, CARTOUCHE_MAX_CHARS).join('') : '';
   }
+  if (key === 'refs') return Object.hasOwn(FRAME_REFS, v) ? v : FRAME_DEFAULTS.refs;
+  // A count of squares has to be whole, or the last one is a sliver.
+  if (key === 'refCols') return Number.isFinite(v) ? Math.round(clamp(v, 2, 26)) : FRAME_DEFAULTS.refCols;
   if (key === 'mat') return v === undefined ? FRAME_DEFAULTS.mat : !!v;
   if (FRAME_RANGE[key]) {
     return Number.isFinite(v) ? clamp(v, FRAME_RANGE[key][0], FRAME_RANGE[key][1]) : FRAME_DEFAULTS[key];
@@ -2032,12 +2047,176 @@ function renderFrame(layer, ctx) {
   ctx.lineJoin = 'miter';
   FRAME_DRAW[frameValue(layer, 'style')](ctx, g, w, h, ink, accent);
   ctx.restore();
+  // Before the plate, so a title across the top lies over the letters under
+  // it rather than the other way round.
+  const refs = frameRefs(layer, view.doc);
+  if (refs) {
+    ctx.save();
+    drawRefs(ctx, refs, ink, accent);
+    ctx.restore();
+  }
   const plate = cartoucheBox(layer, view.doc);
   if (plate) {
     ctx.save();
     drawCartouche(ctx, plate, frameValue(layer, 'style'), ink, accent);
     ctx.restore();
   }
+}
+
+/* ---------------------------------------------------------- grid references */
+
+/* Letters along the top and bottom, numbers down the sides, set just inside
+ * the band with a tick at every division. In 'grid' mode they are read from
+ * the grid layer when the frame is drawn, never copied into the frame, so the
+ * two cannot disagree; invalidate() redraws a frame that follows the grid
+ * whenever the grid is rebuilt. A reference is the grid's own cell index --
+ * column 0 is the one that starts at the left edge of the map, under the frame
+ * or not -- so widening the frame never renames a square someone has already
+ * written in their notes. */
+
+/** Column letters as a spreadsheet writes them: A..Z, then AA, AB... */
+export function refLetters(n) {
+  let s = '';
+  n = Math.floor(n);
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
+
+/** Whether this frame's picture depends on the grid layer. */
+export function frameFollowsGrid(layer) {
+  return layer.kind === 'frame' && frameValue(layer, 'refs') === 'grid';
+}
+
+/* Cells of `len` along an axis from `start`, numbered from the first one that
+ * reaches into the map, kept where enough of them shows inside the band to
+ * hold a label. */
+function refRun(start, len, lo, hi, limit) {
+  const out = [];
+  let first = start - Math.ceil(start / len) * len;
+  if (first + len <= 0) first += len;
+  for (let k = 0, a = first; a < limit && k < 4096; k++, a += len) {
+    const x0 = Math.max(a, lo), x1 = Math.min(a + len, hi);
+    if (x1 - x0 >= len * 0.5) out.push({ i: k, a: x0, b: x1 });
+  }
+  return out;
+}
+
+/** The references as they will be drawn, or null for none. `cols` and `rows`
+ *  each hold `{ i, a, b, label }` -- the index, the run it covers along its
+ *  side clipped to inside the band, and the text. `mode` is what was used:
+ *  'grid' falls back to 'sheet' on a map with no grid to follow. Exported for
+ *  the tests and the panel. */
+export function frameRefs(layer, doc) {
+  const want = frameValue(layer, 'refs');
+  if (want === 'none' || !doc) return null;
+  const w = doc.width, h = doc.height;
+  const g = frameBand(layer, w, h);
+  if (g.inner * 2 >= Math.min(w, h)) return null;
+  const lo = g.inner, hiX = w - g.inner, hiY = h - g.inner;
+  const grid = want === 'grid' ? gridLayer(doc) : null;
+  let cols, rows, cell, mode = 'sheet';
+  if (grid && grid.type === 'square') {
+    const size = Math.max(4, grid.size || 64);
+    cell = size;
+    cols = refRun(grid.offsetX || 0, size, lo, hiX, w);
+    rows = refRun(grid.offsetY || 0, size, lo, hiY, h);
+    mode = 'grid';
+  } else if (grid && grid.type === 'hex') {
+    // Offset coordinates, the ones the hex-coordinates extension prints: a
+    // column is read where row 0 crosses it and a row where column 0 does,
+    // which on a staggered axis is the unshifted line.
+    const sp = hex.spacing(grid);
+    cell = Math.min(sp.col, sp.row);
+    const centre = (col, row) => { const { q, r } = hex.fromOffset(grid, col, row); return hex.toPixel(grid, q, r); };
+    const run = (n, at, len, hi) => {
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const c = at(k);
+        const x0 = Math.max(c - len / 2, lo), x1 = Math.min(c + len / 2, hi);
+        if (x1 - x0 >= len * 0.5) out.push({ i: k, a: x0, b: x1 });
+      }
+      return out;
+    };
+    cols = run(Math.min(4096, Math.ceil(w / sp.col) + 2), (k) => centre(k, 0).x, sp.col, hiX);
+    rows = run(Math.min(4096, Math.ceil(h / sp.row) + 2), (k) => centre(0, k).y, sp.row, hiY);
+    mode = 'grid';
+  } else {
+    const n = frameValue(layer, 'refCols');
+    const cw = (hiX - lo) / n;
+    const m = Math.max(1, Math.round((hiY - lo) / cw));
+    const rh = (hiY - lo) / m;
+    cell = Math.min(cw, rh);
+    cols = Array.from({ length: n }, (_, k) => ({ i: k, a: lo + k * cw, b: lo + (k + 1) * cw }));
+    rows = Array.from({ length: m }, (_, k) => ({ i: k, a: lo + k * rh, b: lo + (k + 1) * rh }));
+  }
+  for (const c of cols) c.label = refLetters(c.i);
+  for (const r of rows) r.label = String(r.i + 1);
+  // Lettering sized from the band, smaller only where the squares are; and on
+  // a grid too fine to letter every square, every second or fifth one. Sized
+  // from a whole square, not the sliver the band leaves of the first one.
+  const size = Math.max(6, Math.min(g.unit * 0.72, cell * 0.5));
+  const stride = [1, 2, 5, 10, 20].find((s) => cell * s >= size * 1.9) || 50;
+  // Wide enough for the widest number down the side, and never less than a
+  // little more than the lettering is tall.
+  const digits = String(rows.length ? rows[rows.length - 1].i + 1 : 1).length;
+  const strip = size * Math.max(1.7, 0.62 * digits + 0.7);
+  // A map too small to hold the strips inside the frame gets none, rather
+  // than strips that cross over each other.
+  if ((g.inner + strip) * 2 >= Math.min(w, h)) return null;
+  return { mode, cols, rows, size, stride, strip, inner: g.inner, unit: g.unit, w, h };
+}
+
+/* The references sit on a strip of the frame's ground just inside the band,
+ * ruled off from the map, so a letter reads the same over sea, forest or a
+ * battle map's floor. Ticks cross the strip at every division. The strips
+ * meet in a plain square at each corner, and a label that would run into one
+ * is left off rather than set on top of its neighbour from the other side. */
+function drawRefs(ctx, r, ink, accent) {
+  const { inner, w, h, size, strip } = r;
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.rect(inner, inner, w - 2 * inner, h - 2 * inner);
+  ctx.rect(inner + strip, inner + strip, w - 2 * (inner + strip), h - 2 * (inner + strip));
+  ctx.fill('evenodd');
+  ctx.strokeStyle = ink;
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = Math.max(1, r.unit * 0.06);
+  ctx.beginPath();
+  ctx.rect(inner + strip, inner + strip, w - 2 * (inner + strip), h - 2 * (inner + strip));
+  const edges = (list) => [...new Set(list.flatMap((c) => [c.a, c.b]))];
+  for (const x of edges(r.cols)) {
+    if (x <= inner + strip || x >= w - inner - strip) continue;
+    ctx.moveTo(x, inner); ctx.lineTo(x, inner + strip);
+    ctx.moveTo(x, h - inner); ctx.lineTo(x, h - inner - strip);
+  }
+  for (const y of edges(r.rows)) {
+    if (y <= inner + strip || y >= h - inner - strip) continue;
+    ctx.moveTo(inner, y); ctx.lineTo(inner + strip, y);
+    ctx.moveTo(w - inner, y); ctx.lineTo(w - inner - strip, y);
+  }
+  ctx.stroke();
+  ctx.font = refFont(size);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = ink;
+  const mid = inner + strip / 2;
+  const lo = inner + strip, hiX = w - inner - strip, hiY = h - inner - strip;
+  for (const c of r.cols) {
+    if (c.i % r.stride) continue;
+    const x = (c.a + c.b) / 2, half = ctx.measureText(c.label).width / 2;
+    if (x - half < lo || x + half > hiX) continue;
+    ctx.fillText(c.label, x, mid); ctx.fillText(c.label, x, h - mid);
+  }
+  for (const c of r.rows) {
+    if (c.i % r.stride) continue;
+    const y = (c.a + c.b) / 2;
+    if (y - size / 2 < lo || y + size / 2 > hiY) continue;
+    ctx.fillText(c.label, mid, y); ctx.fillText(c.label, w - mid, y);
+  }
+}
+
+function refFont(size) {
+  return '600 ' + size.toFixed(2) + 'px Georgia, "Times New Roman", serif';
 }
 
 /* ---------------------------------------------------------------- cartouche */
@@ -2343,6 +2522,12 @@ export function compositeAll(box) {
 
 export function invalidate(layer, box) {
   if (layer) rebuildLayer(layer);
+  // A frame lettering the grid reads it when it draws, so a grid that moved
+  // has to take the frame with it; this is the one place every route that
+  // changes the grid passes through, the extension API's included.
+  if (layer && layer.kind === 'grid' && view.doc) {
+    for (const l of view.doc.layers) if (frameFollowsGrid(l)) { rebuildLayer(l); box = undefined; }
+  }
   if (layer && layer.kind === 'land' && followLand()) box = undefined;
   // A shadow reaches as far as the light that casts it, which is nothing like
   // the box the caller just edited, so a relight has to composite the lot.

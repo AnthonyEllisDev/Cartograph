@@ -92,6 +92,7 @@ test/caverns.mjs      25 more, for caverns and the underground art
 test/backups.mjs      21 more, for the unsaved-work question and backups
 test/frames.mjs       34 more, for map frames and the fittings art
 test/cartouche.mjs    39 more, for the title cartouche and the camp art
+test/refs.mjs         35 more, for grid references on the frame and the coast art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -469,6 +470,23 @@ smaller rather than allowed off the map. Every change is one step in the
 history, and the plate goes wherever the frame goes -- including staying off
 an export without the paper.
 
+**Grid references** letter the map round the inside of the frame -- letters
+across, numbers down -- so "the inn at C4" names one square on the table.
+Under *Grid references* in the frame's properties, *Divide the sheet* cuts the
+map into as many columns as you ask for (2 to 26) and as near-square rows as
+fit, the way an atlas plate is lettered; *Follow the map's grid* letters the
+map's own squares or hexes, so a reference is a square a token can stand on.
+They sit on a strip of the frame's ground just inside the band, with a tick at
+every division, and a grid too fine to letter every square gets every second or
+fifth. A reference is the grid's own column and row counted from the edge of
+the map, so the first square or two under the frame keep their letters (a 40 x
+30 battle map's first lettered column may be C) and widening the frame never
+renames a square already written into your notes. Change the grid and the
+references follow it; a map with no grid falls back to dividing the sheet and
+the panel says so. On a hex map the columns and rows are the offset
+coordinates the hex-coordinates extension prints. Each change is one step in
+the history, and the references go wherever the frame goes.
+
 ### Working at scale
 
 **Layer groups** are folders. Add one from the **+** in the Layers panel and
@@ -572,6 +590,13 @@ among the floors and a **frozen lake** among the land textures, and under
 a signpost, a weapon rack, a bedroll, a haystack, a cart and a woodpile, three
 variants of each and drawn to the battle-map scale.
 
+For the shore there is a **mosaic floor** for the villa above the harbour, a
+**shingle beach** among the land textures and a **coral reef** among the water,
+and under *coast* in the stamp picker a rowing boat (oars shipped or out), a
+jetty, an anchor, a fishing net, a buoy, a reef breaking the water, a sea cliff
+and a shipwreck, three variants of each. The first five are drawn to the
+battle-map scale; the reef, the cliff and the wreck read on a chart as well.
+
 ## Adding your own art
 
 See [ASSETS.md](ASSETS.md). Short version: drop a folder of PNGs into
@@ -651,7 +676,16 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 997 assertions in all: `cartouche.mjs`
+There are narrower scripts beside it, 1,032 assertions in all: `refs.mjs`
+(grid references: none on a new frame or one saved before them, a divided
+sheet lettered A to H and numbered from 1, the column count, a map with no grid
+falling back and saying so, a battle map lettered square by square with the
+grid's own indices, widening the frame renaming nothing, a grid change carrying
+the frame with it to exactly what a fresh draw gives, a fine grid lettered
+every few squares, hex columns, a hand-edited setting held to sense, left off
+an export without the paper, and the round trip; then the mosaic, shingle and
+coral-reef textures tiling and the eight coast symbols placed with the real
+tools), `cartouche.mjs`
 (the title plate: none on a new frame and none on a frame saved before it
 existed, the map's name read rather than copied, renaming the map redrawing it
 to exactly what a fresh draw gives, a title of its own, a blank one going back

@@ -34,7 +34,8 @@ PACK_ID = "starter"
 #   3  2026-10-07: cave floor, underground pool, lava; eight underground symbols
 #   4  2026-10-08: brick, carpet, marble tiles; eight fittings
 #   5  2026-10-09: sandstone, straw, frozen lake; eight camp and market symbols
-ART_VERSION = 5
+#   6  2026-10-10: mosaic, shingle beach, coral reef; eight coast symbols
+ART_VERSION = 6
 
 
 def build(out_dir, seed="v1", size=256, log=print):

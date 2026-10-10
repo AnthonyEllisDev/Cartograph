@@ -5,6 +5,99 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-10 -- grid references on the frame, and the coast art
+
+Anthony's working copy matched `origin/main` byte for byte across all 94
+tracked files but the `.pyc`s (staged and compared with line endings
+normalised; the `.pyc`s left out, as `.gitignore` says they should be). A
+feature day.
+
+**Baseline: green.** Every suite passed before anything was changed, run
+against an untouched clone while today's work went into a second one: verify
+82, lighting 29, hex 27, pro 25, ext 17, theme 16, labels 8, brushes 8, regions
+25, notes 36, generate 27, dungeon 34, props 37, guards 66, regress 135,
+clipboard 40, selection 43, prefabs 41, transform 52, hatch 32, print 29,
+players 31, setedit 21, art 17, caverns 25, backups 21, frames 34, cartouche
+39, plus `battle`. (The counts in the scheduled prompt are still a day or two
+stale -- pro 24 and ext 16 there; these are the real ones.)
+
+**Review.** `node --check` passed on every module and test, `py_compile` on
+every Python file, and the non-ASCII scan found nothing outside comments and
+UI strings. Read again: yesterday's cartouche end to end (`cartoucheBox`,
+`drawCartouche`, the rename handler and every other writer of `doc.name` --
+the restore in `tabs.js` renames before it opens, so a rebuild follows; no
+route was missed), the grid panel's `regrid`, and every bare `markDirty()` (all
+four are followed by `scheduleAutosave()` a line later). Nothing new found,
+and nothing changed on the strength of reading alone. One trap of the run's own
+making, caught by the new suite rather than by eye: the first draft of the
+coral-reef texture was called `reef`, and so was the new reef symbol, and the
+two collided on the asset id `starter/reef` -- the loose-pack id collision the
+hand-off already lists, reached from inside the starter pack. The texture is
+`coral-reef`. A new art name wants checking against both catalogues.
+
+**The feature: grid references on the frame.** Research: Azgaar's generator
+grew a grid-numbering mode, Dungeon Alchemist's users ask for lettered squares,
+and the atlas plates the frame styles imitate are lettered round the neatline;
+yesterday's entry named "coordinate ticks on the atlas band" as the next slice
+of frames. Under *Grid references* in the frame's properties:
+
+- `refs` is one of `FRAME_REFS` -- `none` (the default, so a frame saved
+  before today draws exactly as it did; checked), `sheet` (the map divided into
+  `refCols` columns, 2-26, and as near-square rows as fit) or `grid` (the map's
+  own squares or hexes). Both fields go through `frameValue`.
+- **Read from the grid at draw time, never copied.** `frameRefs(layer, doc)`
+  is the one layout, used by the renderer, the panel and the tests. The route
+  that must redraw is any rebuild of the grid layer, so it is in
+  `invalidate()` itself -- the one place the panel's `regrid`, and an
+  extension's `api.invalidate`, both pass through -- rather than in the panel.
+  Checked: with that hook taken out, two checks fail (the frame on screen no
+  longer matches a fresh draw, and the reload is no longer pixel-identical).
+- **A reference is the grid's own index**, column 0 being the one that reaches
+  in from the left edge, so widening the frame never renames a square already
+  written in someone's notes. The cost is that the first lettered column on a
+  battle map is B or C, the squares under the frame keeping their letters; the
+  README says so. Hex maps use the offset coordinates the hex-coordinates
+  extension prints (columns read along row 0, rows along column 0).
+- Drawn on a strip of the frame's ground inside the band, ruled off from the
+  map, with a tick at every division and plain squares where the strips meet;
+  a label that would run into a corner square is left off. The first
+  screenshot, before the strip, had the column and row labels set on top of
+  each other in every corner -- invisible in the source, obvious in the
+  picture. A grid too fine to letter every square gets every 2nd, 5th or 10th.
+  A map with no grid falls back to dividing the sheet, and the panel says so.
+- Each change is one undo entry through the frame's existing `set`. No
+  extension API change: the new exports (`FRAME_REFS`, `frameRefs`,
+  `refLetters`, `frameFollowsGrid`) reach extensions through `api.render` as
+  everything in the module does. `API_VERSION` stays 1.
+
+Rejected: editing the origin of the lettering (A1 at the first visible square)
+-- it would make references change when the frame does, which is the thing the
+design avoids; `registerExporter` (still a no-op, still nobody asking);
+elevation (too large for a day).
+
+**Art version 6.** Three textures and eight symbols, per Anthony's note of
+2026-10-06, all for the coast. Textures: `mosaic` (floor: tesserae with a
+grout gap and a lit top edge, laid in nested lozenges crossed by gold lines,
+the motif a whole number of times across the tile), `shingle` (land, *Shingle
+Beach*: a bed of grit and rounded pebbles laid largest first, each lit from the
+north-west over its own shadow) and `coral-reef` (water: sand under clear
+turquoise, and clusters of lumpy coral heads, one colour to a head). Stamps,
+new group `coast` (in `VARIED`, three variants each): rowing boat (oars
+shipped or out), jetty, anchor (with a chain some of the time), fishing net,
+buoy, reef, sea cliff and shipwreck. Old and new bakes at the same seed: all
+186 old files byte-identical; every texture renders at 16, 32 and 256 px.
+Each texture tiled 2 x 2 and looked at (the first shingle shaded stripes into
+its own pebbles -- the shadow pass now goes down whole before the stone -- and
+the first reef read as bubbles, then as a political map, before it read as
+coral); a contact sheet of all 24 stamp variants looked at (an anchor chain ran
+out of its box).
+
+**Tests.** New suite `refs.mjs`, 35 checks (`npm run refs`). Two full rounds
+of all twenty-nine suites back to back, identical and all green: 1,032 of
+1,032 each time, plus `battle`. Screenshots looked at: a 40 x 30 battle map
+lettered from its grid, a hex map lettered by its columns, and a region map
+with a divided sheet under an ornate cartouche.
+
 ## 2026-10-09 -- a title cartouche on the frame, and the camp art
 
 Anthony's working copy matched `origin/main` byte for byte across all 93

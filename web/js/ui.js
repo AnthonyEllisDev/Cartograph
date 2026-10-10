@@ -1008,6 +1008,32 @@ function renderFrameProps(root, layer) {
     root.appendChild(el('p', { class: 'empty', text:
       'Leave the title empty to show the map\'s name; renaming the map renames the plate.' }));
   }
+
+  // Grid references. Read from the grid when the frame draws, so the only
+  // setting kept here is which kind and, for a divided sheet, how many.
+  root.appendChild(el('h3', { text: 'Grid references' }));
+  const refs = field({ type: 'select', label: 'Letters and numbers', value: v('refs'),
+    options: Object.entries(R.FRAME_REFS).map(([id, s]) => [id, s.label]) },
+    (x) => set('refs', x, 'Grid references'));
+  refs.dataset.frame = 'refs';
+  root.appendChild(refs);
+  const laid = R.frameRefs(layer, app.doc);
+  if (v('refs') === 'sheet' || (laid && laid.mode === 'sheet')) {
+    const cols = field({ type: 'range', label: 'Columns', min: 2, max: 26, step: 1,
+      value: v('refCols'), commit: true }, (x) => set('refCols', x, 'Reference columns'));
+    cols.dataset.frame = 'refCols';
+    root.appendChild(cols);
+  }
+  if (laid) {
+    const last = (list) => (list.length ? list[list.length - 1].label : '-');
+    const span = laid.cols.length && laid.rows.length
+      ? laid.cols[0].label + laid.rows[0].label + ' to ' + last(laid.cols) + last(laid.rows) : 'nothing';
+    root.appendChild(el('p', { class: 'empty', 'data-frame-note': 'refs', text:
+      (v('refs') === 'grid' && laid.mode === 'sheet'
+        ? 'This map has no grid to follow, so the sheet is divided instead. '
+        : laid.mode === 'grid' ? 'Lettered from the map\'s grid, so the references are its own squares. ' : '')
+      + 'Runs ' + span + '.' }));
+  }
   root.appendChild(el('p', { class: 'empty', text:
     'Measured from the short side of the map, so the frame keeps its shape when the canvas is '
     + 'resized. Leave "Include the paper and border" unticked on export to leave it off.' }));

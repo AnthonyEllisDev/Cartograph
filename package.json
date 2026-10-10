@@ -27,6 +27,7 @@
     "backups": "node test/backups.mjs",
     "frames": "node test/frames.mjs",
     "cartouche": "node test/cartouche.mjs",
+    "refs": "node test/refs.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {
