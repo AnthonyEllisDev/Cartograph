@@ -8,6 +8,7 @@ import { newDocument, referencedAssets, serialise, findLayer, kindOf, LAYER_KIND
 import { clearHistory } from './history.js';
 import * as R from './render.js';
 import { applyLook } from './theme.js';
+import { saveTraces, traceOpened, traceSnapshot } from './trace.js';
 import { debounce, el, modal, toast } from './util.js';
 
 export const app = {
@@ -109,6 +110,7 @@ export async function openDocument(doc, slug) {
   for (const l of doc.layers || []) if (!Array.isArray(l.ops)) l.ops = [];
   app.doc = doc;
   app.slug = slug || doc.slug || null;
+  traceOpened(doc, slug);
   await warm(referencedAssets(doc));
   R.setDocument(doc);
   // A map can hold a layer whose kind came from an extension that is now
@@ -232,6 +234,8 @@ async function saveOnce({ silent = false } = {}) {
   // it because it looked clean.
   const editsAtSnapshot = app.edits;
   const payload = serialise(doc);
+  const traces = traceSnapshot(doc);
+  const ids = new Set(payload.layers.map((l) => l.id));
 
   let slug = app.slug;
   if (!slug) {
@@ -242,6 +246,11 @@ async function saveOnce({ silent = false } = {}) {
   } else {
     await api.writeProject(slug, payload);
   }
+  // The pictures behind any trace layers. After project.json, because the
+  // server refuses a picture for a map that is not on disk yet and sweeps the
+  // files of layers the document no longer has. Written for the map that was
+  // saved even if another has been opened since: they belong to its folder.
+  await saveTraces(doc, slug, traces, ids, api.writeLayer);
   // Saved, but no longer the map on screen: the thumbnail would be a picture
   // of the other one, and the dirty flag and the toast are about it too.
   if (app.doc !== doc) return slug;

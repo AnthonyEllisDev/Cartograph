@@ -5,6 +5,123 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-11 -- trace images, and the farm art
+
+Anthony's working copy matched `origin/main` byte for byte across all 95
+tracked files but the `.pyc`s (every file staged and compared; the `.pyc`s
+left out, as `.gitignore` says they should be). A feature day.
+
+**Baseline: green.** Every suite passed before anything was changed, run
+against a pristine clone on its own port while today's work went into the
+working tree (the first attempt ran against the working tree and was
+restarted once edits began landing -- the trap the 2026-10-09 entry names):
+verify 82, lighting 29, hex 27, pro 25, ext 17, theme 16, labels 8, brushes 8,
+regions 25, notes 36, generate 27, dungeon 34, props 37, guards 66, regress
+135, clipboard 40, selection 43, prefabs 41, transform 52, hatch 32, print 29,
+players 31, setedit 21, art 17, caverns 25, backups 21, frames 34, cartouche
+39, refs 35, plus `battle`. (The scheduled prompt still lists eight suites and
+the counts of 2026-09-21; these are the real ones.) In the scheduled run's
+container Playwright needs `CG_CHROME=/opt/pw-browsers/chromium`.
+
+**Review.** `node --check` passed on every module, extension and test,
+`py_compile` on every Python file, and the non-ASCII scan found nothing outside
+comments and UI strings. A second reader went through `print.js`, `pdf.js`,
+`transform.js`, the players' copy in `render.js` and the export dialog (page
+tiling, the mm/DPI arithmetic, PDF byte offsets, the players' cache keys, the
+transform undo's deep copies, every visibility read) and found them sound. One
+small thing fixed: `transform.js` decided for itself what a cone light is
+(`cone < 360`) where `light.isCone` also requires `cone > 0`, so a light
+hand-edited to `cone: 0` -- drawn round -- had its angle turned and the turn
+counted as a change. It calls `isCone` now; the one definition of a cone is in
+`light.js`. Unreachable from the panel (its Spread starts at 15), so no check
+was added for it. Written up, not changed: in the players' copy a room reached
+only by a secret door, and not touching the rock, is hatched as rock, because
+the hatching parity is worked out from walls with the secret doors already
+turned into walls. That arguably hides the room, which is what a players' copy
+is for -- a design call.
+
+**The feature: trace images.** Research: tracing a sketch is a standing
+request against Dungeon Alchemist, asked about on the Campaign Cartographer
+forum, and a reference overlay is asked for in World Machine; Wonderdraft and
+Dungeondraft users trace by importing a picture as a layer. Most maps start on
+paper, and Cartograph had no way to put the paper under the pen. The server
+has had a slot for a layer's own pixels all along (`PUT
+/api/projects/<map>/layer/<id>`, `layers/<id>.png`, kept by the save's sweep
+while the layer exists) and nothing in the editor used it; this is the first
+thing that does.
+
+- A new layer kind, `trace` (*Trace image* in the New layer dialog and *Add a
+  trace image to draw over* in the palette), put on top of the stack under the
+  note pins at 50% opacity. *Choose a picture...* loads a PNG, JPEG, WebP, GIF
+  or BMP; *Size* (`zoom`), *Across* and *Down* (`offsetX`, `offsetY`, shares of
+  the map's size, so resizing the canvas keeps it in place) and *Fit to the
+  map* line it up. Every change is one undo entry, and a change to nothing is
+  none. The panel says Blend set to Multiply drops a scan's paper out.
+- **Never in the map's output.** `flatten()` gained `trace` (default false),
+  so every export, print sheet, players' copy, Universal VTT image and
+  thumbnail leaves it out without each caller having to know.
+- **The picture is a file, the document holds its size and name.**
+  `web/js/trace.js` re-encodes whatever was chosen as a PNG, capped at 4096 on
+  the long side, and draws the PNG *decoded again*, not the canvas it came
+  from -- a canvas holds premultiplied alpha and the file does not, so drawing
+  the canvas would make the screen and the reopened map disagree (invariant
+  (a)). The decoded picture is kept in a WeakMap keyed on the very
+  `layer.image` object the document holds, so undo, which swaps the object,
+  brings its picture with it.
+- **The document and the folder are saved separately, which is the
+  value-in-two-places trap.** `saveTraces` runs after `project.json` is
+  written: it knows which picture each layer's file holds, forgets the files
+  the save has just swept (layers not in the document), and writes any layer
+  whose picture is not the one on disk. So *delete the layer, save, undo,
+  save* writes the picture back, and *replace the picture, save, undo, save*
+  leaves the first one in the folder. Both were proved to matter by breaking
+  the code on purpose: without the forgetting, the first fails; comparing by
+  layer id instead of by picture, the second fails (a check reading the file
+  itself was added after the first draft of the suite let that mutant through
+  on a screen-only comparison).
+- **A restored backup** has no folder of its own, and a backup holds no
+  pictures. `traceBorrow` points it at the folder of the map it was taken from
+  (`restoreBackup` reads the backup's slug before deleting it), and its first
+  save writes the picture into its own folder. Without that the panel said
+  "Reading the picture..." for ever. A map naming a picture whose file has gone
+  says so in the panel and offers to choose it again.
+- No extension API change and `API_VERSION` stays 1; the new module reaches
+  nothing through `api.render`. `trace` joins the built-in kinds an extension
+  may not register.
+
+Rejected today: `registerExporter` (still a no-op, still nobody asking);
+elevation (too large for a day); a rotation control for the trace (a scan is
+nearly always square to the page; it can come later if anyone asks); storing
+the picture inline in `project.json` as a data URL (it would make every
+autosave and every backup megabytes, against the "a map is kilobytes" rule).
+Left: backups do not carry the picture, so a backup of a map whose folder has
+since been deleted restores without it -- said in the panel and the README.
+
+**Art version 7.** Three textures and eight symbols, per Anthony's note of
+2026-10-06, all for the farm. Textures: `vineyard` (land: rows of vines over
+bare earth, a whole number of rows to the tile, posts at a spacing that divides
+it, a bunch of grapes here and there), `wheat-field` (land, *Wheat Field*:
+wind-combed bands at whole-number wave counts, a dense stubble of stalks
+leaning one way with pale ears, the odd poppy) and `packed-earth` (floor: brown
+clay worn darker where feet go, small stones trodden in, wisps of straw).
+Stamps, new group `farm` (in `VARIED`, three variants each): fence (sometimes
+with a field gate or a rail down), scarecrow (sometimes with a crow that is
+not fooled), beehives (one to three skeps, a bench under two or more), trough
+(wood or stone), wheelbarrow (earth, stones, turnips or empty), vegetable
+patch (cabbages, carrots or pumpkins), grain sacks and a millstone. Every new
+name was checked against both catalogues (the 2026-10-10 trap). Old and new
+bakes at the same seed: all 213 old files byte-identical. Each texture tiled
+2 x 2 and looked at (the first wheat read as sand with hairs; the bands and
+stalks were strengthened), and a contact sheet of all 24 stamp variants looked
+at (the first gate swung out of its box; it is a closed field gate now).
+
+**Tests.** New suite `trace.mjs`, 42 checks (`npm run trace`); every check
+named above as proving something was run against code broken on purpose and
+failed there. Two full rounds of all thirty suites back to back, identical and
+all green: 1,074 of 1,074 each time, plus `battle`. Screenshots looked at: a
+hand-drawn island sketch traced under a landmass stroke, and the eight farm
+symbols on a battle map at their real size against the grid.
+
 ## 2026-10-10 -- grid references on the frame, and the coast art
 
 Anthony's working copy matched `origin/main` byte for byte across all 94

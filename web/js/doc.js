@@ -24,6 +24,7 @@ export const LAYER_KINDS = {
   grid:    { label: 'Grid',     paint: false, icon: 'grid'  },
   paper:   { label: 'Paper',    paint: false, icon: 'paper' },
   frame:   { label: 'Frame',    paint: false, icon: 'frame' },
+  trace:   { label: 'Trace image', paint: false, icon: 'trace' },
 };
 
 /** The entry for a layer's kind, or a usable stand-in.
@@ -103,6 +104,12 @@ export function makeLayer(kind, extra = {}) {
   if (kind === 'frame') Object.assign(base, {
     style: 'atlas', size: 1, margin: 1, color: '#3a2c1e', accent: '#efe3c6', mat: true,
     cartouche: 'none', titleSize: 1, refs: 'none', refCols: 8,
+  });
+  // Half opacity, because a picture drawn over at full strength hides the
+  // very lines being drawn on top of it. `image` stays null until one is
+  // chosen; see trace.js.
+  if (kind === 'trace') Object.assign(base, {
+    opacity: 0.5, image: null, zoom: 1, offsetX: 0, offsetY: 0,
   });
   return Object.assign(base, extra);
 }

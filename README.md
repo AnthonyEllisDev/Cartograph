@@ -93,6 +93,7 @@ test/backups.mjs      21 more, for the unsaved-work question and backups
 test/frames.mjs       34 more, for map frames and the fittings art
 test/cartouche.mjs    39 more, for the title cartouche and the camp art
 test/refs.mjs         35 more, for grid references on the frame and the coast art
+test/trace.mjs        42 more, for trace images and the farm art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -111,7 +112,8 @@ A project is a folder, not an opaque file:
 projects/The Sundered Coast/
   project.json      the whole map as readable JSON
   thumb.png         the picture shown on the Projects tab
-  layers/           PNGs, only for layers holding imported pixels
+  layers/           PNGs, only for layers holding imported pixels -- the
+                    picture behind a trace layer is one
 ```
 
 `project.json` holds every brush stroke, stamp, path and label as **data** —
@@ -487,6 +489,34 @@ the panel says so. On a hex map the columns and rows are the offset
 coordinates the hex-coordinates extension prints. Each change is one step in
 the history, and the references go wherever the frame goes.
 
+### Tracing a sketch
+
+Most maps start on paper: a sketch on squared paper, a photograph of a
+hand-drawn map, an old campaign map that wants redrawing. **+** in the Layers
+panel → *Trace image* (or *Add a trace image to draw over* in the palette) puts
+a trace layer on top of the map, and *Choose a picture...* in its properties
+loads a PNG, JPEG, WebP, GIF or BMP into it. It shows at half strength so
+what you draw underneath shows through; *Opacity* sets how strongly, and
+*Blend* set to *Multiply* drops the white or cream paper of a scan out and
+leaves the ink. *Size*, *Across* and *Down* line it up with the map (it starts
+fitted inside the map and centred), and *Fit to the map* puts it back. Drag the
+layer down the stack to put it under the paint instead of over it.
+
+**A trace is scaffolding, never part of the map.** It is left out of every
+export, print, players' copy, Universal VTT image and thumbnail, and nothing
+on the export dialog puts it back. Hide the layer to look at the map without
+it; delete the layer when the tracing is done.
+
+The picture is kept as a PNG in the map's own folder (`layers/<layer id>.png`),
+cut down to 4096 pixels on its long side, and `project.json` records only its
+size and the name it came from -- so the map stays a few kilobytes of readable
+JSON. Choosing, sizing and moving it are each a step in the history, and undo
+works across saves: delete the layer, save, undo, and the next save writes the
+picture back into the folder. A backup keeps the map, not the picture: a
+restored map reads the picture from the folder of the map it was taken from,
+and its first save copies it into a folder of its own; if that map has gone,
+the panel says the picture is missing.
+
 ### Working at scale
 
 **Layer groups** are folders. Add one from the **+** in the Layers panel and
@@ -676,7 +706,19 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 1,032 assertions in all: `refs.mjs`
+There are narrower scripts beside it, 1,074 assertions in all: `trace.mjs`
+(trace images: offered by the new-layer dialog, adding it one undo step, an
+empty one changing nothing, the picture recorded by size and name and never as
+pixels, fitted and centred, on screen at half strength and in no export --
+the players' copy included -- unless asked for by name, hidden with its layer,
+Size, Across, Down and Fit each one step, the save writing the picture into the
+map's folder, the reload pixel-identical, a layer deleted, saved and undone
+having its picture written back, a picture replaced, saved and undone leaving
+the first one in the folder, a restored backup reading the picture from the
+map it came from and its first save copying it, a large JPEG cut down to a
+4096-px PNG, and a missing file said to be missing; then the vineyard, wheat-field and
+packed-earth textures tiling and the eight farm symbols placed with the real
+tools), `refs.mjs`
 (grid references: none on a new frame or one saved before them, a divided
 sheet lettered A to H and numbered from 1, the column count, a map with no grid
 falling back and saying so, a battle map lettered square by square with the

@@ -28,6 +28,7 @@
 import { app, emit, markDirty, scheduleAutosave } from './app.js';
 import { gridLayer, latticePoint, snapPoint } from './doc.js';
 import { pushEntry } from './history.js';
+import { isCone } from './light.js';
 import { TOOLS, invalidateAll, selectedObjects } from './tools.js';
 import { toast } from './util.js';
 
@@ -128,8 +129,9 @@ function apply(layer, item, pivot, how) {
   if (layer.kind === 'objects') how.stamp(item);
   // Only a cone has a facing worth turning; a round light looks the same
   // whichever way its angle points, and a field left alone stays out of the
-  // diff of the file.
-  if (layer.kind === 'lights' && item.cone != null && item.cone < 360) {
+  // diff of the file. light.js decides what a cone is: a hand-edited cone of
+  // 0 draws round, and was turned here all the same.
+  if (layer.kind === 'lights' && isCone(item)) {
     item.angle = how.facing(item.angle || 0);
   }
 }

@@ -1637,6 +1637,297 @@ def shipwreck(rng):
     return _svg(w, h, "".join(parts))
 
 
+# The farm, added 2026-10-11 (art version 7): what stands round a farmhouse
+# on a battle map -- a fence to keep it in, the crops and the beasts' trough,
+# the bees, the barrow and the grain on its way to the mill.
+SOIL = "#7a5a3c"
+SOIL_DARK = "#5c4029"
+CABBAGE = ["#7f9c5a", "#6d8a4e", "#93ab6a"]
+PUMPKIN = "#d0823a"
+SKEP = "#c9a25a"
+SKEP_DARK = "#9c7a3c"
+
+
+def fence(rng):
+    w, h = 170, 26
+    body, light, dark = _wood(rng)
+    posts = rng.choice((4, 5, 6))
+    gap = (w - 8) / (posts - 1)
+    gate = rng.random() < 0.34
+    broken = None if gate else (rng.randrange(posts - 1) if rng.random() < 0.5 else None)
+    parts = []
+    # Two rails, post to post. A broken bay has one rail down and askew.
+    for k in range(posts - 1):
+        x0, x1 = 4 + k * gap, 4 + (k + 1) * gap
+        if gate and k == (posts - 2) // 2:
+            # A field gate: a frame of lighter timber with its brace, and the
+            # latch on the far post.
+            parts.append('<rect x="%.1f" y="7" width="%.1f" height="12" fill="%s" stroke="%s" stroke-width="1"/>'
+                         % (x0 + 4, gap - 8, light, INK))
+            parts.append('<line x1="%.1f" y1="18" x2="%.1f" y2="8" stroke="%s" stroke-width="1.6"/>'
+                         % (x0 + 5, x1 - 5, dark))
+            parts.append('<line x1="%.1f" y1="13" x2="%.1f" y2="13" stroke="%s" stroke-width="1"/>'
+                         % (x0 + 4, x1 - 4, dark))
+            parts.append('<rect x="%.1f" y="11" width="3" height="4" fill="%s"/>' % (x1 - 7, IRON))
+            continue
+        for y in (8, 15):
+            if broken == k and y == 15:
+                parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="3.2"/>'
+                             % (x0 + 3, 15, x1 - 6, 22, dark))
+                continue
+            parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="4.2"/>' % (x0, y, x1, y, INK))
+            parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="2.6"/>' % (x0, y, x1, y, body))
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8" opacity="0.8"/>'
+                         % (x0 + 1, y - 0.8, x1 - 1, y - 0.8, light))
+    for k in range(posts):
+        x = 4 + k * gap
+        parts.append('<rect x="%.1f" y="6" width="7" height="14" rx="1.5" fill="%s" stroke="%s" stroke-width="1.1"/>'
+                     % (x - 3.5, dark, INK))
+        parts.append('<circle cx="%.1f" cy="13" r="1.6" stroke="%s" stroke-width="0.6" opacity="0.7"/>' % (x, light))
+    return _svg(w, h, "".join(parts))
+
+
+def scarecrow(rng):
+    w, h = 92, 92
+    c = 46
+    coat = rng.choice(CLOTHS)
+    tilt = rng.uniform(-14, 14)
+    parts = ['<ellipse cx="50" cy="52" rx="34" ry="12" fill="%s" opacity="0.2"/>' % INK,
+             '<g transform="rotate(%.1f %d %d)">' % (tilt, c, c),
+             # The crosspiece, and the coat hung on it, sleeves out.
+             '<line x1="6" y1="%d" x2="86" y2="%d" stroke="%s" stroke-width="3"/>' % (c, c, TRUNK),
+             '<path d="M10,%d L30,%d L36,%d L56,%d L62,%d L82,%d L82,%d L62,%d L58,%d L34,%d L30,%d L10,%d Z" '
+             'fill="%s" stroke="%s" stroke-width="1.2"/>'
+             % (c - 6, c - 7, c - 12, c - 12, c - 7, c - 6, c + 6, c + 7, c + 22, c + 22, c + 7, c + 6, coat, INK)]
+    # A patch, and straw at the cuffs and the collar.
+    parts.append('<rect x="%.1f" y="%.1f" width="9" height="8" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                 % (rng.uniform(38, 48), rng.uniform(c + 4, c + 12), rng.choice(CLOTHS), INK_SOFT))
+    for x0, dx in ((10, -1), (82, 1)):
+        for k in range(5):
+            parts.append('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1"/>'
+                         % (x0, c - 4 + k * 2, x0 + dx * rng.uniform(4, 8), c - 6 + k * 3, HAY_DARK))
+    parts.append('</g>')
+    # The hat, seen from above: brim and crown.
+    parts.append('<circle cx="%d" cy="%d" r="13" fill="%s" stroke="%s" stroke-width="1.2"/>' % (c, c - 4, HAY, INK))
+    parts.append('<circle cx="%d" cy="%d" r="7" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c - 4, HAY_LIGHT, INK))
+    for k in range(10):
+        a = k * math.pi / 5 + rng.uniform(-0.2, 0.2)
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.7"/>'
+                     % (c + math.cos(a) * 8, c - 4 + math.sin(a) * 8, c + math.cos(a) * 12.5,
+                        c - 4 + math.sin(a) * 12.5, HAY_DARK))
+    if rng.random() < 0.5:
+        # A crow that is not fooled.
+        bx, by = rng.choice(((74, 30), (18, 60), (70, 66)))
+        parts.append('<path d="M%d,%d l6,-3 l4,2 l6,-1 l-5,3 l-3,4 Z" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                     % (bx, by, SOOT, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def _skep(cx, cy, r, rng):
+    """A straw hive from above: the coils of its rope wound to the crown."""
+    out = ['<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.25"/>' % (cx + 2, cy + 3, r, INK),
+           '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="1.2"/>' % (cx, cy, r, SKEP, INK)]
+    k = r - 2.5
+    while k > 2:
+        out.append('<circle cx="%.1f" cy="%.1f" r="%.1f" stroke="%s" stroke-width="0.9" opacity="0.85"/>'
+                   % (cx - (r - k) * 0.12, cy - (r - k) * 0.12, k, SKEP_DARK))
+        k -= 3.2
+    out.append('<path d="M%.1f,%.1f A%.1f,%.1f 0 0 1 %.1f,%.1f" stroke="%s" stroke-width="1.4" opacity="0.7"/>'
+               % (cx - r * 0.7, cy - r * 0.2, r * 0.75, r * 0.75, cx - r * 0.1, cy - r * 0.72, HAY_LIGHT))
+    for _ in range(rng.randint(1, 3)):
+        a = rng.uniform(0, math.pi * 2)
+        d = r + rng.uniform(3, 8)
+        bx, by = cx + math.cos(a) * d, cy + math.sin(a) * d
+        out.append('<ellipse cx="%.1f" cy="%.1f" rx="1.8" ry="1.2" fill="%s"/>' % (bx, by, BRASS))
+        out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.6"/>'
+                   % (bx - 0.6, by, bx + 0.6, by, SOOT))
+    return "".join(out)
+
+
+def beehive(rng):
+    count = rng.choice((1, 2, 3))
+    w, h = 40 + count * 34, 64
+    body, light, dark = _wood(rng)
+    parts = []
+    if count > 1:
+        # A bench for a row of them.
+        parts.append('<rect x="4" y="18" width="%d" height="28" rx="2" fill="%s" stroke="%s" stroke-width="1.1"/>'
+                     % (w - 8, body, INK))
+        parts.append(_boards(4, 18, w - 8, 28, 3, True, dark, 0.6))
+    for k in range(count):
+        parts.append(_skep(w / 2 + (k - (count - 1) / 2.0) * 34, 32, rng.uniform(14, 16.5), rng))
+    return _svg(w, h, "".join(parts))
+
+
+def trough(rng):
+    w, h = 120, 44
+    body, light, dark = _wood(rng)
+    ln = rng.uniform(96, 114)
+    x0 = (w - ln) / 2
+    parts = [
+        '<rect x="%.1f" y="5" width="%.1f" height="34" rx="2" fill="%s" opacity="0.25"/>' % (x0 + 3, ln, INK),
+        '<rect x="%.1f" y="3" width="%.1f" height="34" rx="2" fill="%s" stroke="%s" stroke-width="1.3"/>' % (x0, ln, body, INK),
+        '<line x1="%.1f" y1="4" x2="%.1f" y2="4" stroke="%s" stroke-width="1" opacity="0.8"/>' % (x0 + 2, x0 + ln - 2, light),
+    ]
+    stone = rng.random() < 0.34
+    if stone:
+        parts[1] = '<rect x="%.1f" y="3" width="%.1f" height="34" rx="3" fill="%s" stroke="%s" stroke-width="1.3"/>' % (
+            x0, ln, STONE, INK)
+    level = rng.uniform(0.55, 0.9)
+    parts.append('<rect x="%.1f" y="8" width="%.1f" height="24" rx="1.5" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                 % (x0 + 5, ln - 10, STONE_DARK if stone else dark, INK))
+    parts.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="1.5" fill="%s"/>'
+                 % (x0 + 6, 9 + 22 * (1 - level), ln - 12, 22 * level, WATER))
+    for _ in range(3):
+        y = rng.uniform(14, 28)
+        x = rng.uniform(x0 + 12, x0 + ln - 30)
+        parts.append('<path d="M%.1f,%.1f q5,-2 10,0 t10,0" stroke="%s" stroke-width="0.8" opacity="0.7"/>' % (x, y, SEA_FOAM))
+    if not stone:
+        # The iron bands that hold the planks together.
+        for f in (0.2, 0.8):
+            x = x0 + ln * f
+            parts.append('<line x1="%.1f" y1="3" x2="%.1f" y2="37" stroke="%s" stroke-width="1.6"/>' % (x, x, IRON))
+    if rng.random() < 0.5:
+        parts.append('<path d="M%.1f,20 q4,-3 8,0 q-4,3 -8,0 Z" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                     % (x0 + ln * 0.62, LEAF_LIGHT, INK_SOFT))
+    return _svg(w, h, "".join(parts))
+
+
+def wheelbarrow(rng):
+    w, h = 60, 112
+    body, light, dark = _wood(rng)
+    parts = [
+        # Handles out behind, to the south.
+        '<line x1="14" y1="40" x2="9" y2="108" stroke="%s" stroke-width="3.4"/>' % INK,
+        '<line x1="46" y1="40" x2="51" y2="108" stroke="%s" stroke-width="3.4"/>' % INK,
+        '<line x1="14" y1="40" x2="9" y2="108" stroke="%s" stroke-width="2"/>' % body,
+        '<line x1="46" y1="40" x2="51" y2="108" stroke="%s" stroke-width="2"/>' % body,
+        # The wheel in front, seen edge on.
+        '<rect x="25" y="2" width="10" height="24" rx="4" fill="%s" stroke="%s" stroke-width="1.1"/>' % (WOOD_DARK, INK),
+        '<rect x="27" y="2" width="6" height="24" rx="3" fill="%s" opacity="0.8"/>' % IRON,
+        # The tray, wider at the back.
+        '<path d="M16,16 L44,16 L54,74 L6,74 Z" fill="%s" stroke="%s" stroke-width="1.3"/>' % (body, INK),
+        '<path d="M20,22 L40,22 L47,68 L13,68 Z" fill="%s" stroke="%s" stroke-width="0.9"/>' % (dark, INK),
+        '<line x1="16" y1="16" x2="6" y2="74" stroke="%s" stroke-width="1" opacity="0.8"/>' % light,
+    ]
+    load = rng.choice(("earth", "stones", "empty", "turnips"))
+    if load == "earth":
+        parts.append('<path d="M19,30 q11,-8 22,0 l4,32 q-15,6 -30,0 Z" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                     % (SOIL, INK_SOFT))
+        parts.append('<path d="M24,38 q4,-2 8,0 M28,50 q5,-2 9,1" stroke="%s" stroke-width="0.8"/>' % SOIL_DARK)
+    elif load == "stones":
+        for _ in range(6):
+            parts.append(_rock(rng, rng.uniform(20, 40), rng.uniform(30, 62), rng.uniform(4, 6.5), width=0.8))
+    elif load == "turnips":
+        for _ in range(5):
+            x, y = rng.uniform(20, 40), rng.uniform(30, 62)
+            parts.append('<circle cx="%.1f" cy="%.1f" r="5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (x, y, "#e6d6c8", INK))
+            parts.append('<path d="M%.1f,%.1f a4,3 0 0 1 8,0 Z" fill="%s"/>' % (x - 4, y + 0.5, "#9a5a86"))
+            parts.append('<path d="M%.1f,%.1f l-3,-6 M%.1f,%.1f l2,-7" stroke="%s" stroke-width="1.2"/>'
+                         % (x, y - 4, x, y - 4, LEAF))
+    return _svg(w, h, "".join(parts))
+
+
+def crop_rows(rng):
+    w, h = 120, 96
+    crop = rng.choice(("cabbage", "carrot", "pumpkin"))
+    rows = 4 if crop != "pumpkin" else 3
+    parts = ['<rect x="3" y="3" width="114" height="90" rx="6" fill="%s" stroke="%s" stroke-width="1.1"/>' % (SOIL, INK)]
+    pitch = 90.0 / rows
+    for r in range(rows):
+        y = 3 + pitch * (r + 0.5)
+        # The ridge each row is planted along, and the furrow beside it.
+        parts.append('<line x1="8" y1="%.1f" x2="112" y2="%.1f" stroke="%s" stroke-width="%.1f" opacity="0.55"/>'
+                     % (y, y, SOIL_DARK, pitch * 0.35))
+        n = 6 if crop == "cabbage" else 9 if crop == "carrot" else 4
+        for k in range(n):
+            x = 12 + (k + 0.5) * 96.0 / n + rng.uniform(-2, 2)
+            if rng.random() < 0.08:
+                continue      # one that did not come up
+            if crop == "cabbage":
+                rr = rng.uniform(6, 8)
+                col = rng.choice(CABBAGE)
+                parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                             % (x, y, rr, col, INK))
+                parts.append('<path d="M%.1f,%.1f q%.1f,-%.1f %.1f,0 M%.1f,%.1f l0,%.1f" stroke="%s" stroke-width="0.7"/>'
+                             % (x - rr * 0.6, y, rr * 0.6, rr * 0.5, rr * 1.2, x, y - rr * 0.3, rr * 0.8, LEAF_DARK))
+            elif crop == "carrot":
+                for a in (-0.6, 0, 0.6):
+                    parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1.4"/>'
+                                 % (x, y + 2, x + math.sin(a) * 6, y - math.cos(a) * 6, LEAF_LIGHT))
+                parts.append('<circle cx="%.1f" cy="%.1f" r="1.6" fill="%s"/>' % (x, y + 2, PUMPKIN))
+            else:
+                rr = rng.uniform(7, 10)
+                parts.append('<path d="M%.1f,%.1f q-14,-6 -24,4" stroke="%s" stroke-width="1.2"/>' % (x, y, LEAF))
+                parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="%s" stroke="%s" stroke-width="1"/>'
+                             % (x, y, rr, rr * 0.85, PUMPKIN, INK))
+                parts.append('<path d="M%.1f,%.1f q-3,%.1f 0,%.1f M%.1f,%.1f q3,%.1f 0,%.1f" stroke="%s" stroke-width="0.7"/>'
+                             % (x - rr * 0.35, y - rr * 0.8, rr * 0.8, rr * 1.6, x + rr * 0.35, y - rr * 0.8,
+                                rr * 0.8, rr * 1.6, "#9c5a24"))
+                parts.append('<rect x="%.1f" y="%.1f" width="2.4" height="3.5" fill="%s"/>' % (x - 1.2, y - rr * 0.85 - 2, TRUNK))
+    return _svg(w, h, "".join(parts))
+
+
+def grain_sacks(rng):
+    w, h = 96, 80
+    parts = []
+    spots = [(26, 26), (58, 24), (40, 52), (72, 52), (20, 56)]
+    rng.shuffle(spots)
+    for x, y in sorted(spots[:rng.randint(2, 5)], key=lambda p: p[1]):
+        x += rng.uniform(-3, 3)
+        y += rng.uniform(-3, 3)
+        ang = rng.uniform(-35, 35)
+        cloth = rng.choice(CANVAS)
+        parts.append('<g transform="rotate(%.1f %.1f %.1f)">' % (ang, x, y))
+        parts.append('<rect x="%.1f" y="%.1f" width="24" height="30" rx="9" fill="%s" opacity="0.25"/>' % (x - 10, y - 13, INK))
+        parts.append('<rect x="%.1f" y="%.1f" width="24" height="30" rx="9" fill="%s" stroke="%s" stroke-width="1.1"/>'
+                     % (x - 12, y - 15, cloth, INK))
+        # The neck, tied, with the ear of the sack flopping over.
+        parts.append('<path d="M%.1f,%.1f l3,-6 l6,0 l3,6" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                     % (x - 6, y - 14, cloth, INK))
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1.4"/>'
+                     % (x - 4, y - 16, x + 4, y - 16, ROPE))
+        parts.append('<path d="M%.1f,%.1f q2,6 0,12 M%.1f,%.1f q-3,4 -2,9" stroke="%s" stroke-width="0.7" opacity="0.7"/>'
+                     % (x + 5, y - 6, x - 5, y - 2, INK_SOFT))
+        if rng.random() < 0.3:
+            parts.append('<circle cx="%.1f" cy="%.1f" r="3" stroke="%s" stroke-width="0.8" opacity="0.8"/>' % (x, y + 2, ROOF))
+        parts.append('</g>')
+    if rng.random() < 0.6:
+        # Spilled grain.
+        for _ in range(14):
+            parts.append('<ellipse cx="%.1f" cy="%.1f" rx="1.2" ry="0.7" fill="%s"/>'
+                         % (rng.uniform(30, 80), rng.uniform(64, 76), HAY_DARK))
+    return _svg(w, h, "".join(parts))
+
+
+def millstone(rng):
+    w = h = 96
+    c = 48
+    r = rng.uniform(40, 44)
+    parts = ['<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.25"/>' % (c + 2, c + 3, r, INK),
+             '<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="1.4"/>' % (c, c, r, STONE, INK)]
+    # The dressing: harps of straight furrows, each run off the eye at a slant.
+    harps = rng.choice((6, 8, 10))
+    for k in range(harps):
+        a0 = k * 2 * math.pi / harps
+        for f in range(4):
+            a = a0 + f * 0.09
+            x0, y0 = c + math.cos(a) * 10, c + math.sin(a) * 10
+            x1, y1 = c + math.cos(a + 0.35) * (r - 3), c + math.sin(a + 0.35) * (r - 3)
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8" opacity="0.8"/>'
+                         % (x0, y0, x1, y1, STONE_DARK))
+    parts.append('<circle cx="%d" cy="%d" r="%.1f" stroke="%s" stroke-width="1" opacity="0.6"/>' % (c, c, r - 4, STONE_DARK))
+    parts.append('<circle cx="%d" cy="%d" r="11" fill="%s" stroke="%s" stroke-width="1.1"/>' % (c, c, STONE_DARK, INK))
+    parts.append('<rect x="%d" y="%d" width="10" height="10" fill="%s" stroke="%s" stroke-width="1"/>' % (c - 5, c - 5, SOOT, INK))
+    if rng.random() < 0.5:
+        # Cracked across, as an old stone set down by a barn is.
+        a = rng.uniform(0, math.pi)
+        parts.append('<path d="M%.1f,%.1f l%.1f,%.1f l%.1f,%.1f" stroke="%s" stroke-width="1"/>'
+                     % (c + math.cos(a) * 12, c + math.sin(a) * 12, math.cos(a) * 14 + 3, math.sin(a) * 14,
+                        math.cos(a) * 14 - 2, math.sin(a) * 14 + 2, INK))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -1707,11 +1998,19 @@ CATALOGUE = [
     ("reef", "Reef", "coast", reef),
     ("sea-cliff", "Sea Cliff", "coast", sea_cliff),
     ("shipwreck", "Shipwreck", "coast", shipwreck),
+    ("fence", "Fence", "farm", fence),
+    ("scarecrow", "Scarecrow", "farm", scarecrow),
+    ("beehive", "Beehives", "farm", beehive),
+    ("trough", "Trough", "farm", trough),
+    ("wheelbarrow", "Wheelbarrow", "farm", wheelbarrow),
+    ("crop-rows", "Vegetable Patch", "farm", crop_rows),
+    ("grain-sacks", "Grain Sacks", "farm", grain_sacks),
+    ("millstone", "Millstone", "farm", millstone),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm")
 
 
 def build(seed):

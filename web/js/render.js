@@ -10,6 +10,7 @@ import { imageNow, pattern } from './assets.js';
 import { LAYER_KINDS, NOTE_DEFAULTS, gridLayer, gridStepPx, layerAlpha, layerGM, layerVisible } from './doc.js';
 import * as hex from './hex.js';
 import * as light from './light.js';
+import { drawTrace } from './trace.js';
 import { clamp, makeCanvas, rng } from './util.js';
 
 export const view = {
@@ -574,11 +575,27 @@ export function rebuildLayer(layer) {
     case 'grid':    return renderGrid(layer, ctx);
     case 'paper':   return renderPaper(layer, ctx);
     case 'frame':   return renderFrame(layer, ctx);
+    case 'trace':   return renderTrace(layer, ctx);
     default:
       // A kind an extension taught us about.
       if (view.renderCustomLayer) view.renderCustomLayer(layer, ctx);
       return undefined;
   }
+}
+
+/* A trace image arrives after the rebuild that asked for it: the file is read
+ * from the map's folder on first draw. When it lands the layer is rebuilt --
+ * if it is still on the map on screen, since another map may have been opened
+ * in the meantime -- and anyone listening (the Layers panel, which says when a
+ * picture is missing) is told. */
+function renderTrace(layer, ctx) {
+  const doc = view.doc;
+  drawTrace(ctx, layer, doc, () => {
+    if (view.doc !== doc || !doc.layers.includes(layer)) return;
+    rebuildLayer(layer);
+    compositeAll(); requestDraw();
+    if (view.onTraceLoaded) view.onTraceLoaded(layer);
+  });
 }
 
 function renderFill(layer, ctx) {
@@ -2735,7 +2752,7 @@ function roundRect(ctx, x, y, w, h, r) {
  *  printing at scale wants a 60-cm map one page at a time, and flattening the
  *  whole of it at 300 dpi first would be a canvas no browser will make. */
 export function flatten({ scale = 1, grid = true, paper = true, lights = true, notes = true, rect = null,
-                          players = false } = {}) {
+                          players = false, trace = false } = {}) {
   const r = rect || { x: 0, y: 0, w: view.doc.width, h: view.doc.height };
   const w = Math.max(1, Math.round(r.w * scale));
   const h = Math.max(1, Math.round(r.h * scale));
@@ -2749,6 +2766,9 @@ export function flatten({ scale = 1, grid = true, paper = true, lights = true, n
     if ((layer.kind === 'paper' || layer.kind === 'frame') && !paper) continue;
     if (layer.kind === 'lights' && !lights) continue;
     if (layer.kind === 'notes' && !notes) continue;
+    // Off unless asked for by name: every export, print and thumbnail goes
+    // through here, and a tracing aid in any of them is a mistake.
+    if (layer.kind === 'trace' && !trace) continue;
     if (players && !forPlayers(layer)) continue;
     const src = players ? playersCanvas(layer) : canvasFor(layer);
     ctx.globalAlpha = layerAlpha(view.doc, layer);

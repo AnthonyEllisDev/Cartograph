@@ -19,7 +19,7 @@ import { copySelection, cutSelection, duplicateSelection, paste } from './clipbo
 import { mirrorSelection, turnSelection } from './transform.js';
 import * as R from './render.js';
 import { TOOLS, clearSelection, selectAll, setTool } from './tools.js';
-import { addFrame, renderAssetPicker, renderToolOptions } from './ui.js';
+import { addFrame, addTrace, renderAssetPicker, renderToolOptions } from './ui.js';
 import { $, el, modalOpen, toast } from './util.js';
 
 let root = null;
@@ -76,6 +76,9 @@ const BUILT_IN = [
   { id: 'add-frame', group: 'Map', title: 'Add a frame round the map',
     detail: 'Atlas bars, a double rule, ornate corners, rope or stone, on a layer of its own',
     run: () => addFrame() },
+  { id: 'add-trace', group: 'Map', title: 'Add a trace image to draw over',
+    detail: 'A sketch, scan or photo shown under your drawing, never exported',
+    run: () => addTrace() },
   { id: 'scale-bar', group: 'View', title: 'Show or hide the scale bar',
     run: () => {
       app.settings.showScaleBar = !(app.settings.showScaleBar !== false);

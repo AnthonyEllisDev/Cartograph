@@ -19,14 +19,15 @@ pack's `pack.json`, so a pack you liked can always be rebuilt.
 The generated pack is **CC0 1.0** — public domain. Maps you make with it are
 yours, commercially or otherwise.
 
-Thirty-two terrain tiles: parchment, ocean, shallows, a coral reef, grass,
+Thirty-five terrain tiles: parchment, ocean, shallows, a coral reef, grass,
 meadow, broadleaf and pine forest, sand, dunes, rock, highland, snow, tundra,
-marsh, farmland, ashland, a shingle beach and a frozen lake for the land;
-flagstones, wooden floorboards, cobblestones, brick, a woven carpet, marble
-tiles, sandstone blocks, straw and a mosaic for the floors of battle maps; and a cave floor, an underground pool and a lava flow for going below
+marsh, farmland, a vineyard, a wheat field, ashland, a shingle beach and a
+frozen lake for the land; flagstones, wooden floorboards, cobblestones, brick,
+a woven carpet, marble tiles, sandstone blocks, straw, a mosaic and packed
+earth for the floors of battle maps; and a cave floor, an underground pool and a lava flow for going below
 them.
 
-Sixty-nine symbols. Drawn side-on, the way an atlas draws them: mountains,
+Seventy-seven symbols. Drawn side-on, the way an atlas draws them: mountains,
 hills, volcanoes, caves, standing stones, five kinds of tree, villages, towns,
 cities, castles, towers, ruins, windmills, lighthouses, mines, bridges, ships,
 a sea serpent and a compass rose. Drawn from above, at five feet to seventy
@@ -37,9 +38,11 @@ fittings, a door, a portcullis, a trapdoor, a wall torch, a statue, an anvil, a
 cauldron and a chair; and, for the camp and the market, a tent, a market
 stall, a signpost, a weapon rack, a bedroll, a haystack, a cart and a woodpile;
 and, along the coast, a rowing boat, a jetty, an anchor, a fishing net, a buoy,
-a reef, a sea cliff and a shipwreck. The land and plant symbols, the
-furnishings, the underground ones, the fittings, the camp and the coast come in
-three random variants each.
+a reef, a sea cliff and a shipwreck; and, round a farm, a fence (sometimes with
+a gate or a rail down), a scarecrow, beehives, a trough, a wheelbarrow, a
+vegetable patch, grain sacks and a millstone. The land and plant symbols, the
+furnishings, the underground ones, the fittings, the camp, the coast and the
+farm come in three random variants each.
 
 ## Adding to the generated art
 

@@ -17,6 +17,7 @@ import { copySelection, duplicateSelection } from './clipboard.js';
 import { loadPrefabs, prefabStrip, saveSelectionAsPrefab } from './prefabs.js';
 import { mirrorSelection, turnSelection, turnStep } from './transform.js';
 import { $, el, modal, toast } from './util.js';
+import { importTrace, traceRect, traceState, traceValue } from './trace.js';
 
 /* ------------------------------------------------------------------ fields */
 
@@ -787,6 +788,7 @@ function renderLayerProps() {
     }
   }
   if (layer.kind === 'frame') renderFrameProps(root, layer);
+  if (layer.kind === 'trace') renderTraceProps(root, layer);
   if (layer.kind === 'paper') {
     root.appendChild(field({ type: 'range', label: 'Vignette', min: 0, max: 1, step: 0.01,
       value: layer.vignette, percent: true, commit: true },
@@ -797,10 +799,10 @@ function renderLayerProps() {
   }
 
   const acts = el('div', { class: 'row' });
-  if (layer.kind !== 'group' && layer.kind !== 'frame') {
+  if (layer.kind !== 'group' && layer.kind !== 'frame' && layer.kind !== 'trace') {
     acts.appendChild(el('button', { class: 'btn', text: 'Clear', onclick: () => clearLayer(layer) }));
   }
-  if (layer.kind === 'raster' || layer.kind === 'group' || layer.kind === 'frame') {
+  if (layer.kind === 'raster' || layer.kind === 'group' || layer.kind === 'frame' || layer.kind === 'trace') {
     acts.appendChild(el('button', {
       class: 'btn btn-danger', text: 'Delete layer', onclick: () => deleteLayer(layer),
     }));
@@ -1039,6 +1041,125 @@ function renderFrameProps(root, layer) {
     + 'resized. Leave "Include the paper and border" unticked on export to leave it off.' }));
 }
 
+/* ------------------------------------------------------------------ trace */
+
+// A picture read from the map's folder lands after the panel was drawn, and
+// the panel is what says whether it was found.
+R.view.onTraceLoaded = (layer) => { if (activeLayer() === layer) renderLayerProps(); };
+
+/** Add a trace layer: on top of the map, under the note pins, so what is
+ *  being traced shows through whatever has been drawn so far. Undoable, as
+ *  deleting it is. The picture is chosen in its panel afterwards -- a file
+ *  dialog has to be opened by the click itself, and this runs after a modal. */
+export function addTrace() {
+  if (!app.doc) return null;
+  const layer = makeLayer('trace');
+  let at = app.doc.layers.length;
+  while (at > 0 && app.doc.layers[at - 1].kind === 'notes') at--;
+  const was = app.activeLayerId;
+  const put = () => {
+    app.doc.layers.splice(at, 0, layer);
+    R.rebuildLayer(layer);
+    R.compositeAll(); R.requestDraw();
+    setActiveLayer(layer.id);
+  };
+  const take = () => {
+    const i = app.doc.layers.indexOf(layer);
+    if (i >= 0) app.doc.layers.splice(i, 1);
+    R.forgetLayer(layer.id);
+    if (app.activeLayerId === layer.id) app.activeLayerId = was;
+    R.compositeAll(); R.requestDraw();
+    emit('layers');
+  };
+  put();
+  pushEntry({ label: 'Add trace image', bytes: 0, undo: take, redo: put });
+  markDirty(); scheduleAutosave();
+  return layer;
+}
+
+/* The trace layer's panel. As the frame's: one undo entry per change, none
+ * for a change to nothing. A new picture is a new `image` object, so undo
+ * hands the old object back and the old picture comes with it (trace.js). */
+function renderTraceProps(root, layer) {
+  const set = (changes, label, bytes = 0) => {
+    const was = {};
+    let moved = false;
+    for (const k of Object.keys(changes)) {
+      was[k] = layer[k];
+      if (layer[k] !== changes[k]) moved = true;
+    }
+    if (!moved) return;
+    const put = (vals) => {
+      Object.assign(layer, vals);
+      R.invalidate(layer); R.requestDraw();
+      if (activeLayer() === layer) renderLayerProps();
+    };
+    put(changes);
+    pushEntry({ label, bytes, undo() { put(was); }, redo() { put(changes); } });
+    markDirty(); scheduleAutosave();
+  };
+  root.appendChild(el('h3', { text: 'Trace image' }));
+
+  const input = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif,image/bmp',
+    hidden: true, 'data-trace': 'file' });
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const image = await importTrace(file);
+      // The panel may have been closed, or the layer deleted, while the
+      // picture decoded; a picture for a layer no longer there is dropped.
+      if (!app.doc.layers.includes(layer)) return;
+      set({ image }, 'Trace picture', image.w * image.h * 4);
+    } catch (err) {
+      toast('That picture could not be used: ' + err.message, 'bad');
+    }
+  });
+  root.appendChild(input);
+  const state = traceState(layer);
+  const choose = el('button', { class: 'btn', 'data-trace': 'choose',
+    text: state === 'none' ? 'Choose a picture...' : 'Replace the picture...',
+    onclick: () => input.click() });
+  root.appendChild(el('div', { class: 'row' }, [choose]));
+
+  const image = layer.image;
+  const says = {
+    none: 'Pick a sketch, a scan or a photograph to draw over. It is kept in this map\'s folder.',
+    loading: 'Reading the picture from the map\'s folder...',
+    missing: 'The picture\'s file is not in this map\'s folder any more. Choose it again to go on tracing.',
+    ready: image ? (image.name || 'Picture') + ' -- ' + image.w + ' x ' + image.h + ' px.' : '',
+  };
+  root.appendChild(el('p', { class: 'empty', 'data-trace-note': state, text: says[state] }));
+  if (state === 'none') return;
+
+  const zoom = field({ type: 'range', label: 'Size', min: 0.1, max: 4, step: 0.01,
+    value: traceValue(layer, 'zoom'), suffix: '\u00d7', commit: true },
+    (x) => set({ zoom: x }, 'Trace size'));
+  zoom.dataset.trace = 'zoom';
+  root.appendChild(zoom);
+  const ox = field({ type: 'range', label: 'Across', min: -1, max: 1, step: 0.005,
+    value: traceValue(layer, 'offsetX'), percent: true, commit: true },
+    (x) => set({ offsetX: x }, 'Trace position'));
+  ox.dataset.trace = 'offsetX';
+  root.appendChild(ox);
+  const oy = field({ type: 'range', label: 'Down', min: -1, max: 1, step: 0.005,
+    value: traceValue(layer, 'offsetY'), percent: true, commit: true },
+    (x) => set({ offsetY: x }, 'Trace position'));
+  oy.dataset.trace = 'offsetY';
+  root.appendChild(oy);
+  root.appendChild(el('div', { class: 'row' }, [
+    el('button', { class: 'btn', 'data-trace': 'fit', text: 'Fit to the map',
+      onclick: () => set({ zoom: 1, offsetX: 0, offsetY: 0 }, 'Trace fitted') }),
+  ]));
+  const rect = traceRect(layer, app.doc);
+  root.appendChild(el('p', { class: 'empty', text:
+    (rect ? 'Covers ' + Math.round(rect.w) + ' x ' + Math.round(rect.h) + ' px of the map. ' : '')
+    + 'Shown while you work and left out of every export, print and thumbnail. '
+    + 'Opacity above sets how strongly it shows; Blend set to Multiply drops white or cream paper '
+    + 'out of a scanned sketch and leaves the ink.' }));
+}
+
 /* The "+" adds a paint layer, which is what it wants to do nine times in ten.
  * Once an extension has taught the program another kind of layer, it asks. */
 async function addLayerClicked() {
@@ -1048,6 +1169,7 @@ async function addLayerClicked() {
     el('option', { value: 'raster', text: 'Paint layer' }),
     el('option', { value: 'group', text: 'Group — a folder for other layers' }),
     el('option', { value: 'frame', text: 'Frame — a decorative border round the map' }),
+    el('option', { value: 'trace', text: 'Trace image — a picture to draw over, never exported' }),
   ].concat(kinds.map((k) => el('option', { value: k.id, text: k.label || k.id }))));
   let go = false;
   await modal({
@@ -1060,6 +1182,7 @@ async function addLayerClicked() {
   if (choice.value === 'raster') return addPaintLayer();
   if (choice.value === 'group') return addGroup();
   if (choice.value === 'frame') return addFrame();
+  if (choice.value === 'trace') return addTrace();
   const kind = kinds.find((k) => k.id === choice.value);
   try {
     const layer = kind.make();

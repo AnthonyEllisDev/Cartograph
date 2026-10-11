@@ -32,6 +32,8 @@ export const ICONS = {
   paper: P('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
   frame: P('<rect x="3" y="3" width="18" height="18" rx="1"/><rect x="7" y="7" width="10" height="10"/>'
           + '<path d="M3 3l4 4M21 3l-4 4M3 21l4-4M21 21l-4-4"/>'),
+  trace: P('<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 16l5-5 4 4 3-3 6 6"/>'
+          + '<circle cx="15.5" cy="8.5" r="1.5"/>'),
   trash: P('<path d="M4 7h16"/><path d="M9 7V5h6v2"/><rect x="6" y="7" width="12" height="14" rx="2"/>'),
   up: P('<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>'),
   down: P('<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>'),

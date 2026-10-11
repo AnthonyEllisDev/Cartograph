@@ -28,6 +28,7 @@
     "frames": "node test/frames.mjs",
     "cartouche": "node test/cartouche.mjs",
     "refs": "node test/refs.mjs",
+    "trace": "node test/trace.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

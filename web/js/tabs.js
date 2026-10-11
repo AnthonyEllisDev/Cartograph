@@ -9,6 +9,7 @@ import * as hex from './hex.js';
 import * as R from './render.js';
 import { ACCENTS, BACKDROPS, THEMES, applyLook, look } from './theme.js';
 import { $, $$, ago, el, modal, toast } from './util.js';
+import { traceBorrow } from './trace.js';
 
 let currentTab = 'map';
 
@@ -270,6 +271,9 @@ export async function restoreBackup(b) {
     const { project } = await api.readBackup(b.id);
     if (!(await confirmDiscard({ verb: `Restoring the backup of \u201c${b.name}\u201d`,
                                  reason: 'before restoring a backup' }))) return;
+    // Read before the slug goes: trace pictures are not in the backup, and
+    // the map it was taken from is where they are, if it is still there.
+    traceBorrow(project, typeof b.slug === 'string' ? b.slug : project.slug);
     delete project.slug;
     project.name = (project.name || 'Untitled Map') + ' (restored)';
     await warm(referencedAssets(project));

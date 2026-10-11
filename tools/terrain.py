@@ -222,6 +222,26 @@ TERRAINS = {
         sand=(206, 200, 160),
         coral=[(214, 112, 92), (226, 164, 96), (150, 92, 132), (196, 136, 140), (120, 150, 96)],
         grain=[(70, (220, 244, 240), 0.12, 0.8, 2.2)]),
+    # The farm: vines in rows on a slope, standing wheat, and the trodden
+    # earth floor of a barn or a cottage. Added 2026-10-11 (art version 7).
+    "vineyard": dict(
+        group="land", label="Vineyard", pattern="vineyard",
+        stops=[(150, 118, 78), (170, 138, 94), (188, 158, 112)],
+        leaves=[(70, 102, 52), (92, 124, 62), (112, 140, 70), (82, 96, 48)],
+        grapes=[(92, 52, 86), (120, 70, 104)],
+        post=(96, 72, 44), rows=8,
+        grain=[(60, (130, 100, 64), 0.10, 0.4, 1.2)]),
+    "wheat-field": dict(
+        group="land", label="Wheat Field", pattern="wheat",
+        stops=[(186, 150, 74), (210, 176, 96), (232, 204, 128)],
+        stalk=(132, 96, 38), ear=(246, 226, 160), poppy=(186, 58, 42),
+        stalks=4200, waves=(2, 1),
+        grain=[]),
+    "packed-earth": dict(
+        group="floor", label="Packed Earth", pattern="earth",
+        stops=[(112, 86, 60), (134, 106, 76), (156, 128, 94)],
+        worn=(98, 74, 52), straw=(206, 178, 108), stone=(150, 140, 124),
+        grain=[(140, (88, 66, 46), 0.18, 0.4, 1.3), (60, (170, 144, 108), 0.16, 0.4, 1.1)]),
 }
 
 
@@ -823,10 +843,113 @@ def _reef(spec, size, rng):
     return px
 
 
+def _vineyard(spec, size, rng):
+    """Rows of vines across bare earth, seen from above: a trodden strip
+    between each row, a post every so often, and the leaves as overlapping
+    clumps with a bunch of grapes showing here and there. A whole number of
+    rows to the tile, so the rows run on across the seam."""
+    lo, mid, hi = spec["stops"]
+    field = fbm(size, 6, 4, rng)
+    px = bytearray(size * size * 4)
+    rows = spec["rows"]
+    pitch = size / rows
+    for y in range(size):
+        # The wheel ruts between the rows are paler and smoother.
+        f = (y % pitch) / pitch
+        rut = 0.5 + 0.5 * math.cos((f - 0.5) * 2 * math.pi)
+        for x in range(size):
+            i = y * size + x
+            v = clamp(0.35 + (field[i] - 0.5) * 0.9 + rut * 0.3)
+            _put(px, i, mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0))
+    scale = size / 256.0
+    r0 = pitch * 0.30
+    for row in range(rows):
+        cy = row * pitch
+        # A post at a fixed spacing that divides the tile, so they stay put.
+        step = size / max(2, int(4 * scale) or 2)
+        for k in range(int(size / step)):
+            _blob(px, size, k * step + step * 0.5, cy, max(1.2, 1.8 * scale), spec["post"], 0.9, 0.2)
+        x = 0.0
+        while x < size:
+            r = r0 * rng.uniform(0.75, 1.15)
+            yy = cy + rng.uniform(-0.12, 0.12) * pitch
+            leaf = rng.choice(spec["leaves"])
+            # Shadow first, south-east, then the clump, then a lit edge.
+            _blob(px, size, x + r * 0.25, yy + r * 0.3, r, _shade(leaf, -0.45), 0.5, 0.6)
+            _blob(px, size, x, yy, r, leaf, 0.9, 0.45)
+            _blob(px, size, x - r * 0.3, yy - r * 0.3, r * 0.45, _shade(leaf, 0.22), 0.6, 0.7)
+            if rng.random() < 0.18:
+                g = rng.choice(spec["grapes"])
+                gx, gy = x + rng.uniform(-r, r) * 0.5, yy + r * 0.45
+                for _ in range(5):
+                    _blob(px, size, gx + rng.uniform(-1.4, 1.4) * scale, gy + rng.uniform(-1, 2) * scale,
+                          max(0.9, 1.3 * scale), g, 0.95, 0.3)
+            x += r * rng.uniform(0.7, 1.0)
+    return px
+
+
+def _wheat(spec, size, rng):
+    """Standing wheat from above: a gold ground that the wind has combed into
+    bands, a dense stubble of short stalks all leaning the same way, pale ears
+    on their tips, and a poppy or two. The bands run at whole-number wave
+    counts, as the dunes do, so they meet across the seam."""
+    lo, mid, hi = spec["stops"]
+    field = warp(fbm(size, 5, 4, rng), size, fbm(size, 6, 3, rng), fbm(size, 6, 3, rng), size * 0.05)
+    kx, ky = spec["waves"]
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            u = (kx * x + ky * y) / size
+            band = 0.5 + 0.5 * math.sin(2 * math.pi * (u + (field[i] - 0.5) * 0.7))
+            v = clamp(field[i] * 0.4 + band * 0.6)
+            _put(px, i, mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0))
+    scale = size / 256.0
+    lean = rng.uniform(-0.5, -0.3)
+    for _ in range(int(spec["stalks"] * scale * scale)):
+        x, y = rng.random() * size, rng.random() * size
+        ln = rng.uniform(3.0, 6.0) * max(0.6, scale)
+        a = lean + rng.uniform(-0.25, 0.25)
+        x1, y1 = x + math.sin(a) * ln, y - math.cos(a) * ln
+        _line(px, size, x, y, x1, y1, spec["stalk"], 0.45)
+        _line(px, size, x1, y1, x1 + math.sin(a), y1 - math.cos(a), spec["ear"], 0.6)
+    for _ in range(max(1, int(6 * scale * scale))):
+        cx, cy = rng.random() * size, rng.random() * size
+        _blob(px, size, cx, cy, 1.8 * max(0.7, scale), spec["poppy"], 0.9, 0.3)
+    return px
+
+
+def _earth(spec, size, rng):
+    """A beaten earth floor: brown clay, darker where feet have worn it, a
+    few small stones trodden in and wisps of straw blown across it."""
+    lo, mid, hi = spec["stops"]
+    field = warp(fbm(size, 4, 5, rng), size, fbm(size, 8, 3, rng), fbm(size, 8, 3, rng), size * 0.05)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = clamp(0.5 + (field[i] - 0.5) * 1.5)
+        _put(px, i, mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0))
+    scale = size / 256.0
+    for _ in range(max(2, int(7 * scale * scale))):
+        _blob(px, size, rng.random() * size, rng.random() * size,
+              rng.uniform(18, 40) * scale, spec["worn"], 0.28, 0.9)
+    for _ in range(int(90 * scale * scale)):
+        cx, cy = rng.random() * size, rng.random() * size
+        r = rng.uniform(0.8, 2.2) * max(0.6, scale)
+        _blob(px, size, cx + 0.6, cy + 0.6, r, _shade(spec["worn"], -0.3), 0.5, 0.4)
+        _blob(px, size, cx, cy, r, _shade(spec["stone"], rng.uniform(-0.15, 0.1)), 0.85, 0.35)
+    for _ in range(int(40 * scale * scale)):
+        x, y = rng.random() * size, rng.random() * size
+        a = rng.uniform(0, math.pi)
+        ln = rng.uniform(4, 10) * max(0.6, scale)
+        _line(px, size, x, y, x + math.cos(a) * ln, y + math.sin(a) * ln, spec["straw"], 0.55)
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
             "brick": _brick, "carpet": _carpet, "marble": _marble,
             "ashlar": _ashlar, "straw": _straw, "ice": _ice,
-            "mosaic": _mosaic, "shingle": _shingle, "reef": _reef}
+            "mosaic": _mosaic, "shingle": _shingle, "reef": _reef,
+            "vineyard": _vineyard, "wheat": _wheat, "earth": _earth}
 
 
 def render(name, size, seed):
