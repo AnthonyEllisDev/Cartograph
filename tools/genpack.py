@@ -36,7 +36,8 @@ PACK_ID = "starter"
 #   5  2026-10-09: sandstone, straw, frozen lake; eight camp and market symbols
 #   6  2026-10-10: mosaic, shingle beach, coral reef; eight coast symbols
 #   7  2026-10-11: vineyard, wheat field, packed earth; eight farm symbols
-ART_VERSION = 7
+#   8  2026-10-12: stony riverbed, mudflat, reed bed; eight river symbols
+ART_VERSION = 8
 
 
 def build(out_dir, seed="v1", size=256, log=print):

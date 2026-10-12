@@ -5,6 +5,117 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-12 -- rivers from a seed, the river art, and three things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 97
+tracked files but the `.pyc`s (every one staged and compared). A feature day.
+
+**Baseline: green.** Every suite passed before anything was changed, run
+against a pristine clone on its own port (7872) while today's work went into
+the working tree: verify 82, lighting 29, hex 27, pro 25, ext 17, theme 16,
+labels 8, brushes 8, regions 25, notes 36, generate 27, dungeon 34, props 37,
+guards 66, regress 135, clipboard 40, selection 43, prefabs 41, transform 52,
+hatch 32, print 29, players 31, setedit 21, art 17, caverns 25, backups 21,
+frames 34, cartouche 39, refs 35, trace 42 -- 1,074 -- plus `battle`.
+
+**Review.** `node --check` on every module, extension and test,
+`py_compile` on every Python file, and the non-ASCII scan: clean. A second
+reader went through yesterday's trace images end to end (the server's layer
+endpoint and sweep, `saveTraces`, the backup borrowing, every export) and found
+the server side and the exports sound and three real defects on the client,
+all of the value-in-two-places kind. Each was reproduced by a new check in
+`trace.mjs` that fails on the old code and passes on the new:
+
+- *Delete the open map, then save it.* The Projects tab cleared `app.slug` but
+  not what `trace.js` remembered was on disk, and a save under the same name
+  makes the same slug -- so every picture looked "already written" and none
+  was. Reopened, the map said its picture was missing, and the only copy had
+  been in memory. The delete now calls `traceOpened(doc, null)`.
+- *A restored backup showed the wrong picture, stretched.* A backup holds a
+  picture's size and name, not the picture, and borrows the file from the old
+  folder -- which may since have been replaced by another picture. It was drawn
+  at the backup's size and the first save copied it in as the right one. A
+  borrowed picture whose size is not the size the document records is now
+  `missing`, and the panel offers to choose it again.
+- *A save made while a picture was still loading skipped it for good.* The
+  save cleared the dirty flag and moved a restored map into its own folder
+  without the picture, and nothing wrote it later. `drawTrace` keeps the load
+  as a promise and `saveTraces` waits for it.
+
+Written up, not changed: a map reopened while its own save is still writing a
+picture can read a 404 and show the picture as missing until it is opened
+again. Nothing is lost, and the window is a few hundred milliseconds.
+
+**The feature: rivers from a seed.** Research: Azgaar's generator runs rivers
+downhill over its height map, while Wonderdraft, Inkarnate and Dungeondraft
+leave them to the hand as far as their documentation shows; Cartograph had
+seeded land since 2026-09-25 and nothing to put on it but what you drew.
+Elevation is still too large for a day, so the height is made up: the
+distance from the sea (a two-pass chamfer over the Landmass mask sampled to a
+grid of a few hundred cells), roughened by seeded noise scaled to the land's
+own depth. A priority flood outward from the coast (Barnes et al., 2014) gives
+every land cell a way down that ends at the sea -- no river stalls in a hollow
+of the noise -- and the order cells came out in is the order to add the
+drainage in. The biggest basins, with a seeded nudge and a minimum spacing
+between mouths, become the rivers, each traced upstream along its largest
+stream; tributaries are streams carrying enough of the river's water, two
+levels deep at most.
+
+- **Generate rivers…** in the Path panel and the palette: seed and re-roll,
+  Rivers (1-12), Tributaries, Meander, Width at the mouth, Colour, and
+  *Rivers generated before: Replace them / Keep them*, with a preview.
+- What lands in the document is ordinary river paths with `gen: 'rivers'`,
+  never the height field, for the reason generated land keeps its rings: the
+  map must reopen pixel-identical even after this file changes how a seed is
+  drawn. Generating again replaces only tagged rivers; a road drawn by hand is
+  never touched, and a river copied and pasted loses the tag (`clipboard.js`
+  already strips `gen`) and is kept. One undo entry.
+- Rivers are written source first, so the renderer's widening runs the right
+  way, and the main stem ends on the line between the last land cell and the
+  sea, so it meets the coast's ink rather than stopping short of it.
+- Rivers draining opposite sides of a ridge rose a cell apart and read as one
+  river crossing the land; each system now claims a margin round its water
+  (4% of the long side) that other systems' sources stop at, and a tributary
+  may not hug its parent or a sibling once clear of its junction. The check
+  for this uses a synthetic thin island and fails without the margin (23 px
+  against 48).
+- `fbm` is exported from `generate.js` (additive); `rivers.js` is otherwise
+  self-contained. No extension API change; `API_VERSION` stays 1.
+
+Rejected today: elevation proper (still a design, not a day); rivers that
+follow the land when it is edited later (they are paths, deliberately; generate
+again); lakes as their own feature (a carved bay inland already is one, and
+rivers end in it); and `registerExporter` (still nobody asking). Known limit:
+the grid is sampled from the mask by the browser's own downscaler, so the same
+seed may draw slightly different rivers in another browser -- the map stores
+the rivers, so a saved map is unaffected.
+
+**Art version 8.** Three textures and eight symbols, per Anthony's note of
+2026-10-06, for the river. Textures: `riverbed` (water, *Stony Riverbed*:
+pebbles laid largest first and then washed over by the water's own colour, with
+soft bands of moving light at whole-number wave counts), `mudflat` (land: wet
+mud, pools holding a little sky, creeks that are random walks on the torus so
+they cross the seam), `reed-bed` (land: dark water between stands of reeds,
+blades fanning from a root with seed heads, leaning with the wind). Stamps, new
+group `river` (in `VARIED`, three variants each): waterfall, watermill,
+stepping stones, lily pads, rapids, rope ferry, weir (stone or timber,
+sometimes a sluice) and fish trap (one to three wicker cones, sometimes an
+eel). Names checked against both catalogues. Old and new bakes at the same
+seed: all 240 old files byte-identical. Each texture tiled 2 x 2 and looked at
+(the first riverbed was polka dots on blue, the first mudflat's creeks were
+hair and its reed bed tufts on a marsh; all three were reworked), and a
+contact sheet of all 24 variants (the stepping stones' wakes read as stalks and
+were turned into ripples).
+
+**Tests.** New suite `rivers.mjs`, 44 checks (`npm run rivers`), and three
+more in `trace.mjs` (45). Two full rounds of all thirty-one suites back to back:
+identical and all green, 1,121 of 1,121
+each time, plus `battle`. Screenshots looked at: an island with ten generated rivers and their
+tributaries in the editor, the dialog's preview, and the eight river symbols
+on a battle map at their real size against the grid.
+
+---
+
 ## 2026-10-11 -- trace images, and the farm art
 
 Anthony's working copy matched `origin/main` byte for byte across all 95

@@ -66,6 +66,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/hex.js             hex geometry: the one definition of where hexes are
   js/light.js           shadow casting for the lighting layer
   js/generate.js        seeded land: noise, marching squares, the dialog
+  js/rivers.js          seeded rivers run downhill over the land, the dialog
   js/dungeon.js         seeded dungeons: rooms and corridors or caverns, walls, the key
   js/clipboard.js       copy, cut, paste and duplicate
   js/prefabs.js         sets saved to put down on any map
@@ -93,7 +94,8 @@ test/backups.mjs      21 more, for the unsaved-work question and backups
 test/frames.mjs       34 more, for map frames and the fittings art
 test/cartouche.mjs    39 more, for the title cartouche and the camp art
 test/refs.mjs         35 more, for grid references on the frame and the coast art
-test/trace.mjs        42 more, for trace images and the farm art
+test/trace.mjs        45 more, for trace images and the farm art
+test/rivers.mjs       44 more, for generated rivers and the river art
 test/clipboard.mjs    39 more, for copy, paste and duplicate
 test/selection.mjs    43 more, for holding several things at once
 test/prefabs.mjs      41 more, for saving a set and putting it down elsewhere
@@ -166,6 +168,23 @@ default.
 **Path** draws rivers, roads, trails and borders. Click along the route, press
 Enter to finish, Esc to cancel, Backspace to drop the last point. Rivers widen
 as they run. Each kind remembers its own width and colour.
+
+Or let the land decide where they go: **Generate rivers…** at the top of the
+Path panel (and in the command palette) runs rivers downhill over whatever is
+on the Landmass layer -- painted, carved or generated -- from the middle of the
+land to the coast. The land has no heights, so the height is how far each
+point is from the sea, roughened by noise from a seed; water runs down it, every
+river reaches the sea or a lake, and the biggest basins become the rivers. Pick
+how many, how readily tributaries join them, how much they meander, the width at
+the largest mouth and the colour, and watch the preview. Rivers draining
+opposite sides of a ridge stop short of each other rather than meeting head on.
+What lands on the map is ordinary river paths: Select moves or edits one, and
+the whole lot is one step in the history. Generating again replaces the rivers
+generated before (or keeps them, if you say so) and never touches a path drawn
+by hand or a river you have copied and pasted. The same seed on the same land
+gives the same rivers on one machine; the map stores the rivers themselves, so
+it reopens exactly as it was wherever it is opened. Change the coast afterwards
+and the rivers stay put -- generate them again to follow it.
 
 **Region** shades a territory. Click round its border, press Enter to close it,
 and give it a name: you get a tinted area, an outline and the name set across
@@ -706,7 +725,18 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 1,074 assertions in all: `trace.mjs`
+There are narrower scripts beside it, 1,121 assertions in all: `rivers.mjs`
+(generated rivers: the same seed on the same land giving the same rivers and
+another seed others, every point but the mouth on land, each main river ending
+beside the sea and starting inland, the river count and the tributaries doing
+what they say, the widest river the width asked for, tributaries narrower,
+rivers from opposite shores of a thin island stopping short of each other,
+Cancel changing nothing, Generate one step in the history that undo and redo
+take back and bring back exactly, a hand-drawn road and a duplicated river
+surviving a second generation, Keep them adding, the round trip point for point
+and pixel for pixel, and a locked layer, a map with no land and a battle map
+refused with a message; then the riverbed, mudflat and reed-bed textures tiling
+and the eight river symbols placed with the real tools), `trace.mjs`
 (trace images: offered by the new-layer dialog, adding it one undo step, an
 empty one changing nothing, the picture recorded by size and name and never as
 pixels, fitted and centred, on screen at half strength and in no export --
@@ -718,7 +748,9 @@ the first one in the folder, a restored backup reading the picture from the
 map it came from and its first save copying it, a large JPEG cut down to a
 4096-px PNG, and a missing file said to be missing; then the vineyard, wheat-field and
 packed-earth textures tiling and the eight farm symbols placed with the real
-tools), `refs.mjs`
+tools; and a map deleted while open and saved again, a backup whose picture the
+old folder no longer holds, and a save made while a picture is still loading),
+`refs.mjs`
 (grid references: none on a new frame or one saved before them, a divided
 sheet lettered A to H and numbered from 1, the column count, a map with no grid
 falling back and saying so, a battle map lettered square by square with the

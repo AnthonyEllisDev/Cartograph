@@ -29,6 +29,7 @@
     "cartouche": "node test/cartouche.mjs",
     "refs": "node test/refs.mjs",
     "trace": "node test/trace.mjs",
+    "rivers": "node test/rivers.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

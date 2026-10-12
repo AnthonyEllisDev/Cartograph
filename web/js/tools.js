@@ -14,6 +14,7 @@ import { pushEntry, restore, snapBytes, snapshot } from './history.js';
 import * as R from './render.js';
 import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
+import { riversDialog } from './rivers.js';
 import { turnSelection } from './transform.js';
 import { clamp, modal, el, toast, uid } from './util.js';
 
@@ -749,6 +750,9 @@ define({
   icon: 'path',
   assetKind: null,
   hint: 'Click along the route. Enter or double-click finishes it, Esc cancels.',
+  actions: () => ([
+    { label: 'Generate rivers\u2026', id: 'generate-rivers', run: riversDialog },
+  ]),
   options() {
     // Colour and width are remembered per kind: a road should not inherit the
     // blue you last picked for a river.

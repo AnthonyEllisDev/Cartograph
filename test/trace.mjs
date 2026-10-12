@@ -9,7 +9,8 @@
  * picture is on screen and in no export, that each panel change is one undo
  * step, that a large picture is cut down to size, that a map with a trace
  * reloads pixel-identical, and that a missing file is said to be missing.
- * Then the three textures and eight farm symbols.
+ * Then the three textures and eight farm symbols, and (2026-10-12) three
+ * ways the folder and the document fell out of step that a review found.
  *
  * Start the server first:  python3 app.py --no-browser --port 7871
  * Then:                    node test/trace.mjs [http://127.0.0.1:7871]
@@ -394,6 +395,92 @@ t('a picture whose file has gone is said to be missing, and nothing breaks',
 // The browser reports the failed read when it gets round to it, which can be
 // after the check above; the 404s stay expected until this map is gone.
 await p.evaluate(async (s) => fetch('/api/projects/' + encodeURIComponent(s), { method: 'DELETE' }), missing);
+
+/* ---- 2026-10-12: three things the review found -------------------------------- */
+
+// Each made in a map of its own, so none leans on what the checks above left.
+const waitLoaded = () => p.waitForFunction(async () => {
+  const T = await import('/js/trace.js');
+  const l = window.__cg.app.doc.layers.find((x) => x.kind === 'trace');
+  return l && T.traceState(l) !== 'loading';
+}, null, { timeout: 15000 });
+const tracedMap = async (name, colour) => {
+  await newMap(p, { name, kind: 'region' });
+  await p.evaluate(async () => { const U = await import('/js/ui.js'); U.addTrace(); });
+  await p.waitForTimeout(250);
+  await choosePicture('sketch.png', await picture(320, 200, colour, '#000000'), 'image/png');
+  return save();
+};
+
+// Delete the open map, then save it: the new folder has the old one's slug,
+// and the pictures were remembered as already in it.
+const goneSlug = await tracedMap('Trace Deleted Then Saved', '#c03030');
+await p.click('.tab[data-tab="projects"]');
+await p.waitForTimeout(400);
+await p.evaluate((s) => {
+  const card = [...document.querySelectorAll('.project-card')]
+    .find((c) => c.querySelector('b').textContent === 'Trace Deleted Then Saved');
+  card.querySelector('.btn-danger').click();
+}, goneSlug);
+await p.waitForSelector('.modal .btn-danger');
+await p.click('.modal .btn-danger');
+await p.waitForTimeout(600);
+await p.click('.tab[data-tab="map"]');
+const againSlug = await save();
+L = await traceLayer();
+t('a map deleted while open and then saved writes its picture again',
+  againSlug === goneSlug && (await fileStatus(againSlug, L.id)) === 200, againSlug);
+await p.evaluate(async (s) => fetch('/api/projects/' + encodeURIComponent(s), { method: 'DELETE' }), againSlug);
+
+// A backup of a picture that was never saved, restored after the folder kept
+// the old one: the old one must not be drawn as if it were the backup's.
+const swapSlug = await tracedMap('Trace Swapped', '#30a030');
+await choosePicture('wider.png', await picture(500, 120, '#3030c0', '#000000'), 'image/png');
+const swapped = await p.evaluate(async () => {
+  const { api } = await import('/js/api.js');
+  const D = await import('/js/doc.js');
+  const A = await import('/js/app.js');
+  const kept = (await api.saveBackup(D.serialise(A.app.doc), 'trace suite')).backup;
+  A.markDirty(false);
+  const T = await import('/js/tabs.js');
+  await T.restoreBackup(kept);
+  return A.app.doc.layers.find((x) => x.kind === 'trace').image;
+});
+await waitLoaded();
+t('a restored backup whose picture the old folder no longer holds says it is missing',
+  swapped.w === 500 && (await p.evaluate(async () => {
+    const T = await import('/js/trace.js');
+    return T.traceState(window.__cg.app.doc.layers.find((x) => x.kind === 'trace'));
+  })) === 'missing', JSON.stringify(swapped));
+await p.evaluate(async (s) => fetch('/api/projects/' + encodeURIComponent(s), { method: 'DELETE' }), swapSlug);
+
+// A save that lands while a borrowed picture is still on its way waits for it.
+const slowSlug = await tracedMap('Trace Saved Early', '#a0a030');
+await p.route('**/layers/*.png', async (route) => {
+  await new Promise((r) => setTimeout(r, 1500));
+  // Unrouted while this one waited, Playwright calls the route handled.
+  try { await route.continue(); } catch (err) { /* already handled */ }
+});
+const early = await p.evaluate(async () => {
+  const { api } = await import('/js/api.js');
+  const D = await import('/js/doc.js');
+  const A = await import('/js/app.js');
+  const kept = (await api.saveBackup(D.serialise(A.app.doc), 'trace suite')).backup;
+  A.markDirty(false);
+  const T = await import('/js/tabs.js');
+  const TR = await import('/js/trace.js');
+  await T.restoreBackup(kept);
+  const l = A.app.doc.layers.find((x) => x.kind === 'trace');
+  const state = TR.traceState(l);
+  const slug = await A.saveProject({ silent: true });
+  return { state, slug, id: l.id };
+});
+await p.unroute('**/layers/*.png');
+t('a save made while the picture is still loading waits for it and writes it',
+  early.state === 'loading' && (await fileStatus(early.slug, early.id)) === 200, JSON.stringify(early));
+for (const s of [early.slug, slowSlug]) {
+  await p.evaluate(async (x) => fetch('/api/projects/' + encodeURIComponent(x), { method: 'DELETE' }), s);
+}
 
 /* ---- the art ------------------------------------------------------------------------------ */
 

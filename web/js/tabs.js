@@ -9,7 +9,7 @@ import * as hex from './hex.js';
 import * as R from './render.js';
 import { ACCENTS, BACKDROPS, THEMES, applyLook, look } from './theme.js';
 import { $, $$, ago, el, modal, toast } from './util.js';
-import { traceBorrow } from './trace.js';
+import { traceBorrow, traceOpened } from './trace.js';
 
 let currentTab = 'map';
 
@@ -182,7 +182,10 @@ export async function renderProjects() {
             await api.deleteProject(project.slug);
             // The open map is now on screen and nowhere on disk, and the top
             // bar went on saying "saved" about it.
-            if (app.slug === project.slug) { app.slug = null; emit('dirty', app.dirty); }
+            // Nor does its folder hold any of its trace pictures now. Left
+            // remembered, a save under the same name made the same slug, found
+            // each picture "already on disk" and wrote none of them.
+            if (app.slug === project.slug) { app.slug = null; traceOpened(app.doc, null); emit('dirty', app.dirty); }
             renderProjects();
             toast('Deleted', 'good');
           },

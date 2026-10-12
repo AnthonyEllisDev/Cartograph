@@ -106,8 +106,24 @@ export function drawTrace(ctx, layer, doc, ready) {
     // Nowhere to read it from: a map that names a picture but has no folder.
     if (!from) { rec.state = 'missing'; return; }
     const img = new Image();
-    img.onload = () => { rec.img = img; rec.state = 'ready'; ready(); };
-    img.onerror = () => { rec.state = 'missing'; ready(); };
+    const lent = !doc.slug;
+    const image = layer.image;
+    // Kept so a save that lands while the picture is still on its way can
+    // wait for it. Skipped instead, the save cleared the dirty flag and moved
+    // the map to its own folder without the picture, and nothing later wrote
+    // it: reopened, the map said the picture was missing.
+    rec.loaded = new Promise((done) => {
+      img.onload = () => {
+        // A backup holds the picture's size, not the picture, so the one
+        // borrowed from the old folder may since have been replaced there.
+        // Drawn anyway it was another picture stretched to this one's size,
+        // and the first save copied it in as if it were the right one.
+        if (lent && (img.naturalWidth !== image.w || img.naturalHeight !== image.h)) rec.state = 'missing';
+        else { rec.img = img; rec.state = 'ready'; }
+        done(); ready();
+      };
+      img.onerror = () => { rec.state = 'missing'; done(); ready(); };
+    });
     img.src = '/projects/' + encodeURIComponent(from) + '/layers/'
       + encodeURIComponent(layer.id) + '.png';
     return;
@@ -188,6 +204,7 @@ export function traceSnapshot(doc) {
 
 async function blobFor(image) {
   const rec = records.get(image);
+  if (rec && rec.state === 'loading' && rec.loaded) await rec.loaded;
   if (!rec || rec.state !== 'ready') return null;
   // A picture read back from disk has no blob in memory. It only needs one
   // when its file has gone -- swept by a save while its layer was deleted, or

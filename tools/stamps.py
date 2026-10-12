@@ -1928,6 +1928,296 @@ def millstone(rng):
     return _svg(w, h, "".join(parts))
 
 
+# The river, added 2026-10-12 (art version 8): what stands in and beside a
+# river on a battle map, for the rivers the generator now draws on a region
+# map -- the falls and the rapids, a crossing on foot, by ferry or over a
+# weir, the mill the water turns, the lilies in the still reaches and a trap
+# for the eels in them.
+RIVER = "#5b8fa8"
+RIVER_DEEP = "#3f6f88"
+LILY = ["#5f8a46", "#6f9a52", "#527a3e"]
+BLOSSOM = ["#f4efe4", "#e8b6c4", "#f2dc8a"]
+WICKER = "#a8844e"
+WICKER_DARK = "#7a5c32"
+
+
+def _ripple(cx, cy, rx, ry, opacity=0.7):
+    return ('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" stroke="%s" stroke-width="1" opacity="%.2f"/>'
+            % (cx, cy, rx, ry, SEA_FOAM, opacity))
+
+
+def waterfall(rng):
+    w, h = 150, 110
+    parts = []
+    # A ledge of rock across the middle, the river coming over it from the
+    # north and landing in a pool of broken water to the south.
+    lip = [(0, 44)]
+    x = 0
+    while x < 150:
+        x = min(150, x + rng.uniform(10, 18))
+        lip.append((x, 44 + rng.uniform(-4, 4)))
+    foot = [(px_, py + rng.uniform(16, 22)) for px_, py in lip]
+    ledge = lip + list(reversed(foot))
+    x0 = rng.uniform(40, 56)
+    x1 = x0 + rng.uniform(44, 60)
+    parts.append('<rect x="%.1f" y="0" width="%.1f" height="50" fill="%s"/>' % (x0, x1 - x0, RIVER))
+    parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.1"/>' % (_pts(ledge), STONE, INK))
+    parts.append(_hatch(ledge, 3.4, math.radians(78), INK_SOFT, 0.8, 0.7))
+    # The sheet of falling water, drawn over the rock in long pale streaks.
+    parts.append('<rect x="%.1f" y="42" width="%.1f" height="28" fill="%s"/>' % (x0, x1 - x0, RIVER_DEEP))
+    xs = x0 + 3
+    while xs < x1 - 2:
+        parts.append('<line x1="%.1f" y1="42" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f" opacity="0.8"/>'
+                     % (xs, xs + rng.uniform(-1, 1), rng.uniform(62, 70), SEA_FOAM, rng.uniform(0.8, 1.8)))
+        xs += rng.uniform(3, 6)
+    parts.append('<polyline points="%s" stroke="%s" stroke-width="1.8"/>' % (_pts(lip), INK))
+    # The plunge pool: foam boiling where the water lands, rings going out.
+    cx, cy = (x0 + x1) / 2, 84
+    parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="22" fill="%s"/>' % (cx, cy, (x1 - x0) * 0.75, RIVER))
+    for k in range(3):
+        parts.append(_ripple(cx, cy - 2, (x1 - x0) * (0.35 + k * 0.16), 8 + k * 5, 0.8 - k * 0.2))
+    for _ in range(18):
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.85"/>'
+                     % (rng.uniform(x0, x1), rng.uniform(70, 80), rng.uniform(1, 2.6), SEA_FOAM))
+    # Banks: rocks either side of the pool.
+    for side in (-1, 1):
+        bx = cx + side * (x1 - x0) * 0.8
+        parts.append(_rock(rng, bx, rng.uniform(80, 92), rng.uniform(7, 11), fill=rng.choice((STONE_DARK, STONE))))
+    return _svg(w, h, "".join(parts))
+
+
+def watermill(rng):
+    w, h = 150, 110
+    body, light, dark = _wood(rng)
+    roof = rng.choice((ROOF, "#6e5a48", "#7a6a4a"))
+    flip = rng.random() < 0.5
+    parts = []
+    # The mill race along the south side, the wheel standing in it.
+    parts.append('<rect x="0" y="76" width="150" height="26" fill="%s"/>' % RIVER)
+    parts.append('<line x1="0" y1="76" x2="150" y2="76" stroke="%s" stroke-width="1.4"/>' % INK)
+    parts.append('<line x1="0" y1="102" x2="150" y2="102" stroke="%s" stroke-width="1.4"/>' % INK)
+    for k in range(4):
+        y = 82 + k * 5
+        parts.append('<path d="M%d,%d q8,-2 16,0" stroke="%s" stroke-width="0.9" opacity="0.7"/>' % (8 + k * 30, y, SEA_FOAM))
+    # The house: stone walls and a pitched roof seen from above.
+    parts.append('<rect x="20" y="12" width="110" height="62" fill="%s" stroke="%s" stroke-width="1.4"/>' % (STONE, INK))
+    parts.append('<polygon points="16,8 134,8 134,42 16,42" fill="%s" stroke="%s" stroke-width="1.2"/>' % (roof, INK))
+    parts.append('<polygon points="16,42 134,42 134,78 16,78" fill="%s" stroke="%s" stroke-width="1.2" opacity="0.92"/>' % (_shade_hex(roof), INK))
+    parts.append('<line x1="16" y1="42" x2="134" y2="42" stroke="%s" stroke-width="1.8"/>' % INK)
+    for x in range(22, 134, 8):
+        parts.append('<line x1="%d" y1="10" x2="%d" y2="40" stroke="%s" stroke-width="0.6" opacity="0.4"/>' % (x, x, INK))
+    # The wheel: a broad drum on its axle, the paddles across it.
+    wx = 34 if flip else 92
+    parts.append('<rect x="%d" y="70" width="26" height="34" fill="%s" stroke="%s" stroke-width="1.3"/>' % (wx, body, INK))
+    for k in range(7):
+        y = 72 + k * 5
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="1.6"/>' % (wx, y, wx + 26, y, dark))
+    parts.append('<line x1="%d" y1="87" x2="%d" y2="87" stroke="%s" stroke-width="3"/>' % (wx - 6, wx + 32, IRON))
+    for k in range(5):
+        parts.append('<circle cx="%.1f" cy="%.1f" r="1.4" fill="%s" opacity="0.9"/>' % (wx + rng.uniform(0, 26), rng.uniform(96, 102), SEA_FOAM))
+    if rng.random() < 0.6:
+        # Sacks waiting at the door.
+        dx = 100 if flip else 40
+        for k in range(rng.randint(1, 3)):
+            parts.append('<ellipse cx="%d" cy="6" rx="6" ry="4.5" fill="%s" stroke="%s" stroke-width="0.9"/>' % (dx + k * 11, HAY_LIGHT, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def _shade_hex(colour, k=-0.18):
+    r, g, b = int(colour[1:3], 16), int(colour[3:5], 16), int(colour[5:7], 16)
+    f = (lambda v: max(0, min(255, int(v * (1 + k)))))
+    return "#%02x%02x%02x" % (f(r), f(g), f(b))
+
+
+def stepping_stones(rng):
+    w, h = 150, 64
+    parts = []
+    n = rng.randint(5, 7)
+    stones = []
+    for k in range(n):
+        x = 12 + k * (126 / (n - 1))
+        y = 32 + math.sin(k * 1.3 + rng.uniform(0, 1)) * 8
+        stones.append((x, y, rng.uniform(8, 11)))
+    # The river runs south across the crossing, so each stone throws a lip of
+    # foam on its north side and a slack ripple on its south.
+    for x, y, r in stones:
+        parts.append('<path d="M%.1f,%.1f q%.1f,-%.1f %.1f,0" stroke="%s" stroke-width="1.4" opacity="0.85"/>'
+                     % (x - r - 2, y - r * 0.5, r + 2, r * 0.9, 2 * r + 4, SEA_FOAM))
+        parts.append('<path d="M%.1f,%.1f q%.1f,%.1f %.1f,0" stroke="%s" stroke-width="0.9" opacity="0.5"/>'
+                     % (x - r * 0.6, y + r + 2, r * 0.6, r * 0.5, r * 1.2, SEA_FOAM))
+    for x, y, r in stones:
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="%s" opacity="0.3"/>' % (x + 1.5, y + 2, r, r * 0.8, INK))
+        parts.append(_rock(rng, x, y, r, sides=rng.randint(7, 9), fill=rng.choice((STONE, STONE_DARK, "#a39886"))))
+        parts.append('<path d="M%.1f,%.1f q%.1f,-%.1f %.1f,-%.1f" stroke="#ffffff" stroke-width="1" opacity="0.35"/>'
+                     % (x - r * 0.5, y - r * 0.1, r * 0.2, r * 0.4, r * 0.6, r * 0.5))
+        if rng.random() < 0.3:
+            parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.7"/>' % (x + r * 0.2, y + r * 0.2, r * 0.3, LEAF_LIGHT))
+    return _svg(w, h, "".join(parts))
+
+
+def lily_pads(rng):
+    w, h = 110, 84
+    parts = []
+    pads = []
+    for _ in range(rng.randint(5, 8)):
+        for _ in range(20):
+            x, y, r = rng.uniform(14, 96), rng.uniform(14, 70), rng.uniform(7, 13)
+            if all(math.hypot(x - a, y - b) > (r + c) * 0.8 for a, b, c in pads):
+                pads.append((x, y, r))
+                break
+    for x, y, r in pads:
+        parts.append(_ripple(x, y, r + 4, (r + 4) * 0.8, 0.45))
+    for x, y, r in pads:
+        # A disc with a wedge cut to its middle, and veins from the notch.
+        a = rng.uniform(0, math.pi * 2)
+        da = 0.32
+        p0 = (x + math.cos(a - da) * r, y + math.sin(a - da) * r)
+        p1 = (x + math.cos(a + da) * r, y + math.sin(a + da) * r)
+        leaf = rng.choice(LILY)
+        parts.append('<path d="M%.1f,%.1f L%.1f,%.1f A%.1f,%.1f 0 1 0 %.1f,%.1f Z" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                     % (x, y, p1[0], p1[1], r, r, p0[0], p0[1], leaf, INK))
+        for k in range(5):
+            b = a + math.pi * (0.4 + k * 0.3)
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.6" opacity="0.6"/>'
+                         % (x, y, x + math.cos(b) * r * 0.85, y + math.sin(b) * r * 0.85, LEAF_DARK))
+    for _ in range(rng.randint(1, 3)):
+        x, y, r = rng.choice(pads)
+        petal = rng.choice(BLOSSOM)
+        for k in range(8):
+            b = k * math.pi / 4
+            parts.append('<ellipse cx="%.1f" cy="%.1f" rx="3.6" ry="1.7" fill="%s" stroke="%s" stroke-width="0.5" '
+                         'transform="rotate(%.0f %.1f %.1f)"/>' % (x + math.cos(b) * 3, y + math.sin(b) * 3, petal, INK_SOFT,
+                                                                 math.degrees(b), x + math.cos(b) * 3, y + math.sin(b) * 3))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="1.8" fill="%s"/>' % (x, y, FLAME))
+    return _svg(w, h, "".join(parts))
+
+
+def rapids(rng):
+    w, h = 150, 80
+    parts = ['<rect x="0" y="0" width="150" height="80" fill="%s" opacity="0.55"/>' % RIVER]
+    # Standing waves: chevrons pointing downstream (south), pale on their
+    # upstream faces, in ranks that do not quite line up.
+    for row in range(5):
+        y = 10 + row * 15 + rng.uniform(-2, 2)
+        x = rng.uniform(-6, 6)
+        while x < 150:
+            span = rng.uniform(12, 20)
+            parts.append('<path d="M%.1f,%.1f L%.1f,%.1f L%.1f,%.1f" stroke="%s" stroke-width="%.1f" opacity="%.2f"/>'
+                         % (x, y, x + span / 2, y + rng.uniform(4, 7), x + span, y, SEA_FOAM,
+                            rng.uniform(1, 2), rng.uniform(0.6, 0.95)))
+            x += span + rng.uniform(2, 8)
+    for _ in range(rng.randint(3, 6)):
+        x, y, r = rng.uniform(14, 136), rng.uniform(14, 66), rng.uniform(5, 9)
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" fill="%s" opacity="0.9"/>' % (x, y - 1, r + 5, r + 2, SEA_FOAM))
+        parts.append(_rock(rng, x, y, r, fill=rng.choice((STONE_DARK, CAVE, CAVE_LIGHT))))
+        parts.append('<path d="M%.1f,%.1f q2,6 -2,12 M%.1f,%.1f q-2,6 2,12" stroke="%s" stroke-width="1" opacity="0.8"/>'
+                     % (x - r * 0.6, y + r, x + r * 0.6, y + r, SEA_FOAM))
+    return _svg(w, h, "".join(parts))
+
+
+def ferry(rng):
+    w, h = 150, 84
+    body, light, dark = _wood(rng)
+    parts = []
+    # The rope the ferry is hauled along, bank to bank, between two posts.
+    parts.append('<line x1="4" y1="14" x2="146" y2="14" stroke="%s" stroke-width="1.6"/>' % ROPE)
+    for x in (6, 144):
+        parts.append('<circle cx="%d" cy="14" r="5" fill="%s" stroke="%s" stroke-width="1.1"/>' % (x, dark, INK))
+    # The raft: a deck of planks with a rail down each long side.
+    x0 = rng.uniform(30, 52)
+    parts.append('<rect x="%.1f" y="22" width="70" height="56" fill="%s" opacity="0.3" transform="translate(2 3)"/>' % (x0, INK))
+    parts.append('<rect x="%.1f" y="22" width="70" height="56" fill="%s" stroke="%s" stroke-width="1.4"/>' % (x0, body, INK))
+    for k in range(1, 10):
+        x = x0 + k * 7
+        parts.append('<line x1="%.1f" y1="22" x2="%.1f" y2="78" stroke="%s" stroke-width="0.7" opacity="0.6"/>' % (x, x, INK_SOFT))
+    for y in (25, 75):
+        parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="2.4"/>' % (x0 + 3, y, x0 + 67, y, dark))
+    # Two uprights carry it on the rope.
+    for x in (x0 + 12, x0 + 58):
+        parts.append('<line x1="%.1f" y1="14" x2="%.1f" y2="24" stroke="%s" stroke-width="1.4"/>' % (x, x, ROPE))
+        parts.append('<rect x="%.1f" y="21" width="6" height="6" fill="%s" stroke="%s" stroke-width="0.9"/>' % (x - 3, dark, INK))
+    load = rng.random()
+    if load < 0.4:
+        for k in range(rng.randint(2, 3)):
+            cx, cy = x0 + 16 + k * 18, 50 + rng.uniform(-6, 6)
+            parts.append('<rect x="%.1f" y="%.1f" width="13" height="13" fill="%s" stroke="%s" stroke-width="1"/>' % (cx - 6.5, cy - 6.5, light, INK))
+            parts.append('<path d="M%.1f,%.1f l13,13 M%.1f,%.1f l-13,13" stroke="%s" stroke-width="0.7" opacity="0.6"/>'
+                         % (cx - 6.5, cy - 6.5, cx + 6.5, cy - 6.5, dark))
+    elif load < 0.7:
+        parts.append('<circle cx="%.1f" cy="50" r="8" stroke="%s" stroke-width="2"/><circle cx="%.1f" cy="50" r="4" '
+                     'stroke="%s" stroke-width="1.6"/>' % (x0 + 35, ROPE, x0 + 35, ROPE))
+    # Wake at the bows, both ends, since a ferry goes either way.
+    for y in (24, 76):
+        parts.append('<path d="M%.1f,%d q-8,%d -16,%d" stroke="%s" stroke-width="1" opacity="0.6"/>'
+                     % (x0, y, 4 if y > 50 else -4, 4 if y > 50 else -4, SEA_FOAM))
+    return _svg(w, h, "".join(parts))
+
+
+def weir(rng):
+    w, h = 150, 64
+    parts = ['<rect x="0" y="0" width="150" height="24" fill="%s" opacity="0.6"/>' % RIVER_DEEP,
+             '<rect x="0" y="36" width="150" height="28" fill="%s" opacity="0.5"/>' % RIVER]
+    timber = rng.random() < 0.4
+    if timber:
+        body, light, dark = _wood(rng)
+        parts.append('<rect x="0" y="22" width="150" height="14" fill="%s" stroke="%s" stroke-width="1.3"/>' % (body, INK))
+        for x in range(0, 150, 15):
+            parts.append('<circle cx="%d" cy="29" r="2" fill="%s" stroke="%s" stroke-width="0.7"/>' % (x + 7, dark, INK))
+    else:
+        parts.append('<rect x="0" y="22" width="150" height="14" fill="%s" stroke="%s" stroke-width="1.3"/>' % (STONE, INK))
+        x = 0.0
+        while x < 150:
+            bw = rng.uniform(10, 18)
+            parts.append('<line x1="%.1f" y1="22" x2="%.1f" y2="36" stroke="%s" stroke-width="0.8" opacity="0.8"/>' % (x, x, INK_SOFT))
+            x += bw
+        parts.append('<line x1="0" y1="29" x2="150" y2="29" stroke="%s" stroke-width="0.6" opacity="0.5"/>' % INK_SOFT)
+    # Smooth water sliding over the sill, then a churned line below it.
+    for x in range(2, 150, 5):
+        parts.append('<line x1="%d" y1="36" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1" opacity="0.75"/>'
+                     % (x, x + rng.uniform(-1, 1), 40 + rng.uniform(0, 4), SEA_FOAM))
+    for _ in range(26):
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.8"/>'
+                     % (rng.uniform(2, 148), rng.uniform(41, 48), rng.uniform(0.8, 2), SEA_FOAM))
+    if rng.random() < 0.5:
+        # A sluice gate let into it, its paddle raised.
+        gx = rng.uniform(40, 100)
+        parts.append('<rect x="%.1f" y="18" width="16" height="22" fill="%s" stroke="%s" stroke-width="1.2"/>' % (gx, WOOD_DARK, INK))
+        parts.append('<line x1="%.1f" y1="16" x2="%.1f" y2="42" stroke="%s" stroke-width="2"/>' % (gx + 8, gx + 8, IRON))
+    return _svg(w, h, "".join(parts))
+
+
+def fish_trap(rng):
+    w, h = 110, 84
+    parts = []
+    stake = (14, 42)
+    parts.append('<circle cx="%d" cy="%d" r="4.5" fill="%s" stroke="%s" stroke-width="1"/>' % (stake[0], stake[1], WOOD_DARK, INK))
+    traps = rng.randint(1, 3)
+    for k in range(traps):
+        # A long wicker cone, mouth upstream, lying in the water on a line.
+        cy = 42 + (k - (traps - 1) / 2) * 24
+        ln = rng.uniform(56, 72)
+        x0, x1 = 34, 34 + ln
+        mouth = rng.uniform(9, 11)
+        cone = [(x0, cy - mouth), (x1, cy - 3), (x1 + 4, cy), (x1, cy + 3), (x0, cy + mouth)]
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%.1f" stroke="%s" stroke-width="1"/>' % (stake[0], stake[1], x0, cy, ROPE))
+        parts.append(_ripple((x0 + x1) / 2, cy, ln * 0.6, mouth + 5, 0.4))
+        parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.2"/>' % (_pts(cone), WICKER, INK))
+        weave = []
+        for t in range(1, 12):
+            x = x0 + ln * t / 12
+            hh = mouth - (mouth - 3) * t / 12
+            weave.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>' % (x, cy - hh, x, cy + hh))
+        for t in (-0.5, 0, 0.5):
+            weave.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>' % (x0, cy + mouth * t * 1.6, x1, cy + t * 3))
+        parts.append('<g stroke="%s" stroke-width="0.8" opacity="0.8">%s</g>' % (WICKER_DARK, "".join(weave)))
+        parts.append('<ellipse cx="%d" cy="%.1f" rx="3" ry="%.1f" fill="%s" stroke="%s" stroke-width="1.1"/>' % (x0, cy, mouth, SOOT, INK))
+    if rng.random() < 0.4:
+        # An eel that got away, or has yet to go in.
+        y = rng.uniform(10, 74)
+        parts.append('<path d="M70,%.1f q6,-5 12,0 t12,0 t10,0" stroke="%s" stroke-width="2.4"/>' % (y, "#4b4a3a"))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -2006,11 +2296,19 @@ CATALOGUE = [
     ("crop-rows", "Vegetable Patch", "farm", crop_rows),
     ("grain-sacks", "Grain Sacks", "farm", grain_sacks),
     ("millstone", "Millstone", "farm", millstone),
+    ("waterfall", "Waterfall", "river", waterfall),
+    ("watermill", "Watermill", "river", watermill),
+    ("stepping-stones", "Stepping Stones", "river", stepping_stones),
+    ("lily-pads", "Lily Pads", "river", lily_pads),
+    ("rapids", "Rapids", "river", rapids),
+    ("ferry", "Rope Ferry", "river", ferry),
+    ("weir", "Weir", "river", weir),
+    ("fish-trap", "Fish Trap", "river", fish_trap),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm", "river")
 
 
 def build(seed):

@@ -242,6 +242,26 @@ TERRAINS = {
         stops=[(112, 86, 60), (134, 106, 76), (156, 128, 94)],
         worn=(98, 74, 52), straw=(206, 178, 108), stone=(150, 140, 124),
         grain=[(140, (88, 66, 46), 0.18, 0.4, 1.3), (60, (170, 144, 108), 0.16, 0.4, 1.1)]),
+    # The river: a clear stream over its stones, the mud a river leaves when
+    # it falls, and the reed beds along its slow reaches. Added 2026-10-12
+    # (art version 8).
+    "riverbed": dict(
+        group="water", label="Stony Riverbed", pattern="riverbed",
+        stops=[(70, 112, 120), (96, 140, 146), (126, 166, 166)],
+        stones=[(128, 118, 100), (150, 140, 120), (112, 104, 92), (168, 156, 132), (98, 92, 84)],
+        tint=(64, 118, 136), glint=(214, 236, 236), pebbles=520, waves=(0, 2),
+        grain=[(50, (150, 196, 200), 0.10, 0.6, 1.6)]),
+    "mudflat": dict(
+        group="land", label="Mudflat", pattern="mudflat",
+        stops=[(92, 82, 70), (114, 102, 86), (136, 124, 104)],
+        pool=(110, 134, 140), sky=(160, 184, 190), channel=(78, 68, 58), channels=3,
+        grain=[(160, (82, 72, 62), 0.16, 0.4, 1.2), (50, (150, 140, 120), 0.14, 0.4, 1.0)]),
+    "reed-bed": dict(
+        group="land", label="Reed Bed", pattern="reeds",
+        stops=[(70, 82, 58), (92, 106, 70), (118, 128, 82)],
+        water=(58, 86, 92), blade=[(112, 132, 70), (138, 150, 84), (160, 150, 92), (92, 112, 58)],
+        head=(110, 76, 46), clumps=520,
+        grain=[]),
 }
 
 
@@ -945,11 +965,144 @@ def _earth(spec, size, rng):
     return px
 
 
+def _riverbed(spec, size, rng):
+    """A stream over a stony bed, seen through clear water: the stones laid
+    largest first and then washed over by the water's own colour, so they
+    sit under it rather than on it, and pale lines of moving light running
+    across the current at whole-number wave counts, as the dunes do."""
+    lo, mid, hi = spec["stops"]
+    field = fbm(size, 5, 4, rng)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        _put(px, i, mix_rgb(lo, mid, clamp(0.5 + (field[i] - 0.5) * 1.4)))
+    scale = size / 256.0
+    stones = []
+    for _ in range(int(spec["pebbles"] * scale * scale) + 6):
+        r = rng.uniform(2.5, 8.5) * max(0.5, scale)
+        stones.append((r, rng.random() * size, rng.random() * size, rng.uniform(0.6, 1.0),
+                       rng.uniform(0, math.pi), rng.choice(spec["stones"])))
+    stones.sort(key=lambda st: -st[0])
+    for r, cx, cy, flat, ang, rgb in stones:
+        ca, sa = math.cos(ang), math.sin(ang)
+        ext = int(r) + 2
+        for dy in range(-ext, ext + 1):
+            for dx in range(-ext, ext + 1):
+                u = (dx * ca + dy * sa) / r
+                v = (-dx * sa + dy * ca) / (r * flat)
+                d = u * u + v * v
+                if d > 1.0:
+                    continue
+                j = ((int(cy + dy) % size) * size + (int(cx + dx) % size)) * 4
+                c = _shade(rgb, clamp(0.5 - (dx + dy) / (r * 3.0)) * 0.4 - 0.2)
+                if d > 0.78:
+                    c = _shade(c, -0.18)
+                px[j], px[j + 1], px[j + 2] = c
+    # The water over all of it, deeper where the field is low.
+    tint = spec["tint"]
+    for i in range(size * size):
+        j = i * 4
+        a = 0.3 + (0.5 - field[i]) * 0.6
+        px[j] = int(px[j] + (tint[0] - px[j]) * a)
+        px[j + 1] = int(px[j + 1] + (tint[1] - px[j + 1]) * a)
+        px[j + 2] = int(px[j + 2] + (tint[2] - px[j + 2]) * a)
+    kx, ky = spec["waves"]
+    warpf = fbm(size, 4, 3, rng)
+    glint = spec["glint"]
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            u = (kx * x + ky * y) / size + (warpf[i] - 0.5) * 0.5
+            ph = (u * 3) % 1.0
+            if ph < 0.18:
+                a = math.sin(ph / 0.18 * math.pi) * 0.22 * clamp((field[i] - 0.25) * 2)
+                j = i * 4
+                px[j] = int(px[j] + (glint[0] - px[j]) * a)
+                px[j + 1] = int(px[j + 1] + (glint[1] - px[j + 1]) * a)
+                px[j + 2] = int(px[j + 2] + (glint[2] - px[j + 2]) * a)
+    return px
+
+
+def _mudflat(spec, size, rng):
+    """Wet mud at low water: grey-brown and smooth, shallow pools left in the
+    hollows holding a little sky, and creeks that wander across it. The creeks
+    are random walks on the torus, so they cross the seam and carry on."""
+    lo, mid, hi = spec["stops"]
+    field = warp(fbm(size, 6, 5, rng), size, fbm(size, 6, 3, rng), fbm(size, 6, 3, rng), size * 0.06)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = clamp(0.5 + (field[i] - 0.5) * 1.6)
+        _put(px, i, mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0))
+    # Pools where the mud is lowest: a soft edge, the sky caught in the middle.
+    pool, sky = spec["pool"], spec["sky"]
+    for i in range(size * size):
+        f = field[i]
+        if f < 0.38:
+            a = clamp((0.38 - f) / 0.06) * 0.7
+            c = mix_rgb(pool, sky, clamp((0.34 - f) / 0.1))
+            j = i * 4
+            px[j] = int(px[j] + (c[0] - px[j]) * a)
+            px[j + 1] = int(px[j + 1] + (c[1] - px[j + 1]) * a)
+            px[j + 2] = int(px[j + 2] + (c[2] - px[j + 2]) * a)
+    scale = size / 256.0
+    for _ in range(spec["channels"]):
+        x, y = rng.random() * size, rng.random() * size
+        a = rng.uniform(0, math.pi * 2)
+        width = rng.uniform(1.2, 2.6) * max(0.6, scale)
+        for _ in range(int(size * 1.2)):
+            a += rng.gauss(0, 0.07)
+            nx, ny = x + math.cos(a) * 1.5, y + math.sin(a) * 1.5
+            _blob(px, size, nx - 0.7, ny - 0.7, width + 1.0, spec["sky"], 0.10, 0.8)
+            _blob(px, size, nx, ny, width, spec["channel"], 0.32, 0.6)
+            x, y = nx, ny
+            if rng.random() < 0.01:
+                width = max(0.8, width * 0.8)
+    for _ in range(int(30 * scale * scale)):
+        cx, cy = rng.random() * size, rng.random() * size
+        _blob(px, size, cx, cy, 0.9 * max(0.6, scale), spec["sky"], 0.7, 0.2)
+    return px
+
+
+def _reeds(spec, size, rng):
+    """A reed bed from above: dark water showing between the stands, and the
+    stands themselves as clumps of blades fanning out from a root, each
+    blade a short stroke with a lit side, and here and there a brown seed
+    head on its tip. Most of them lean with the wind."""
+    lo, mid, hi = spec["stops"]
+    field = fbm(size, 5, 4, rng)
+    px = bytearray(size * size * 4)
+    water = spec["water"]
+    for i in range(size * size):
+        v = clamp(0.5 + (field[i] - 0.5) * 1.5)
+        c = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+        if field[i] < 0.38:
+            c = mix_rgb(c, water, clamp((0.38 - field[i]) / 0.06) * 0.8)
+        _put(px, i, c)
+    scale = size / 256.0
+    lean = rng.uniform(0, math.pi * 2)
+    for _ in range(int(spec["clumps"] * scale * scale) + 4):
+        cx, cy = rng.random() * size, rng.random() * size
+        i = (int(cy) % size) * size + int(cx) % size
+        if field[i] < 0.36:
+            continue
+        _blob(px, size, cx + 1.5, cy + 1.5, 6 * max(0.6, scale), _shade(lo, -0.35), 0.35, 0.8)
+        for _ in range(rng.randint(12, 20)):
+            a = lean + rng.gauss(0, 0.6)
+            ln = rng.uniform(8, 18) * max(0.6, scale)
+            x1, y1 = cx + math.cos(a) * ln, cy + math.sin(a) * ln
+            blade = rng.choice(spec["blade"])
+            _line(px, size, cx + 0.7, cy + 0.7, x1 + 0.7, y1 + 0.7, _shade(blade, -0.4), 0.4)
+            _line(px, size, cx, cy, x1, y1, blade, 0.85)
+            if rng.random() < 0.12:
+                _blob(px, size, x1, y1, 1.3 * max(0.7, scale), spec["head"], 0.9, 0.3)
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
             "brick": _brick, "carpet": _carpet, "marble": _marble,
             "ashlar": _ashlar, "straw": _straw, "ice": _ice,
             "mosaic": _mosaic, "shingle": _shingle, "reef": _reef,
-            "vineyard": _vineyard, "wheat": _wheat, "earth": _earth}
+            "vineyard": _vineyard, "wheat": _wheat, "earth": _earth,
+            "riverbed": _riverbed, "mudflat": _mudflat, "reeds": _reeds}
 
 
 def render(name, size, seed):

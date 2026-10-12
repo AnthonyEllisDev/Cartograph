@@ -107,7 +107,7 @@ function valueNoise(x, y, seed) {
    same axes adds it up into coastlines that are suspiciously north-south. */
 const TURN_C = 0.8775825618903728, TURN_S = 0.479425538604203;   // cos, sin 0.5
 
-function fbm(x, y, seed, octaves, gain) {
+export function fbm(x, y, seed, octaves, gain) {
   let sum = 0, norm = 0, amp = 1;
   // Turned before the first octave as well: at the largest scale there are
   // only three or four lattice cells across the map, and an unturned one left

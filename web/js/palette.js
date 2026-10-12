@@ -10,6 +10,7 @@
 import { app, emit, markDirty, saveProject, saveSettings, scheduleAutosave } from './app.js';
 import { extensions } from './extensions.js';
 import { generateDialog } from './generate.js';
+import { riversDialog } from './rivers.js';
 import { dungeonDialog } from './dungeon.js';
 import { printDialog } from './print.js';
 import { jumpTo, redo, undo } from './history.js';
@@ -70,6 +71,9 @@ const BUILT_IN = [
   { id: 'generate-land', group: 'Map', title: 'Generate land…',
     detail: 'Grow a coastline from a seed onto the Landmass layer',
     run: () => generateDialog() },
+  { id: 'generate-rivers', group: 'Map', title: 'Generate rivers\u2026',
+    detail: 'Run rivers downhill from the middle of the land to the coast, from a seed',
+    run: () => riversDialog() },
   { id: 'generate-dungeon', group: 'Map', title: 'Generate dungeon…',
     detail: 'Rooms, corridors, walls and doors from a seed, with the rooms numbered',
     run: () => dungeonDialog() },
