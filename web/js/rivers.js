@@ -15,7 +15,8 @@
  * them; a river copied and pasted loses the tag (clipboard.js) and is kept.
  */
 
-import { app, emit, markDirty, scheduleAutosave } from './app.js';
+import { activeLayer, app, emit, markDirty, scheduleAutosave } from './app.js';
+import { layerVisible } from './doc.js';
 import { fbm, randomSeed } from './generate.js';
 import { pushEntry } from './history.js';
 import * as R from './render.js';
@@ -65,11 +66,30 @@ export function riverCell(w, h) {
 export function landGrid(layer, w, h) {
   const cell = riverCell(w, h);
   const cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+  // The grid reaches past the map whenever its size is not a whole number of
+  // cells, and a source rectangle that runs off the mask is not sampled the
+  // same way by every browser -- Chromium left the whole last row empty, so a
+  // strip of land along the bottom came out as sea and rivers ran off the
+  // frame into it. So the mask is first copied onto a canvas exactly the
+  // grid's size, its last row and column of pixels stretched over the
+  // overhang: land that runs off the frame carries on beyond it.
+  const mask = R.maskFor(layer);
+  const W = cols * cell, H = rows * cell;
+  let src = mask;
+  if (W !== w || H !== h) {
+    src = makeCanvas(W, H);
+    const pc = src.getContext('2d');
+    pc.imageSmoothingEnabled = false;
+    pc.drawImage(mask, 0, 0);
+    if (W > w) pc.drawImage(mask, w - 1, 0, 1, h, w, 0, W - w, h);
+    if (H > h) pc.drawImage(mask, 0, h - 1, w, 1, 0, h, w, H - h);
+    if (W > w && H > h) pc.drawImage(mask, w - 1, h - 1, 1, 1, w, h, W - w, H - h);
+  }
   const small = makeCanvas(cols, rows);
   const ctx = small.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(R.maskFor(layer), 0, 0, cols * cell, rows * cell, 0, 0, cols, rows);
+  ctx.drawImage(src, 0, 0, W, H, 0, 0, cols, rows);
   const data = ctx.getImageData(0, 0, cols, rows).data;
   const land = new Uint8Array(cols * rows);
   for (let i = 0; i < land.length; i++) land[i] = data[i * 4 + 3] >= 128 ? 1 : 0;
@@ -125,6 +145,12 @@ function seaDistance(g) {
   const d = new Float64Array(cols * rows);
   const BIG = 1e9, D = Math.SQRT2;
   for (let i = 0; i < d.length; i++) d[i] = land[i] ? BIG : 0;
+  // With no sea anywhere the frame stands in for the coast, as it does in
+  // drainage below; measured from nothing, every cell was equally far away.
+  if (!land.includes(0)) {
+    for (let x = 0; x < cols; x++) { d[x] = 1; d[(rows - 1) * cols + x] = 1; }
+    for (let y = 0; y < rows; y++) { d[y * cols] = 1; d[y * cols + cols - 1] = 1; }
+  }
   const relax = (i, x, y, dx, dy, cost) => {
     const nx = x + dx, ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return;
@@ -185,6 +211,8 @@ export function drainage(g, params) {
 
   const down = new Int32Array(n).fill(-1);
   const mouthTo = new Int32Array(n).fill(-1);
+  // Cells that drain off the frame, when there is no sea for them to reach.
+  const edge = new Uint8Array(n);
   const key = new Float64Array(n);
   const seen = new Uint8Array(n);
   const order = [];
@@ -204,7 +232,8 @@ export function drainage(g, params) {
         break;
       }
       // With no sea anywhere the frame has to do: the whole map is land.
-      if (mouthTo[i] >= 0 || (!anySea && (x === 0 || y === 0 || x === cols - 1 || y === rows - 1))) {
+      if (!anySea && (x === 0 || y === 0 || x === cols - 1 || y === rows - 1)) edge[i] = 1;
+      if (mouthTo[i] >= 0 || edge[i]) {
         key[i] = height[i];
         seen[i] = 1;
         q.push(i);
@@ -242,7 +271,7 @@ export function drainage(g, params) {
     if (!list) ups.set(down[c], list = []);
     list.push(c);
   }
-  return { down, mouthTo, acc, ups, order, landCells: order.length };
+  return { down, mouthTo, edge, acc, ups, order, landCells: order.length };
 }
 
 
@@ -296,7 +325,7 @@ export function traceRivers(g, params) {
   // seeds on the same island do not always pick the same three rivers.
   const pick = rng(hashString(p.seed + '/mouths'));
   const mouths = [];
-  for (const c of d.order) if (d.mouthTo[c] >= 0 && d.acc[c] >= minLen * 2) mouths.push({ c, score: d.acc[c] * (0.6 + 0.8 * pick()) });
+  for (const c of d.order) if ((d.mouthTo[c] >= 0 || d.edge[c]) && d.acc[c] >= minLen * 2) mouths.push({ c, score: d.acc[c] * (0.6 + 0.8 * pick()) });
   mouths.sort((a, b) => b.score - a.score || a.c - b.c);
 
   // Two rivers draining opposite sides of a ridge rise on either side of it,
@@ -345,7 +374,6 @@ export function traceRivers(g, params) {
     const stem = upstream(d, m.c, trickle, blocked);
     if (stem.length < minLen) continue;
     chosen.push(at);
-    if (!biggest) biggest = d.acc[m.c];
     const system = [{ cells: stem, end: d.mouthTo[m.c], flow: d.acc[m.c], main: true }];
     mark(stem);
     const tribBlocked = (c, step) => blocked(c) || (step > close + 2 && near[c] === 1);
@@ -373,16 +401,32 @@ export function traceRivers(g, params) {
     for (const r of system) { claim(r.cells, sys); rivers.push(r); }
   }
 
+  // The widest mouth is the river carrying the most water, which is not
+  // always the first chosen: the seeded nudge reorders basins of a similar
+  // size, and measured from the first a later river came out wider than the
+  // width asked for.
+  for (const r of rivers) if (r.main && r.flow > biggest) biggest = r.flow;
+
   return rivers.map((r) => {
     const pts = r.cells.map((c) => { const q = xy(c); return { x: (q.x + 0.5) * cell, y: (q.y + 0.5) * cell }; });
-    const e = xy(r.end);
-    if (r.main) {
+    if (r.end < 0) {
+      // Off the frame, on a map that is land from edge to edge: out through
+      // the nearest side of the map.
+      const q = xy(r.cells[r.cells.length - 1]);
+      const last = pts[pts.length - 1];
+      const sides = [[q.x, 0, last.y], [cols - 1 - q.x, cols * cell, last.y],
+                     [q.y, last.x, 0], [rows - 1 - q.y, last.x, rows * cell]];
+      sides.sort((a, b) => a[0] - b[0]);
+      pts.push({ x: sides[0][1], y: sides[0][2] });
+    } else if (r.main) {
+      const e = xy(r.end);
       // Out to the line between the last land cell and the sea, where the
       // coast's ink is drawn, so the river meets the coast rather than
       // stopping a few pixels short of it.
       const last = pts[pts.length - 1];
       pts.push({ x: (last.x + (e.x + 0.5) * cell) / 2, y: (last.y + (e.y + 0.5) * cell) / 2 });
     } else {
+      const e = xy(r.end);
       pts.push({ x: (e.x + 0.5) * cell, y: (e.y + 0.5) * cell });
     }
     const width = r.main
@@ -472,14 +516,16 @@ function drawPreview(canvas, g, items) {
   small.getContext('2d').putImageData(img, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
-  const k = canvas.width / (g.cols * g.cell);
+  // Two scales, not one: the preview is never shorter than 120 px, so on a
+  // long thin map the land is stretched to fill it and the rivers must be too.
+  const kx = canvas.width / (g.cols * g.cell), ky = canvas.height / (g.rows * g.cell);
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.strokeStyle = '#1f4f7a';
   for (const it of items) {
-    ctx.lineWidth = Math.max(1, it.width * k * 1.6);
+    ctx.lineWidth = Math.max(1, it.width * Math.min(kx, ky) * 1.6);
     ctx.beginPath();
-    it.points.forEach((q, i) => (i ? ctx.lineTo(q.x * k, q.y * k) : ctx.moveTo(q.x * k, q.y * k)));
+    it.points.forEach((q, i) => (i ? ctx.lineTo(q.x * kx, q.y * ky) : ctx.moveTo(q.x * kx, q.y * ky)));
     ctx.stroke();
   }
   ctx.restore();
@@ -488,10 +534,20 @@ function drawPreview(canvas, g, items) {
 export async function riversDialog() {
   const doc = app.doc;
   if (!doc) return;
-  const paths = doc.layers.find((l) => l.kind === 'paths');
-  if (!paths) return toast('This map has no Paths layer to draw rivers on', 'bad');
-  if (paths.locked) return toast('The Paths layer is locked', 'bad');
-  const landLayer = doc.layers.find((l) => l.kind === 'land');
+  // The layer the Path tool would draw on: the selected one if it is a Paths
+  // layer, otherwise the first that is not locked. Refusing whenever the
+  // first was locked turned away a map with a second, open one.
+  const active = activeLayer();
+  const all = doc.layers.filter((l) => l.kind === 'paths');
+  if (!all.length) return toast('This map has no Paths layer to draw rivers on', 'bad');
+  const paths = active && active.kind === 'paths' && !active.locked ? active : all.find((l) => !l.locked);
+  if (!paths) return toast('The Paths layer is locked', 'bad');
+  // Rivers committed to a hidden layer arrived out of sight with a toast
+  // saying they had been made, as a paste onto one would have.
+  if (!layerVisible(doc, paths)) return toast(paths.name + ' is hidden -- show it to see the rivers', 'bad');
+  const lands = doc.layers.filter((l) => l.kind === 'land');
+  const landLayer = (active && active.kind === 'land' && active.ops.length ? active : null)
+    || lands.find((l) => l.ops.length) || lands[0];
   if (!landLayer || !landLayer.ops.length) {
     return toast('Rivers need land to run over -- paint some, or generate it, first', 'bad');
   }

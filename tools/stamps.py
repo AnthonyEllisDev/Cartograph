@@ -2218,6 +2218,283 @@ def fish_trap(rng):
     return _svg(w, h, "".join(parts))
 
 
+# ------------------------------------------------------------------- town
+
+# The square of a village, at battle scale: where the water is drawn, the
+# notices are read, the hens are kept and justice is seen to be done. Added
+# 2026-10-13 (art version 9).
+
+FOUNTAIN_BASIN = "#a39886"
+FEATHER = ["#f2ead8", "#c48a4a", "#7a4a2a", "#e0d2b4"]
+COMB = "#c0392b"
+PAPER = ["#efe4c8", "#e6d6b0", "#f4ecd8", "#dccaa0"]
+LAMPLIGHT = "#ffd27a"
+
+
+def fountain(rng):
+    w = h = 140
+    c = 70
+    sides = rng.choice((0, 6, 8))
+    parts = []
+    # The basin's rim: round, or a polygon of dressed stone.
+    if sides:
+        rim = [(c + math.cos(k * 2 * math.pi / sides + math.pi / sides) * 64,
+                c + math.sin(k * 2 * math.pi / sides + math.pi / sides) * 64) for k in range(sides)]
+        inner = [(c + (x - c) * 0.84, c + (y - c) * 0.84) for x, y in rim]
+        parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.6"/>' % (_pts(rim), STONE, INK))
+        for x, y in rim:
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"/>'
+                         % (x, y, c + (x - c) * 0.84, c + (y - c) * 0.84, INK_SOFT))
+        parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.2"/>' % (_pts(inner), WATER, INK))
+    else:
+        parts.append('<circle cx="%d" cy="%d" r="64" fill="%s" stroke="%s" stroke-width="1.6"/>' % (c, c, STONE, INK))
+        n = rng.randint(14, 18)
+        for k in range(n):
+            a = k * 2 * math.pi / n
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"/>'
+                         % (c + math.cos(a) * 54, c + math.sin(a) * 54, c + math.cos(a) * 64, c + math.sin(a) * 64, INK_SOFT))
+        parts.append('<circle cx="%d" cy="%d" r="54" fill="%s" stroke="%s" stroke-width="1.2"/>' % (c, c, WATER, INK))
+    # Rings spreading from where the jets land, then the pedestal and its bowl.
+    for k in range(3):
+        parts.append(_ripple(c, c, 22 + k * 9, 22 + k * 9, 0.75 - k * 0.2))
+    tiers = rng.randint(1, 2)
+    parts.append('<circle cx="%d" cy="%d" r="18" fill="%s" stroke="%s" stroke-width="1.3"/>' % (c, c, FOUNTAIN_BASIN, INK))
+    parts.append('<circle cx="%d" cy="%d" r="13" fill="%s" stroke="%s" stroke-width="0.9"/>' % (c, c, RIVER, INK_SOFT))
+    if tiers == 2:
+        parts.append('<circle cx="%d" cy="%d" r="8" fill="%s" stroke="%s" stroke-width="1.1"/>' % (c, c, FOUNTAIN_BASIN, INK))
+    parts.append('<circle cx="%d" cy="%d" r="3.5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (c, c, SEA_FOAM, INK_SOFT))
+    jets = rng.choice((4, 6, 8))
+    for k in range(jets):
+        a = k * 2 * math.pi / jets
+        parts.append('<path d="M%.1f,%.1f Q%.1f,%.1f %.1f,%.1f" stroke="%s" stroke-width="1.6" opacity="0.6"/>'
+                     % (c + math.cos(a) * 6, c + math.sin(a) * 6, c + math.cos(a + 0.12) * 15, c + math.sin(a + 0.12) * 15,
+                        c + math.cos(a) * 22, c + math.sin(a) * 22, SEA_FOAM))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="2.2" fill="%s" opacity="0.8"/>'
+                     % (c + math.cos(a) * 23, c + math.sin(a) * 23, SEA_FOAM))
+    if rng.random() < 0.5:
+        # A coin or two catching the light on the bottom.
+        for _ in range(rng.randint(2, 5)):
+            a, r = rng.uniform(0, 2 * math.pi), rng.uniform(26, 46)
+            parts.append('<circle cx="%.1f" cy="%.1f" r="1.4" fill="%s"/>' % (c + math.cos(a) * r, c + math.sin(a) * r, BRASS))
+    return _svg(w, h, "".join(parts))
+
+
+def shrine(rng):
+    w, h = 90, 100
+    body, light, dark = _wood(rng)
+    roof = rng.choice((ROOF, "#6e5a48", "#5d7046"))
+    parts = []
+    # A wayside shrine: a little roofed niche on a post, an offering ledge in
+    # front of it, candles and flowers left by whoever passed.
+    parts.append('<rect x="14" y="8" width="62" height="48" fill="%s" stroke="%s" stroke-width="1.3"/>' % (roof, INK))
+    parts.append('<line x1="45" y1="8" x2="45" y2="56" stroke="%s" stroke-width="1.6"/>' % INK)
+    parts.append('<rect x="45" y="8" width="31" height="48" fill="%s" opacity="0.35"/>' % INK)
+    for y in range(14, 56, 7):
+        parts.append('<line x1="14" y1="%d" x2="76" y2="%d" stroke="%s" stroke-width="0.6" opacity="0.45"/>' % (y, y, INK))
+    parts.append('<rect x="20" y="56" width="50" height="14" fill="%s" stroke="%s" stroke-width="1.1"/>' % (STONE, INK))
+    parts.append('<rect x="22" y="58" width="46" height="4" fill="%s" opacity="0.5"/>' % light)
+    # What has been left on the ledge.
+    for k in range(rng.randint(2, 4)):
+        x = rng.uniform(26, 64)
+        parts.append('<circle cx="%.1f" cy="65" r="2.6" fill="%s" stroke="%s" stroke-width="0.6"/>' % (x, "#efe6d0", INK_SOFT))
+        parts.append('<circle cx="%.1f" cy="65" r="1.2" fill="%s"/>' % (x, LAMPLIGHT))
+    for k in range(rng.randint(2, 5)):
+        x, y = rng.uniform(20, 70), rng.uniform(74, 92)
+        col = rng.choice(BLOSSOM + ["#c0392b", "#7a5a86"])
+        parts.append('<circle cx="%.1f" cy="%.1f" r="2.2" fill="%s" stroke="%s" stroke-width="0.5"/>' % (x, y, col, INK_SOFT))
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"/>' % (x, y + 2, x + rng.uniform(-3, 3), y + 7, LEAF))
+    if rng.random() < 0.5:
+        parts.append('<ellipse cx="%.1f" cy="80" rx="7" ry="4.5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (rng.uniform(30, 60), HAY_LIGHT, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def gallows(rng):
+    w, h = 120, 120
+    body, light, dark = _wood(rng)
+    parts = []
+    # The platform, its boards, the steps up one side, and the beam with its
+    # rope over the trap. Seen from above, the beam is what reads.
+    parts.append('<rect x="14" y="20" width="80" height="80" fill="%s" stroke="%s" stroke-width="1.5"/>' % (body, INK))
+    for x in range(24, 94, 10):
+        parts.append('<line x1="%d" y1="21" x2="%d" y2="99" stroke="%s" stroke-width="0.8" opacity="0.6"/>' % (x, x, dark))
+    steps = "right" if rng.random() < 0.6 else "bottom"
+    if steps == "right":
+        for k in range(4):
+            parts.append('<rect x="%d" y="44" width="6" height="32" fill="%s" stroke="%s" stroke-width="0.9"/>' % (94 + k * 6, light, INK))
+    else:
+        for k in range(4):
+            parts.append('<rect x="38" y="%d" width="32" height="5" fill="%s" stroke="%s" stroke-width="0.9"/>' % (100 + k * 5, light, INK))
+    # The trap: a square set in the boards, hinged on one side.
+    parts.append('<rect x="44" y="50" width="20" height="20" fill="%s" stroke="%s" stroke-width="1.2"/>' % (dark, INK))
+    parts.append('<line x1="44" y1="60" x2="64" y2="60" stroke="%s" stroke-width="0.7" opacity="0.7"/>' % INK)
+    parts.append('<rect x="18" y="24" width="8" height="8" fill="%s" stroke="%s" stroke-width="1"/>' % (dark, INK))
+    parts.append('<rect x="18" y="24" width="38" height="7" fill="%s" stroke="%s" stroke-width="1.3"/>' % (light, INK))
+    parts.append('<line x1="54" y1="28" x2="54" y2="60" stroke="%s" stroke-width="1.6"/>' % ROPE)
+    parts.append('<circle cx="54" cy="60" r="4" stroke="%s" stroke-width="1.4"/>' % ROPE)
+    if rng.random() < 0.4:
+        parts.append('<path d="M84,30 l6,-6 m-6,0 l6,6" stroke="%s" stroke-width="1.6"/>' % "#2a2522")
+    # Half of them mirrored, so a town with two does not have two of one.
+    body_svg = "".join(parts)
+    if rng.random() < 0.5:
+        body_svg = '<g transform="translate(%d 0) scale(-1 1)">%s</g>' % (w, body_svg)
+    return _svg(w, h, body_svg)
+
+
+def banner(rng):
+    w, h = 110, 70
+    cloth = rng.choice(CLOTHS)
+    trim = rng.choice([c for c in CLOTHS if c != cloth] + [BRASS])
+    parts = []
+    # A pole with its flag streaming in the wind, seen from above: the cloth
+    # lies out on the air and ripples, its shadow on the ground beneath it.
+    tail = rng.choice(("square", "swallow", "pennant"))
+    wave = lambda x, y: y + math.sin(x * 0.11 + 0.6) * 4
+    top = [(16 + k * 10, wave(16 + k * 10, 26)) for k in range(9)]
+    bot = [(16 + k * 10, wave(16 + k * 10, 46)) for k in range(9)]
+    if tail == "pennant":
+        top = [(x, y + (x - 16) * 0.12) for x, y in top]
+        bot = [(x, y - (x - 16) * 0.12) for x, y in bot]
+    end = []
+    if tail == "swallow":
+        mx = top[-1][0] - 12
+        end = [(mx, (top[-1][1] + bot[-1][1]) / 2)]
+    poly = top + end + list(reversed(bot)) if tail == "swallow" else top + list(reversed(bot))
+    shadow = [(x + 5, y + 6) for x, y in poly]
+    parts.append('<polygon points="%s" fill="%s" opacity="0.22"/>' % (_pts(shadow), INK))
+    parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.2"/>' % (_pts(poly), cloth, INK))
+    # The folds, from edge to edge of the cloth wherever it has narrowed to.
+    for k in range(1, 8, 2):
+        (x, y0), (_, y1) = top[k], bot[k]
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="2.4" opacity="0.18"/>'
+                     % (x, y0 + 1, x, y1 - 1, INK))
+    parts.append('<polyline points="%s" stroke="%s" stroke-width="1.6" opacity="0.9"/>' % (_pts(top[:3]), trim))
+    # A device on the cloth: a ring, a cross or a star, in the trim colour.
+    cx, cy = 42, wave(42, 36)
+    dev = rng.choice(("ring", "cross", "star"))
+    if dev == "ring":
+        parts.append('<circle cx="%.1f" cy="%.1f" r="5" stroke="%s" stroke-width="2"/>' % (cx, cy, trim))
+    elif dev == "cross":
+        parts.append('<path d="M%.1f,%.1f h12 M%.1f,%.1f v12" stroke="%s" stroke-width="2.2"/>' % (cx - 6, cy, cx, cy - 6, trim))
+    else:
+        star = [(cx + math.cos(k * math.pi / 5 - math.pi / 2) * (6 if k % 2 == 0 else 2.6),
+                 cy + math.sin(k * math.pi / 5 - math.pi / 2) * (6 if k % 2 == 0 else 2.6)) for k in range(10)]
+        parts.append('<polygon points="%s" fill="%s"/>' % (_pts(star), trim))
+    parts.append('<circle cx="12" cy="36" r="6" fill="%s" stroke="%s" stroke-width="1.2"/>' % (WOOD_DARK, INK))
+    parts.append('<circle cx="12" cy="36" r="2.5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (BRASS, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def chicken_coop(rng):
+    w, h = 130, 110
+    body, light, dark = _wood(rng)
+    roof = rng.choice((ROOF, "#7a6a4a", HAY_DARK))
+    parts = []
+    # A run of wire and posts, the hen house in one corner, and the hens.
+    parts.append('<rect x="8" y="8" width="114" height="94" fill="%s" opacity="0.55"/>' % SOIL)
+    for x in range(8, 123, 6):
+        parts.append('<line x1="%d" y1="8" x2="%d" y2="102" stroke="%s" stroke-width="0.4" opacity="0.4"/>' % (x, x, INK))
+    for y in range(8, 103, 6):
+        parts.append('<line x1="8" y1="%d" x2="122" y2="%d" stroke="%s" stroke-width="0.4" opacity="0.4"/>' % (y, y, INK))
+    parts.append('<rect x="8" y="8" width="114" height="94" stroke="%s" stroke-width="1.3"/>' % INK)
+    for x, y in ((8, 8), (122, 8), (8, 102), (122, 102), (65, 8), (65, 102)):
+        parts.append('<circle cx="%d" cy="%d" r="2.6" fill="%s" stroke="%s" stroke-width="0.8"/>' % (x, y, dark, INK))
+    hx = rng.choice((10, 70))
+    parts.append('<rect x="%d" y="10" width="50" height="40" fill="%s" stroke="%s" stroke-width="1.3"/>' % (hx, roof, INK))
+    parts.append('<line x1="%d" y1="30" x2="%d" y2="30" stroke="%s" stroke-width="1.4"/>' % (hx, hx + 50, INK))
+    parts.append('<rect x="%d" y="30" width="50" height="20" fill="%s" opacity="0.3"/>' % (hx, INK))
+    parts.append('<polygon points="%d,50 %d,50 %d,64 %d,64" fill="%s" stroke="%s" stroke-width="0.9"/>' % (hx + 20, hx + 30, hx + 30, hx + 20, light, INK))
+    for k in range(rng.randint(3, 6)):
+        x, y = rng.uniform(18, 112), rng.uniform(58, 94)
+        a = rng.uniform(0, 360)
+        col = rng.choice(FEATHER)
+        parts.append('<g transform="rotate(%.1f %.1f %.1f)">' % (a, x, y))
+        parts.append('<ellipse cx="%.1f" cy="%.1f" rx="6" ry="4" fill="%s" stroke="%s" stroke-width="0.8"/>' % (x, y, col, INK))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="2.3" fill="%s" stroke="%s" stroke-width="0.6"/>' % (x + 6, y, col, INK))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="0.9" fill="%s"/>' % (x + 6.6, y - 1, COMB))
+        parts.append('<path d="M%.1f,%.1f l-3,-1.5 l0,3 Z" fill="%s"/>' % (x - 5.5, y, _shade_hex(col, -0.3)))
+        parts.append('</g>')
+    for _ in range(rng.randint(6, 12)):
+        parts.append('<circle cx="%.1f" cy="%.1f" r="0.8" fill="%s"/>' % (rng.uniform(14, 116), rng.uniform(56, 98), HAY_LIGHT))
+    return _svg(w, h, "".join(parts))
+
+
+def stocks(rng):
+    w, h = 100, 60
+    body, light, dark = _wood(rng)
+    parts = []
+    holes = rng.choice((2, 3))
+    # A heavy beam split along its length, holes for the ankles (or the wrists
+    # and neck, if it is a pillory), on two stout posts.
+    parts.append('<rect x="8" y="24" width="84" height="14" fill="%s" stroke="%s" stroke-width="1.4"/>' % (body, INK))
+    parts.append('<line x1="8" y1="31" x2="92" y2="31" stroke="%s" stroke-width="1"/>' % INK)
+    parts.append('<line x1="10" y1="26.5" x2="90" y2="26.5" stroke="%s" stroke-width="0.8" opacity="0.6"/>' % light)
+    for k in range(holes):
+        x = 50 + (k - (holes - 1) / 2) * 22
+        parts.append('<circle cx="%.1f" cy="31" r="4" fill="%s" stroke="%s" stroke-width="0.9"/>' % (x, "#2a2522", INK))
+    for x in (6, 86):
+        parts.append('<rect x="%d" y="20" width="8" height="22" fill="%s" stroke="%s" stroke-width="1.2"/>' % (x, dark, INK))
+    parts.append('<rect x="44" y="21" width="12" height="4" fill="%s" stroke="%s" stroke-width="0.8"/>' % (IRON, INK))
+    # The bench behind it, and what the crowd has thrown.
+    parts.append('<rect x="20" y="44" width="60" height="8" fill="%s" stroke="%s" stroke-width="1"/>' % (light, INK))
+    for _ in range(rng.randint(1, 4)):
+        x, y = rng.uniform(16, 84), rng.uniform(6, 18)
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                     % (x, y, rng.uniform(2, 3.2), rng.choice(CABBAGE + ["#b0442e", "#d6b25e"]), INK_SOFT))
+    return _svg(w, h, "".join(parts))
+
+
+def notice_board(rng):
+    w, h = 100, 50
+    body, light, dark = _wood(rng)
+    parts = []
+    # A board on two legs with a little roof of its own, seen from above: the
+    # roof is a strip, the notices show on the face below it.
+    parts.append('<rect x="8" y="10" width="84" height="12" fill="%s" stroke="%s" stroke-width="1.3"/>' % (dark, INK))
+    parts.append('<line x1="8" y1="16" x2="92" y2="16" stroke="%s" stroke-width="0.9" opacity="0.8"/>' % INK)
+    parts.append('<rect x="10" y="22" width="80" height="18" fill="%s" stroke="%s" stroke-width="1.2"/>' % (body, INK))
+    x = 13
+    while x < 84:
+        pw = rng.uniform(8, 15)
+        if x + pw > 88:
+            break
+        col = rng.choice(PAPER)
+        ang = rng.uniform(-8, 8)
+        parts.append('<g transform="rotate(%.1f %.1f 31)"><rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" stroke="%s" stroke-width="0.6"/>'
+                     % (ang, x + pw / 2, x, 24 + rng.uniform(0, 2), pw, rng.uniform(10, 14), col, INK_SOFT))
+        for k in range(3):
+            parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.5" opacity="0.6"/>'
+                         % (x + 1.5, 28 + k * 3, x + pw - 1.5, 28 + k * 3, INK_SOFT))
+        parts.append('<circle cx="%.1f" cy="26" r="0.9" fill="%s"/></g>' % (x + pw / 2, IRON))
+        x += pw + rng.uniform(1, 4)
+    for lx in (12, 84):
+        parts.append('<rect x="%d" y="40" width="4" height="4" fill="%s" stroke="%s" stroke-width="0.8"/>' % (lx, dark, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def street_lamp(rng):
+    w = h = 80
+    c = 40
+    parts = []
+    # A lamp on a post: the glow on the ground first, then the lantern's
+    # square cap and its bracket, which is what a lamp is from above.
+    for k in range(4):
+        parts.append('<circle cx="%d" cy="%d" r="%d" fill="%s" opacity="%.2f"/>' % (c, c, 34 - k * 7, LAMPLIGHT, 0.08 + k * 0.04))
+    arm = rng.choice((0, 90, 180, 270))
+    parts.append('<g transform="rotate(%d %d %d)">' % (arm, c, c))
+    parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="2.4"/>' % (c, c, c + 18, c, IRON))
+    parts.append('<circle cx="%d" cy="%d" r="4.5" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, STEEL, INK))
+    parts.append('</g>')
+    lx = c + round(math.cos(math.radians(arm)) * 18)
+    ly = c + round(math.sin(math.radians(arm)) * 18)
+    parts.append('<rect x="%d" y="%d" width="12" height="12" fill="%s" stroke="%s" stroke-width="1.2"/>' % (lx - 6, ly - 6, LAMPLIGHT, INK))
+    parts.append('<polygon points="%d,%d %d,%d %d,%d %d,%d" fill="%s" stroke="%s" stroke-width="1"/>'
+                 % (lx - 7, ly - 7, lx + 7, ly - 7, lx + 4, ly - 4, lx - 4, ly - 4, SOOT, INK))
+    parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.8"/>' % (lx - 6, ly - 6, lx + 6, ly + 6, INK_SOFT))
+    parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.8"/>' % (lx + 6, ly - 6, lx - 6, ly + 6, INK_SOFT))
+    parts.append('<circle cx="%d" cy="%d" r="2.4" fill="#fff6d8"/>' % (lx, ly))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -2304,11 +2581,20 @@ CATALOGUE = [
     ("ferry", "Rope Ferry", "river", ferry),
     ("weir", "Weir", "river", weir),
     ("fish-trap", "Fish Trap", "river", fish_trap),
+    ("fountain", "Fountain", "town", fountain),
+    ("shrine", "Wayside Shrine", "town", shrine),
+    ("gallows", "Gallows", "town", gallows),
+    ("banner", "Banner", "town", banner),
+    ("chicken-coop", "Chicken Coop", "town", chicken_coop),
+    ("stocks", "Stocks", "town", stocks),
+    ("notice-board", "Notice Board", "town", notice_board),
+    ("street-lamp", "Street Lamp", "town", street_lamp),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
-VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm", "river")
+VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm", "river",
+          "town")
 
 
 def build(seed):

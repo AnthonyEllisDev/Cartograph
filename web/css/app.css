@@ -436,6 +436,19 @@ body.is-light .asset .cap { background: rgba(0,0,0,.55); }
 }
 .chip-x:hover { color: var(--bad); }
 
+/* ------------------------------------------------------- name suggestions */
+
+.name-chooser { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.name-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.name-head > span { margin-right: auto; }
+.name-head select { width: auto; max-width: 150px; }
+.name-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; max-width: 420px; }
+.name-chip {
+  border: 1px solid var(--line-hi); border-radius: 999px; background: var(--panel-2);
+  color: var(--text); font: inherit; font-size: 12px; padding: 4px 11px; cursor: pointer;
+}
+.name-chip:hover, .name-chip:focus-visible { border-color: var(--accent); outline: none; }
+
 /* ---------------------------------------------------------- history panel */
 
 .hist-list { list-style: none; margin: 0 -6px; padding: 0; max-height: 240px; overflow: auto; }

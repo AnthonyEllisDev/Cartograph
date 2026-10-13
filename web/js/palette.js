@@ -20,7 +20,7 @@ import { copySelection, cutSelection, duplicateSelection, paste } from './clipbo
 import { mirrorSelection, turnSelection } from './transform.js';
 import * as R from './render.js';
 import { TOOLS, clearSelection, selectAll, setTool } from './tools.js';
-import { addFrame, addTrace, renderAssetPicker, renderToolOptions } from './ui.js';
+import { addFrame, addTrace, renderAssetPicker, renderToolOptions, suggestName } from './ui.js';
 import { $, el, modalOpen, toast } from './util.js';
 
 let root = null;
@@ -74,6 +74,9 @@ const BUILT_IN = [
   { id: 'generate-rivers', group: 'Map', title: 'Generate rivers\u2026',
     detail: 'Run rivers downhill from the middle of the land to the coast, from a seed',
     run: () => riversDialog() },
+  { id: 'suggest-name', group: 'Map', title: 'Suggest a name\u2026',
+    detail: 'For the label or region held, or the next one placed: towns, rivers, seas, in six styles',
+    run: () => suggestName() },
   { id: 'generate-dungeon', group: 'Map', title: 'Generate dungeon…',
     detail: 'Rooms, corridors, walls and doors from a seed, with the rooms numbered',
     run: () => dungeonDialog() },

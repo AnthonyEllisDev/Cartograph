@@ -18,6 +18,7 @@ import { loadPrefabs, prefabStrip, saveSelectionAsPrefab } from './prefabs.js';
 import { mirrorSelection, turnSelection, turnStep } from './transform.js';
 import { $, el, modal, toast } from './util.js';
 import { importTrace, traceRect, traceState, traceValue } from './trace.js';
+import { kindForLabelStyle, pickName, setPendingName } from './names.js';
 
 /* ------------------------------------------------------------------ fields */
 
@@ -1384,6 +1385,41 @@ const OBJECT_FIELDS = {
   },
 };
 
+/* The things that carry a name, and the field it is kept in. */
+const NAMED = { labels: 'text', regions: 'name' };
+
+/**
+ * Offer names for what Select is holding and give it the one picked, as one
+ * step in the history -- the same step typing it into the field would make.
+ * With nothing named held (the palette can ask at any time), the name picked
+ * waits for the next label or region drawn instead, whose dialog opens with
+ * it filled in.
+ */
+export async function suggestName() {
+  const held = selectedObjects().length;
+  // A name is one thing's: renaming a set to one name is never what is meant.
+  if (held > 1) { toast('Hold a single label or region to rename it', 'bad'); return; }
+  const picked = held === 1 ? selectedObject() : null;
+  const key = picked && NAMED[picked.layer.kind];
+  if (!key) {
+    const name = await pickName({ kind: 'settlement', title: 'Suggest a name' });
+    if (!name) return;
+    setPendingName(name);
+    // Region is already a fine home for it; anything else becomes a label.
+    if (app.tool !== 'region') setTool('label');
+    toast(name + ' \u2014 click the map to place it', 'good');
+    return;
+  }
+  const { layer, item } = picked;
+  const kind = layer.kind === 'regions' ? 'region' : kindForLabelStyle(item.style);
+  const name = await pickName({ kind, title: 'A name for this ' + (OBJECT_NOUNS[layer.kind] || 'thing') });
+  // Checked again after the wait: the dialog is modal, but an autosave
+  // reload or an extension could still have taken the item off the map.
+  if (!name || !layer.ops.includes(item)) return;
+  editObject(layer, item, key, name);
+  renderSelection();
+}
+
 /* The one field per kind that cannot be emptied. */
 const REQUIRED = { labels: 'text', notes: 'title' };
 
@@ -1460,6 +1496,13 @@ export function renderSelection() {
       // A light's radii are shown in map units and stored in pixels.
       editObject(layer, item, spec.key, spec.scale ? v * spec.scale : v);
     }));
+  }
+  if (NAMED[layer.kind]) {
+    root.appendChild(el('div', { class: 'tool-actions' }, [
+      el('button', { class: 'btn', text: 'Suggest a name\u2026', 'data-action': 'suggest-name',
+                     title: 'Names made up from word parts, in a style of your choosing',
+                     onclick: () => suggestName() }),
+    ]));
   }
   root.appendChild(setButtons());
   root.appendChild(turnButtons());

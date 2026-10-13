@@ -100,6 +100,10 @@ let openModal = null;
  *  the dialog is still waiting on a document it may no longer describe. */
 export const modalOpen = () => openModal !== null;
 
+/** Settle the dialog on screen with a value, as one of its own buttons would.
+ *  For a dialog whose answer is a click on something in its body. */
+export function closeModal(value) { if (openModal) openModal.close(value); }
+
 export function modal({ title, body, buttons = [{ label: 'Close' }] }) {
   const root = document.getElementById('modal-root');
   if (openModal) openModal.close(undefined);

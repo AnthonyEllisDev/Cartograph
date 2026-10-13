@@ -174,7 +174,8 @@ Path panel (and in the command palette) runs rivers downhill over whatever is
 on the Landmass layer -- painted, carved or generated -- from the middle of the
 land to the coast. The land has no heights, so the height is how far each
 point is from the sea, roughened by noise from a seed; water runs down it, every
-river reaches the sea or a lake, and the biggest basins become the rivers. Pick
+river reaches the sea or a lake (or, on a map that is land from edge to edge,
+the side of the map), and the biggest basins become the rivers. Pick
 how many, how readily tributaries join them, how much they meander, the width at
 the largest mouth and the colour, and watch the preview. Rivers draining
 opposite sides of a ridge stop short of each other rather than meeting head on.
@@ -193,6 +194,21 @@ The fill is deliberately a tint rather than paint, so the terrain underneath
 goes on reading through it, and the border can be solid, dashed or dotted — or
 turned off, for an area with no agreed edge. A region map does not start with a
 regions layer; pick the tool and the panel offers to add one.
+
+**Names** come with the dialogs that ask for them. The Label and Region dialogs
+offer twelve suggestions under the text box -- click one to put it in the box,
+where it can be kept, edited or added to -- in one of six styles (*Common*,
+*Northern*, *Fair*, *Deep*, *Southern*, *Imperial*, or *Mixed* for a map of many
+peoples) and for whatever is being named: a settlement, a region, a river,
+mountains, a forest, a sea or an island. A label's style decides which kind it
+asks for first, a water label asking for a sea, and **More** gives twelve
+others. The style is remembered from one dialog to the next, and a name already
+on the map is never offered again. With a label or a region held by Select,
+*Suggest a name…* in the Selected panel renames it, as one step in the
+history; from the command palette with nothing held, the name picked waits for
+the next label placed. The names are made on this machine from word parts
+written for Cartograph -- a feel, not a real language -- so they work with the
+network cable out and every one of them is yours to keep.
 
 **Label** places text in four cartographic styles. **Select** picks up anything
 you have placed — a stamp, a path, a region by any point on its border, a wall,
@@ -725,7 +741,20 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 1,121 assertions in all: `rivers.mjs`
+There are narrower scripts beside it, 1,176 assertions in all: `names.mjs`
+(suggested names: the same seed, style and kind giving the same twelve and
+another seed others, a name to avoid avoided whatever its case, every style
+naming every kind, islands called islands and mountains mountains, a sweep of
+seven thousand names with nothing from the filter's list, no unprintable
+character and no three vowels running, the chooser in the Label dialog showing
+exactly the generator's names for its seed, More, a chip filling the box
+without placing anything, Place as one step, a water label asking for a sea,
+the style remembered, a name on the map not offered again, the Region dialog,
+renaming a held label and a held region from the Selected panel as one step
+that undo and redo take back and bring back, Cancel changing nothing, a name
+from the palette waiting for the next label and only that one, and the round
+trip pixel for pixel; then the thatch, slate and pantile roofs tiling and the
+eight town symbols placed with the real tools), `rivers.mjs`
 (generated rivers: the same seed on the same land giving the same rivers and
 another seed others, every point but the mouth on land, each main river ending
 beside the sea and starting inland, the river count and the tributaries doing
@@ -735,7 +764,10 @@ Cancel changing nothing, Generate one step in the history that undo and redo
 take back and bring back exactly, a hand-drawn road and a duplicated river
 surviving a second generation, Keep them adding, the round trip point for point
 and pixel for pixel, and a locked layer, a map with no land and a battle map
-refused with a message; then the riverbed, mudflat and reed-bed textures tiling
+refused with a message; land running to the edge of a map that is not a whole
+number of cells read as land, a map with no sea still getting rivers that leave
+by the frame, no river wider than the width asked for whichever basin is picked
+first, and a hidden Paths layer refused; then the riverbed, mudflat and reed-bed textures tiling
 and the eight river symbols placed with the real tools), `trace.mjs`
 (trace images: offered by the new-layer dialog, adding it one undo step, an
 empty one changing nothing, the picture recorded by size and name and never as

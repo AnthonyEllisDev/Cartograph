@@ -262,6 +262,26 @@ TERRAINS = {
         water=(58, 86, 92), blade=[(112, 132, 70), (138, 150, 84), (160, 150, 92), (92, 112, 58)],
         head=(110, 76, 46), clumps=520,
         grain=[]),
+    # Roofs, for a battle map of a village seen from above: thatch on the
+    # cottages, slate on the better houses, and the clay pantiles of a warmer
+    # coast. Courses run across the tile, so the eaves are at the bottom, as
+    # a roof is drawn when its ridge is to the north. Added 2026-10-13 (art
+    # version 9).
+    "thatch": dict(
+        group="roof", label="Thatched Roof", pattern="thatch",
+        stops=[(132, 104, 58), (166, 134, 76), (196, 166, 102)],
+        light=(222, 196, 132), dark=(92, 70, 38), moss=(104, 118, 62), courses=8,
+        grain=[]),
+    "slate-roof": dict(
+        group="roof", label="Slate Roof", pattern="slates",
+        stops=[(62, 68, 76), (78, 86, 96), (96, 104, 114)],
+        joint=(36, 40, 46), lichen=(176, 170, 118), courses=8, slates=6,
+        grain=[(70, (110, 118, 128), 0.10, 0.4, 1.2)]),
+    "pantiles": dict(
+        group="roof", label="Clay Pantiles", pattern="pantiles",
+        stops=[(150, 70, 44), (176, 92, 58), (198, 118, 76)],
+        shadow=(84, 36, 24), lichen=(186, 180, 128), courses=7, tiles=8,
+        grain=[(60, (130, 58, 36), 0.12, 0.4, 1.2)]),
 }
 
 
@@ -1097,12 +1117,155 @@ def _reeds(spec, size, rng):
     return px
 
 
+def _thatch(spec, size, rng):
+    """Reed thatch laid in courses: each course a band of strands running down
+    the slope, lit along the top where the course above lets it show and in
+    shadow at the bottom where it overhangs the next. Strands wrap, so a
+    course carries on across the seam; moss gathers in the shaded hollows."""
+    lo, mid, hi = spec["stops"]
+    courses = spec["courses"]
+    ch = size / courses
+    tone = fbm(size, 6, 4, rng)
+    px = bytearray(size * size * 4)
+    # Courses start half a course down, so the seam falls across the middle
+    # of one rather than on a lip, where the tile is least alike row to row.
+    off = ch / 2
+    for y in range(size):
+        # 0 at the top of a course, 1 at its overhanging lip.
+        t = ((y + off) % ch) / ch
+        shade = 0.12 - t * 0.38 if t > 0.55 else 0.12 - t * 0.12
+        for x in range(size):
+            i = y * size + x
+            v = clamp(0.5 + (tone[i] - 0.5) * 1.3)
+            c = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            _put(px, i, _shade(c, shade))
+    scale = size / 256.0
+    for k in range(courses):
+        y0 = k * ch - off
+        for _ in range(int(900 * scale)):
+            x = rng.random() * size
+            ys = y0 + rng.uniform(-ch * 0.15, ch * 0.5)
+            ln = rng.uniform(ch * 0.45, ch * 0.9)
+            lean = rng.gauss(0, 0.12) * ln
+            col = spec["light"] if rng.random() < 0.45 else spec["dark"]
+            _line(px, size, x, ys, x + lean, ys + ln, col, rng.uniform(0.18, 0.4))
+        # The lip of the course: a dark ragged line where the straw ends.
+        for x in range(size):
+            yy = y0 + ch - 1 + int(round(math.sin(x * 0.9 + k) * 0.8 + rng.uniform(-0.6, 0.6)))
+            j = ((int(yy) % size) * size + x) * 4
+            px[j], px[j + 1], px[j + 2] = _shade((px[j], px[j + 1], px[j + 2]), -0.35)
+    moss = fbm(size, 4, 3, rng)
+    for i in range(size * size):
+        y = i // size
+        t = ((y + off) % ch) / ch
+        if moss[i] > 0.64 and t > 0.45:
+            a = clamp((moss[i] - 0.64) / 0.12) * 0.35 * (t - 0.45) / 0.55
+            j = i * 4
+            m = spec["moss"]
+            px[j] = int(px[j] + (m[0] - px[j]) * a)
+            px[j + 1] = int(px[j + 1] + (m[1] - px[j + 1]) * a)
+            px[j + 2] = int(px[j + 2] + (m[2] - px[j + 2]) * a)
+    return px
+
+
+def _slates(spec, size, rng):
+    """Slates in staggered courses, each a little different in colour, each
+    throwing a thin shadow along its lower edge onto the course beneath. Here
+    and there one is a replacement, paler than its neighbours, and lichen has
+    taken a few in the shape lichen grows: round, and paler at the rim."""
+    lo, mid, hi = spec["stops"]
+    courses, per = spec["courses"], spec["slates"]
+    ch, sw = size / courses, size / per
+    tones = [[rng.random() for _ in range(per)] for _ in range(courses)]
+    # Even courses only, or the half-slate offset would not meet at the seam.
+    tone = fbm(size, 8, 3, rng)
+    joint = spec["joint"]
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        r = int(y / ch) % courses
+        top = y - r * ch
+        shift = sw / 2 if r % 2 else 0.0
+        for x in range(size):
+            i = y * size + x
+            u = (x + shift) % size
+            k = int(u / sw) % per
+            left = u - k * sw
+            v = tones[r][k]
+            c = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if v > 0.93:
+                c = _shade(c, 0.22)
+            c = _shade(c, (tone[i] - 0.5) * 0.25)
+            # The lower edge overlaps the course below: dark under it, lit on it.
+            if top > ch - 2.2:
+                c = joint
+            elif top < 2.5:
+                c = _shade(c, -0.3)
+            elif top > ch - 5:
+                c = _shade(c, 0.1)
+            if left < 1.0 and top < ch - 2:
+                c = mix_rgb(c, joint, 0.75)
+            _put(px, i, c)
+    scale = size / 256.0
+    for _ in range(int(9 * scale * scale) + 2):
+        cx, cy, r = rng.random() * size, rng.random() * size, rng.uniform(4, 9) * max(0.6, scale)
+        _blob(px, size, cx, cy, r, spec["lichen"], 0.45, 0.7)
+        _blob(px, size, cx, cy, r * 0.55, _shade(spec["lichen"], -0.2), 0.35, 0.6)
+    return px
+
+
+def _pantiles(spec, size, rng):
+    """Clay pantiles: S-curved tiles side by side, so the roof reads as
+    ridges and troughs running down it, the courses overlapping at a lip that
+    casts a shadow. The light falls from the left across the curve. Tiles
+    vary in their firing, and lichen sits in the troughs."""
+    lo, mid, hi = spec["stops"]
+    courses, per = spec["courses"], spec["tiles"]
+    ch, tw = size / courses, size / per
+    tones = [[rng.random() for _ in range(per)] for _ in range(courses)]
+    tone = fbm(size, 6, 3, rng)
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        r = int(y / ch) % courses
+        top = y - r * ch
+        for x in range(size):
+            i = y * size + x
+            # Half a tile over, so the seam falls across the middle of a tile
+            # rather than on a joint between two differently fired ones.
+            xs = (x + tw / 2) % size
+            k = int(xs / tw) % per
+            u = (xs - k * tw) / tw
+            # One wave per tile: the crest catches the light on its left face.
+            curve = math.sin(u * 2 * math.pi)
+            v = tones[r][k]
+            c = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            c = _shade(c, curve * 0.22 + (tone[i] - 0.5) * 0.2)
+            # The lip follows the tile's own curve, so each course ends in a
+            # row of scallops rather than a ruled line.
+            lip = ch - 3 - max(0.0, curve) * 3.5
+            if top > lip:
+                c = mix_rgb(c, spec["shadow"], min(0.85, 0.5 + (top - lip) * 0.12))
+            elif top < 3:
+                c = _shade(c, 0.12)
+            _put(px, i, c)
+    # Lichen in the troughs, where the rain runs and the sun reaches least.
+    scale = size / 256.0
+    for _ in range(int(18 * scale * scale) + 2):
+        k, r = rng.randrange(per), rng.randrange(courses)
+        cx = (k + 0.25) * tw
+        cy = r * ch + rng.uniform(0.2, 0.7) * ch
+        rad = rng.uniform(2.0, 4.5) * max(0.6, scale)
+        _blob(px, size, cx, cy, rad, spec["lichen"], 0.5, 0.6)
+        _blob(px, size, cx + rad * 0.3, cy, rad * 0.5, _shade(spec["lichen"], -0.25), 0.35, 0.6)
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
             "brick": _brick, "carpet": _carpet, "marble": _marble,
             "ashlar": _ashlar, "straw": _straw, "ice": _ice,
             "mosaic": _mosaic, "shingle": _shingle, "reef": _reef,
             "vineyard": _vineyard, "wheat": _wheat, "earth": _earth,
-            "riverbed": _riverbed, "mudflat": _mudflat, "reeds": _reeds}
+            "riverbed": _riverbed, "mudflat": _mudflat, "reeds": _reeds,
+            "thatch": _thatch, "slates": _slates, "pantiles": _pantiles}
 
 
 def render(name, size, seed):

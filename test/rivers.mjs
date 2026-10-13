@@ -203,6 +203,59 @@ t('on a thin island, rivers from opposite shores stop short of each other', band
   Math.round(band.worst) + ' px, ' + band.n + ' rivers');
 t('tracing them is quick', pure.ms < 1500, pure.ms.toFixed(0) + ' ms');
 
+// Three things a review found on 2026-10-13. Each of these fails on the code
+// before it.
+const edges = await p.evaluate(async () => {
+  const M = await import('/js/rivers.js');
+  const doc = window.__cg.app.doc;
+  // A mask that is land from edge to edge, on a map whose size is not a whole
+  // number of cells: the last row and column used to come out as sea.
+  const fake = { id: 'rivers-test-everywhere' };
+  const m = window.__cg.R.maskFor(fake);
+  const x = m.getContext('2d');
+  x.fillStyle = '#000'; x.fillRect(0, 0, m.width, m.height);
+  const g = M.landGrid(fake, doc.width, doc.height);
+  let edgeSea = 0;
+  for (let c = 0; c < g.cols; c++) if (!g.land[(g.rows - 1) * g.cols + c]) edgeSea++;
+  for (let r = 0; r < g.rows; r++) if (!g.land[r * g.cols + g.cols - 1]) edgeSea++;
+  const whole = (doc.width % g.cell === 0) && (doc.height % g.cell === 0);
+  // With no sea at all the frame is the coast, so there are still rivers,
+  // and each one leaves by a side of the map.
+  const rs = M.traceRivers(g, { seed: 'plain', count: 4 });
+  const W = g.cols * g.cell, H = g.rows * g.cell;
+  const out = rs.every((r) => { const q = r.points[r.points.length - 1]; return q.x <= 0.5 || q.y <= 0.5 || q.x >= W - 0.5 || q.y >= H - 0.5; });
+  const mainsOut = rs.filter((r) => { const q = r.points[r.points.length - 1]; return q.x <= 0.5 || q.y <= 0.5 || q.x >= W - 0.5 || q.y >= H - 0.5; }).length;
+  // No river is wider at its mouth than the width asked for, whichever basin
+  // the seeded nudge happened to choose first.
+  const land = doc.layers.find((l) => l.kind === 'land');
+  const real = M.landGrid(land, doc.width, doc.height);
+  let widest = 0;
+  for (let i = 0; i < 16; i++) {
+    for (const r of M.traceRivers(real, { seed: 'wide' + i, count: 8, width: 20 })) widest = Math.max(widest, r.width);
+  }
+  return { edgeSea, whole, n: rs.length, mainsOut, widest, cols: g.cols, rows: g.rows };
+});
+t('land to the edge of the map is land in the last row and column too', edges.edgeSea === 0,
+  edges.edgeSea + ' edge cells read as sea' + (edges.whole ? ' (map a whole number of cells: vacuous)' : ''));
+t('a map that is all land still gets rivers, leaving by the frame', edges.n > 0 && edges.mainsOut > 0,
+  edges.n + ' rivers, ' + edges.mainsOut + ' to the frame');
+t('no river is wider than the width at the mouth', edges.widest > 0 && edges.widest <= 20, edges.widest);
+
+const hidden = await p.evaluate(async () => {
+  const M = await import('/js/rivers.js');
+  const paths = window.__cg.app.doc.layers.find((l) => l.kind === 'paths');
+  const before = paths.ops.length;
+  paths.visible = false;
+  await M.riversDialog();
+  const res = { modal: !!document.querySelector('.modal [data-rivers="preview"]'),
+                toast: Array.from(document.querySelectorAll('.toast')).map((n) => n.textContent).join(' | '),
+                same: paths.ops.length === before };
+  paths.visible = true;
+  return res;
+});
+t('a hidden Paths layer is refused rather than drawn on out of sight', !hidden.modal && /hidden/.test(hidden.toast) && hidden.same,
+  hidden.toast);
+
 /* ========================================================================== *
  * The dialog, the document and the history.
  * ========================================================================== */

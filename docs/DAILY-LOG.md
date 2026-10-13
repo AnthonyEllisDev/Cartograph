@@ -5,6 +5,107 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-13 -- names for the map, the town art, and four things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 97
+tracked files but the `.pyc`s (every one staged and compared). A feature day.
+
+**Baseline: green.** Every suite passed before anything was changed, run
+against a pristine clone on port 7871 while today's work went into a second
+clone served on 7872: verify 82, lighting 29, hex 27, pro 25, ext 17, theme 16,
+labels 8, brushes 8, guards 66, regress 135, regions 25, notes 36, clipboard
+40, selection 43, prefabs 41, transform 52, hatch 32, print 29, players 31,
+setedit 21, art 17, caverns 25, backups 21, frames 34, cartouche 39, refs 35,
+dungeon 34, generate 27, props 37, trace 45, rivers 44 -- 1,121 -- plus
+`battle`.
+
+**Review.** `node --check` on every module, extension and test,
+`py_compile` on every Python file, and the non-ASCII scan: clean. A second
+reader went through yesterday's rivers end to end. Four real defects, each
+now caught by a new check in `rivers.mjs` that was run against the unfixed
+code and fails there:
+
+- *Land to the bottom edge read as sea.* `landGrid` drew a source rectangle
+  running past the mask whenever the map is not a whole number of cells
+  (2048 x 1536 at 7 px is 219.4 rows), and Chromium left that whole last row
+  empty -- worse than the partial coverage the reviewer predicted. Land
+  running off the frame got a false coast and rivers ran out of the map into
+  it. The mask is now copied onto a canvas exactly the grid's size, its last
+  row and column of pixels stretched over the overhang, before it is sampled.
+- *A map that is land from edge to edge never got rivers.* The flood already
+  started from the frame when there is no sea, but a mouth had to be beside
+  sea, so there were none. Frame cells are now mouths on such a map, the
+  river leaves by the nearest side, and the distance field is measured from
+  the frame rather than from nothing.
+- *A river could be wider than "Width at the mouth".* Widths were scaled
+  against the first river chosen, which the seeded nudge does not guarantee
+  is the biggest; the old code drew 24 px for a 20 px setting. Scaled against
+  the largest main river now.
+- *A hidden Paths layer was drawn on out of sight,* with a toast saying the
+  rivers had been made, and the first Paths or Landmass layer was used even
+  when another was selected or the first was locked or empty. It now takes
+  the layer the Path tool would, and refuses a hidden one by `layerVisible()`.
+
+Also fixed: the dialog's preview scaled the rivers by the width alone, so on a
+long thin map they sat in the top third of a stretched picture. Written up,
+not changed: the "do not hug" margin between tributaries is not cleared between
+river systems, so a later system's tributaries also keep off earlier ones --
+harmless, and the per-system margin mostly covers it already.
+
+**The feature: names.** Research: Azgaar's generator names everything it makes
+from name bases built on real-language word lists, one per culture; Inkarnate
+and Wonderdraft have nothing, and their users keep a name-generator website
+open in another tab -- which Cartograph cannot assume, being offline by
+promise. Every map is mostly names, and the empty label dialog is where a
+session stalls. Elevation was considered again and is still a design rather
+than a day; lakes and river names along the rivers are smaller and still open.
+
+- `web/js/names.js`, pure but for the chooser: six styles written by hand for
+  this file (*Common*, *Northern*, *Fair*, *Deep*, *Southern*, *Imperial*,
+  plus *Mixed*), each a few dozen word parts -- a feel, not a real language, so
+  nothing in it is a list of real places whose provenance would have to be
+  trusted -- and seven kinds of feature with the patterns a cartographer uses
+  ("Isle of X", "the X Wood", "Kingdom of X"), plus a few per style ("X
+  Brook", "Xfjord", "Mons X"). Seams are glued by `join` so no three vowels
+  run and no doubled a, i or u; a stem that met itself ("Kharkhar") or holds a
+  fragment from a short filter list is dropped. `suggestNames({seed, style,
+  kind, count, avoid})` is deterministic.
+- The Label and Region dialogs carry the chooser under the text box: twelve
+  chips, a style menu (remembered in `settings.tools.names.style`), a kind menu
+  that starts from the label's style (water asks for a sea), and More. A chip
+  fills the box and does not place anything, so a suggestion can be edited.
+  Names already on the map are not offered.
+- *Suggest a name...* in the Selected panel for a held label or region renames
+  it through `editObject`, so it is the same one history step typing would
+  make. The palette has the same command; with nothing held, the name waits
+  for the next label (`setPendingName` / `takePendingName`, taken once).
+- `closeModal(value)` added to `util.js` (additive) so a dialog can be
+  settled from a click in its body. No extension API change; `API_VERSION`
+  stays 1.
+
+**Art version 9.** Roofs and the town square, per Anthony's note of
+2026-10-06. Textures, in a new group `roof`: `thatch` (reed courses with lit
+tops and overhanging lips, moss in the shade), `slate-roof` (staggered slates,
+the odd paler replacement, lichen rosettes), `pantiles` (S-curved clay tiles
+with scalloped lips, lichen in the troughs). Thatch and pantiles start their
+courses and tiles half a step in, so the seam falls mid-tile; the first bake of
+each failed the seam check by a few per cent and was moved rather than the
+check loosened. Stamps, new group `town` (in `VARIED`): fountain, wayside
+shrine, gallows, banner, chicken coop, stocks, notice board and street lamp.
+A new colour constant first shadowed the underground set's `FLAME` and changed
+fifteen of their files; caught by the byte comparison, renamed `LAMPLIGHT`.
+Old and new bakes at the same seed: all 267 old files byte-identical. Each
+texture tiled 2 x 2 and looked at, and a contact sheet of all 24 variants.
+
+**Tests.** New suite `names.mjs`, 51 checks (`npm run names`), and four more
+in `rivers.mjs` (48). Two full rounds of all
+thirty-two suites back to back, after the change: identical and all green,
+1,176 of 1,176 each time, plus `battle`. Screenshots looked at: the
+Label dialog with the Fair suggestions over a generated island, and the eight
+town symbols on a battle map at their real size against the grid.
+
+---
+
 ## 2026-10-12 -- rivers from a seed, the river art, and three things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 97

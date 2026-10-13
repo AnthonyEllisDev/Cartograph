@@ -19,16 +19,17 @@ pack's `pack.json`, so a pack you liked can always be rebuilt.
 The generated pack is **CC0 1.0** — public domain. Maps you make with it are
 yours, commercially or otherwise.
 
-Thirty-eight terrain tiles: parchment, ocean, shallows, a coral reef, a stony
+Forty-one terrain tiles: parchment, ocean, shallows, a coral reef, a stony
 riverbed, grass,
 meadow, broadleaf and pine forest, sand, dunes, rock, highland, snow, tundra,
 marsh, a reed bed, a mudflat, farmland, a vineyard, a wheat field, ashland, a
 shingle beach and a frozen lake for the land; flagstones, wooden floorboards, cobblestones, brick,
 a woven carpet, marble tiles, sandstone blocks, straw, a mosaic and packed
 earth for the floors of battle maps; and a cave floor, an underground pool and a lava flow for going below
-them.
+them; and thatch, slate and clay pantiles for the roofs of a village seen from
+above.
 
-Eighty-five symbols. Drawn side-on, the way an atlas draws them: mountains,
+Ninety-three symbols. Drawn side-on, the way an atlas draws them: mountains,
 hills, volcanoes, caves, standing stones, five kinds of tree, villages, towns,
 cities, castles, towers, ruins, windmills, lighthouses, mines, bridges, ships,
 a sea serpent and a compass rose. Drawn from above, at five feet to seventy
@@ -43,8 +44,10 @@ a reef, a sea cliff and a shipwreck; and, round a farm, a fence (sometimes with
 a gate or a rail down), a scarecrow, beehives, a trough, a wheelbarrow, a
 vegetable patch, grain sacks and a millstone; and, on the river, a waterfall, a
 watermill, stepping stones, lily pads, rapids, a rope ferry, a weir and a fish
-trap. The land and plant symbols, the furnishings, the underground ones, the
-fittings, the camp, the coast, the farm and the river come in three random
+trap; and, in the town square, a fountain, a wayside shrine, a gallows, a
+banner, a chicken coop, the stocks, a notice board and a street lamp. The land
+and plant symbols, the furnishings, the underground ones, the fittings, the
+camp, the coast, the farm, the river and the town come in three random
 variants each.
 
 ## Adding to the generated art

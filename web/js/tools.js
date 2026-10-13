@@ -15,6 +15,7 @@ import * as R from './render.js';
 import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
 import { riversDialog } from './rivers.js';
+import { kindForLabelStyle, nameChooser, takePendingName } from './names.js';
 import { turnSelection } from './transform.js';
 import { clamp, modal, el, toast, uid } from './util.js';
 
@@ -987,13 +988,14 @@ function regionColour() {
 }
 
 async function askForRegionName() {
-  const input = el('input', { type: 'text', placeholder: 'Kingdom, duchy, wood...', value: '' });
+  const input = el('input', { type: 'text', placeholder: 'Kingdom, duchy, wood...', value: takePendingName() });
   let name = null;
   await modal({
     title: 'Name this region',
     body: el('div', {}, [
       el('div', { class: 'field' }, [el('label', { text: 'Name' }), input]),
       el('p', { class: 'muted', text: 'Leave it empty for an area with no name on it.' }),
+      nameChooser({ kind: 'region', onPick: (n) => { input.value = n; input.focus(); } }),
     ]),
     buttons: [
       { label: 'Cancel' },
@@ -1407,10 +1409,14 @@ function pathLength(points) {
 }
 
 async function askForText(curved) {
-  const input = el('input', { type: 'text', placeholder: 'Name', value: '' });
+  const input = el('input', { type: 'text', placeholder: 'Name', value: takePendingName() });
+  // A chip fills the box rather than placing the label, so a suggestion can
+  // be the start of a name as well as the whole of one.
+  const fillIn = (name) => { input.value = name; input.focus(); };
   const body = el('div', {}, [
     el('div', { class: 'field' }, [el('label', { text: 'Text' }), input]),
     curved ? el('p', { class: 'muted', text: 'This one will follow the curve you drew.' }) : null,
+    nameChooser({ kind: kindForLabelStyle(S('label', 'style', 'settlement')), onPick: fillIn }),
   ]);
   let text = null;
   await modal({
