@@ -15,6 +15,7 @@ import * as R from './render.js';
 import { generateDialog } from './generate.js';
 import { dungeonDialog } from './dungeon.js';
 import { riversDialog } from './rivers.js';
+import { commitRooms, edgePoints, frame as roomFrame, nearestEdge, opEdges, paintCells, planPaint, planWalls, readCells, rectCells, roomPaintLayer } from './rooms.js';
 import { kindForLabelStyle, nameChooser, takePendingName } from './names.js';
 import { turnSelection } from './transform.js';
 import { clamp, modal, el, toast, uid } from './util.js';
@@ -1249,6 +1250,126 @@ define({
       const sp = R.mapToScreen(pt.x, pt.y);
       ctx.fillStyle = '#d9a441';
       ctx.fillRect(sp.x - 3, sp.y - 3, 6, 6);
+    }
+    ctx.restore();
+  },
+});
+
+define({
+  id: 'room',
+  // A door goes on the wall edge nearest the pointer, and a pointer snapped
+  // to a corner is equally near two of them.
+  get snaps() { return S('room', 'mode', 'add') !== 'door'; },
+  snapTo: 'corner',
+  wantsHover: true,
+  label: 'Room',
+  icon: 'room',
+  assetKind: 'terrain',
+  writesTo: ['walls'],
+  hint: 'Drag out a room: a floor with walls round it. Rooms that touch become one. Door mode puts a door in a room\'s wall.',
+  options: () => ([
+    { key: 'mode', type: 'select', label: 'Mode', value: S('room', 'mode', 'add'), rerender: true,
+      options: [['add', 'Add a room'], ['remove', 'Carve back to rock'], ['door', 'Put in a door']] },
+  ].concat(S('room', 'mode', 'add') === 'door' ? [
+    { key: 'doorKind', type: 'select', label: 'Door', value: S('room', 'doorKind', 'door'),
+      options: [['door', 'Door'], ['secret', 'Secret door'], ['window', 'Window']] },
+  ] : [
+    // Read when a room is drawn or carved, and applied to the whole outline:
+    // the shade is the rock round every room, not something one room has.
+    { key: 'shade', type: 'toggle', label: 'Shade the rock', value: S('room', 'shade', false) },
+  ])),
+  state: { from: null },
+  // The room tool needs the square grid and both layers; this says which is
+  // missing, or returns what it works on.
+  where() {
+    const doc = app.doc;
+    const f = roomFrame(doc);
+    if (!f) { toast('Rooms are laid out on a square grid; this map has a hex grid', 'bad'); return null; }
+    const walls = targetLayer(['walls']);
+    if (!walls) { toast('This map has no walls layer — start a battle map, or add one', 'bad'); return null; }
+    const paint = roomPaintLayer(doc);
+    if (!paint) { toast('The room tool needs a paint layer for the floor', 'bad'); return null; }
+    if (paint.locked) { toast('The rooms\' paint layer, ' + paint.name + ', is locked', 'bad'); return null; }
+    return { doc, f, walls, paint };
+  },
+  down(pt) {
+    if (S('room', 'mode', 'add') === 'door') { this.door(pt); return; }
+    this.state.from = pt;
+    this.state.hover = pt;
+  },
+  move(pt) { this.state.hover = pt; R.requestDraw(); },
+  up(pt) {
+    const from = this.state.from;
+    this.state.from = null;
+    R.requestDraw();
+    if (!from) return;
+    const at = this.where();
+    if (!at) return;
+    const box = rectCells(at.f, from, pt);
+    if (!box) return;
+    const mode = S('room', 'mode', 'add');
+    let tex = null;
+    if (mode === 'add') {
+      tex = requireAsset('terrain', at.paint);
+      if (!tex) return toast('Pick a floor texture first', 'bad');
+    }
+    const before = readCells(at.f, at.paint);
+    const cells = paintCells(before, at.f, box, tex);
+    const paintAfter = planPaint(at.doc, at.f, at.paint, cells, S('room', 'shade', false));
+    const wallsAfter = planWalls(at.f, at.walls, cells);
+    commitRooms(mode === 'add' ? 'Room' : 'Carve room', at.paint, paintAfter, at.walls, wallsAfter);
+  },
+  door(pt) {
+    const at = this.where();
+    if (!at) return;
+    const cells = readCells(at.f, at.paint);
+    const key = nearestEdge(at.f, cells, pt);
+    if (!key) return toast('Click on a room\'s wall to put a door in it', 'bad');
+    // A door already there comes out again, whoever put it in: the tool is a
+    // toggle along the wall.
+    const there = at.walls.ops.filter((op) => op.kind !== 'wall' && opEdges(at.f, op).includes(key));
+    let extra = null;
+    let ops = at.walls.ops;
+    if (there.length) ops = ops.filter((op) => !there.includes(op));
+    else extra = { id: uid('w'), kind: S('room', 'doorKind', 'door'), points: edgePoints(at.f, key), gen: 'rooms' };
+    const after = planWalls(at.f, Object.assign({}, at.walls, { ops }), cells, extra);
+    commitRooms(there.length ? 'Remove door' : 'Door', null, null, at.walls, after);
+  },
+  overlay(ctx) {
+    const f = app.doc && roomFrame(app.doc);
+    const hover = this.state.hover;
+    if (!f || !hover) return;
+    const mode = S('room', 'mode', 'add');
+    ctx.save();
+    if (mode === 'door') {
+      // Read once per change, not once a frame: the cells come from testing
+      // every cell against the floor's rings. Any change to the rooms gives
+      // the layer a new ops array (commitRooms and every undo copy it).
+      const paint = roomPaintLayer(app.doc);
+      const fkey = f.cell + ',' + f.ox + ',' + f.oy + ',' + f.cols + ',' + f.rows;
+      const seen = this.state.cells;
+      if (!seen || seen.ops !== (paint && paint.ops) || seen.fkey !== fkey) {
+        this.state.cells = { ops: paint && paint.ops, fkey, cells: readCells(f, paint) };
+      }
+      const key = nearestEdge(f, this.state.cells.cells, hover);
+      if (key) {
+        const [a, b] = edgePoints(f, key).map((p) => R.mapToScreen(p.x, p.y));
+        ctx.strokeStyle = 'rgba(217,164,65,.95)';
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+    } else if (this.state.from) {
+      const box = rectCells(f, this.state.from, hover);
+      if (box) {
+        const a = R.mapToScreen(f.ox + box.x0 * f.cell, f.oy + box.y0 * f.cell);
+        const b = R.mapToScreen(f.ox + box.x1 * f.cell, f.oy + box.y1 * f.cell);
+        ctx.fillStyle = mode === 'add' ? 'rgba(217,164,65,.18)' : 'rgba(190,70,60,.22)';
+        ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        ctx.strokeStyle = mode === 'add' ? 'rgba(217,164,65,.95)' : 'rgba(210,90,80,.95)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      }
     }
     ctx.restore();
   },

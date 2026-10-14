@@ -19,6 +19,7 @@ export const ICONS = {
   fill: P('<path d="M6 11l6-6 7 7-6 6a2 2 0 0 1-2.8 0L6 13.8A2 2 0 0 1 6 11z"/><path d="M9 8L7 6"/><path d="M20 15c1.4 2 1.4 4-.6 4S18 17 20 15z"/>'),
   shape: P('<rect x="3" y="6" width="11" height="11" rx="1"/><circle cx="16" cy="14" r="5"/>'),
   wall: P('<path d="M3 8h18M3 16h18"/><path d="M3 8v8M9 8v8M15 8v8M21 8v8"/>'),
+  room: P('<path d="M3 4h18v10h-7v6H3z" fill="currentColor" fill-opacity=".12"/><path d="M3 9V4h18v10h-7v6H3v-6"/>'),
   light: P('<circle cx="12" cy="12" r="3.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'
           + '<path d="M5 5l2.1 2.1M16.9 16.9L19 19M19 5l-2.1 2.1M7.1 16.9L5 19"/>'),
   measure: P('<rect x="2" y="9" width="20" height="6" rx="1" transform="rotate(-12 12 12)"/><path d="M7 10v2M11 9v3M15 8v2"/>'),

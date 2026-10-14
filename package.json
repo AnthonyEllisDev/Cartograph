@@ -31,6 +31,7 @@
     "trace": "node test/trace.mjs",
     "rivers": "node test/rivers.mjs",
     "names": "node test/names.mjs",
+    "rooms": "node test/rooms.mjs",
     "demo": "node test/demo.mjs"
   },
   "devDependencies": {

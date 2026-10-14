@@ -38,7 +38,9 @@ PACK_ID = "starter"
 #   7  2026-10-11: vineyard, wheat field, packed earth; eight farm symbols
 #   8  2026-10-12: stony riverbed, mudflat, reed bed; eight river symbols
 #   9  2026-10-13: thatch, slate and pantile roofs; eight town symbols
-ART_VERSION = 9
+#  10  2026-10-14: herringbone parquet, hexagonal tiles, smithy cinders; eight
+#      workshop symbols
+ART_VERSION = 10
 
 
 def build(out_dir, seed="v1", size=256, log=print):

@@ -140,7 +140,7 @@ export function initInput() {
 
     const shortcuts = {
       b: 'brush', e: 'erase', l: 'land', g: 'scatter', f: 'fill', r: 'shape',
-      s: 'stamp', p: 'path', t: 'label', n: 'note', w: 'wall', m: 'measure', v: 'select', h: 'pan',
+      s: 'stamp', p: 'path', t: 'label', n: 'note', w: 'wall', o: 'room', m: 'measure', v: 'select', h: 'pan',
     };
     if (!ev.ctrlKey && !ev.metaKey && shortcuts[ev.key.toLowerCase()]) {
       // Not with the button down: the release would go to the new tool, so a

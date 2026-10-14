@@ -68,6 +68,7 @@ web/                  the editor itself — plain ES modules, no build step
   js/generate.js        seeded land: noise, marching squares, the dialog
   js/rivers.js          seeded rivers run downhill over the land, the dialog
   js/dungeon.js         seeded dungeons: rooms and corridors or caverns, walls, the key
+  js/rooms.js           rooms dragged out by hand: cells, the floor, the walls, doors
   js/clipboard.js       copy, cut, paste and duplicate
   js/prefabs.js         sets saved to put down on any map
   js/transform.js       turning and mirroring what Select holds
@@ -302,6 +303,30 @@ five-foot squares, snapping on by default, and a walls layer.
 drawn on the map *and* written into the export as data: tick *Also write a
 Universal VTT file* and you get a `.dd2vtt` next to the PNG, which Foundry,
 Roll20 and the rest import with line of sight and door positions already built.
+
+**Room** (`O`) draws a room in one drag: the floor in the texture you pick and a
+wall all the way round it, on the grid. Drag another room that touches or
+overlaps it and the two become one, the wall between them gone, so an L-shaped
+hall, a corridor or a cross-shaped chapel is two or three drags; a room dragged
+inside another lays a new floor there and adds no wall. Each room keeps the
+floor it was drawn with. Set *Mode* to **Carve back to rock** and the drag takes
+cells away instead -- carve one square out of the middle of a hall and you have
+a pillar with a wall round it. **Put in a door** turns the pointer into a door
+setter: the wall edge under it lights up, a click puts a door, secret door or
+window there and opens the wall behind it, and a click on a door takes it out
+again. A door stays as long as the wall it sits in does; draw a room across it
+and it goes with the wall. *Shade the rock* darkens everything outside the
+rooms. Every drag and every door is one undo step.
+
+What the Room tool writes is ordinary map, the same as the dungeon generator:
+the floor on the lowest paint layer, the walls and doors on the **Walls** layer,
+so they cast shadows, hatch, go to a virtual tabletop as sight lines and doors,
+and can be selected and changed like any wall. A wall or a door you draw with
+the **Wall** tool is left alone -- and a door you draw on a room's outline that
+way opens the room's wall too, the next time the rooms change. A room's walls
+are worked out again from the floor each time, so a room wall deleted by hand
+comes back on the next drag; put a door in it instead. Rooms are laid out on
+square grids; a hex map is told so.
 
 Or let it start you off: **Generate dungeon…** at the top of the Wall panel
 (and in the command palette) lays out rooms and corridors from a seed on the
@@ -595,7 +620,7 @@ table of colours and adding one is a few lines.
 | `B` `E` `L` | Terrain brush · Eraser · Landmass |
 | `G` `F` `R` | Scatter · Fill · Shape |
 | `S` `P` `T` | Stamp · Path · Label |
-| `W` `M` | Wall · Measure |
+| `W` `O` `M` | Wall · Room · Measure |
 | `V` `H` | Select · Pan |
 | `[` `]` | Smaller and larger brush |
 | Space + drag | Pan from any tool |
@@ -661,6 +686,14 @@ and under *coast* in the stamp picker a rowing boat (oars shipped or out), a
 jetty, an anchor, a fishing net, a buoy, a reef breaking the water, a sea cliff
 and a shipwreck, three variants of each. The first five are drawn to the
 battle-map scale; the reef, the cliff and the wreck read on a chart as well.
+
+For the workshops of a town there is a **herringbone parquet**, **hexagonal
+tiles** in fired clay and the black **smithy cinders** among the floors, and
+under *workshop* in the stamp picker a forge (hearth, bellows, sometimes a
+quench tub), a workbench with its tools, a loom, a spinning wheel, a potter's
+wheel, a grindstone, a kiln (lit or cold) and a tanning frame, three variants of
+each and drawn to the battle-map scale -- the things to put in the rooms the
+Room tool draws.
 
 ## Adding your own art
 
@@ -741,7 +774,21 @@ settings surviving a restart, presets round-tripping, the history panel winding
 a map back and replaying it to exactly the same pixels, the scale bar, and the
 extension host loading all three examples and rendering a custom layer kind.
 
-There are narrower scripts beside it, 1,176 assertions in all: `names.mjs`
+There are narrower scripts beside it, 1,232 assertions in all: `rooms.mjs`
+(the Room tool: a drag making one floor op and four runs of wall on the grid,
+a click making nothing, a touching room joining the first with no wall left
+between them and every edge of the outline walled once, undo and redo, a
+second floor keeping its own texture with no wall where the floors meet, a
+room inside a room retexturing it, carving a pillar and seeing the old floor
+through the hole, a door making a gap exactly one edge wide and a click away
+from a wall refused, a door surviving a room elsewhere and going with its wall
+when a room is drawn across it, a hand-drawn wall left alone and a hand-drawn
+door opening the outline, a room drawn round a lamp casting shadows at once
+and undo lifting them, the walls and doors in the Universal VTT export, the
+rock shade on and off, a locked walls layer and a hex map refused, and the
+round trip pixel for pixel; then the parquet, hexagonal-tile and cinder floors
+tiling and flooring rooms and the eight workshop symbols placed with the real
+tools), `names.mjs`
 (suggested names: the same seed, style and kind giving the same twelve and
 another seed others, a name to avoid avoided whatever its case, every style
 naming every kind, islands called islands and mountains mountains, a sweep of
@@ -752,7 +799,8 @@ without placing anything, Place as one step, a water label asking for a sea,
 the style remembered, a name on the map not offered again, the Region dialog,
 renaming a held label and a held region from the Selected panel as one step
 that undo and redo take back and bring back, Cancel changing nothing, a name
-from the palette waiting for the next label and only that one, and the round
+from the palette waiting for the next label on that map and only that one,
+five pages of More never repeating a name, and the round
 trip pixel for pixel; then the thatch, slate and pantile roofs tiling and the
 eight town symbols placed with the real tools), `rivers.mjs`
 (generated rivers: the same seed on the same land giving the same rivers and

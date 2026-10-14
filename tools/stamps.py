@@ -2495,6 +2495,291 @@ def street_lamp(rng):
     return _svg(w, h, "".join(parts))
 
 
+# --------------------------------------------------------------- workshop
+
+# The trades, at battle scale, for the rooms the Room tool draws: the smithy's
+# hearth and its grindstone, the weaver's loom and wheel, the potter's wheel
+# and kiln, the joiner's bench and the tanner's frame. Seen from above and lit
+# from the north like everything else. Added 2026-10-14 (art version 10).
+
+COAL = "#2e2724"
+COAL_GLOW = "#f08a32"
+CLAY = "#b7744a"
+CLAY_LIGHT = "#d39468"
+CLAY_DARK = "#8a5234"
+KILN_BRICK = "#9c5a3e"
+HIDE = "#c9a678"
+HIDE_DARK = "#9c7a4e"
+LEATHER = "#7a4e30"
+WOOL = ["#efe8da", "#d9cbb0", "#8a7a68", "#c2a27a"]
+YARN = ["#8c4a3a", "#4a5f7d", "#5d7046", "#a07a3a", "#7a5a86", "#d8c39c"]
+
+
+def forge(rng):
+    w, h = 150, 110
+    parts = []
+    # The hearth: a raised block of stone with the coal bed sunk in it, the
+    # hood's footing along the back wall (north), the bellows to one side.
+    parts.append('<rect x="22" y="14" width="106" height="82" rx="4" fill="%s" stroke="%s" stroke-width="1.4"/>'
+                 % (STONE, INK))
+    for x in range(22, 128, 18):
+        parts.append('<line x1="%d" y1="14" x2="%d" y2="96" stroke="%s" stroke-width="0.7" opacity="0.5"/>' % (x, x, STONE_DARK))
+    parts.append('<rect x="22" y="14" width="106" height="16" fill="%s" stroke="%s" stroke-width="1.2"/>' % (STONE_DARK, INK))
+    parts.append('<rect x="42" y="38" width="66" height="46" rx="10" fill="%s" stroke="%s" stroke-width="1.2"/>'
+                 % (COAL, INK))
+    heat = rng.uniform(0.55, 1.0)
+    parts.append('<ellipse cx="75" cy="61" rx="%.1f" ry="%.1f" fill="%s" opacity="%.2f"/>'
+                 % (22 * heat, 14 * heat, COAL_GLOW, 0.55 + 0.3 * heat))
+    parts.append('<ellipse cx="75" cy="61" rx="%.1f" ry="%.1f" fill="%s" opacity="0.8"/>' % (9 * heat, 5 * heat, FLAME))
+    for _ in range(rng.randint(14, 22)):
+        x, y = rng.uniform(46, 104), rng.uniform(42, 80)
+        hot = math.hypot((x - 75) / 26, (y - 61) / 17) < heat
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.4"/>'
+                     % (x, y, rng.uniform(1.6, 3.4), EMBER if hot and rng.random() < 0.6 else SOOT, INK))
+    # The tuyere: where the bellows' blast comes in from the side.
+    side = rng.choice((-1, 1))
+    tx = 42 if side < 0 else 108
+    parts.append('<rect x="%d" y="58" width="%d" height="6" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                 % (min(tx, tx + side * 22), 22, IRON, INK))
+    bx = 4 if side < 0 else 128
+    parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.2"/>'
+                 % (_pts([(bx + (18 if side < 0 else 0), 52), (bx + (18 if side < 0 else 0), 70),
+                          (bx + (0 if side < 0 else 18), 84), (bx + (0 if side < 0 else 18), 38)]), LEATHER, INK))
+    hx = bx - 4 if side < 0 else bx + 22
+    parts.append('<line x1="%d" y1="44" x2="%d" y2="78" stroke="%s" stroke-width="3"/>' % (hx, hx, WOOD_DARK))
+    for k in range(3):
+        y = 46 + k * 8
+        parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="0.7" opacity="0.7"/>'
+                     % (bx + 3, y + 2, bx + 15, y + 2, WOOD_DARK))
+    if rng.random() < 0.7:
+        # Tongs left across the rim.
+        parts.append('<path d="M60,90 L96,80 M60,92 L96,86" stroke="%s" stroke-width="1.8"/>' % IRON)
+    if rng.random() < 0.5:
+        # A quench tub at the corner.
+        parts.append('<circle cx="122" cy="94" r="12" fill="%s" stroke="%s" stroke-width="1.2"/>' % (WOOD_DARK, INK))
+        parts.append('<circle cx="122" cy="94" r="9" fill="%s"/>' % WATER)
+        parts.append('<path d="M116,92 q3,-3 6,0" stroke="#ffffff" stroke-width="0.8" opacity="0.5"/>')
+    return _svg(w, h, "".join(parts))
+
+
+def workbench(rng):
+    w, h = 140, 66
+    body, light, dark = _wood(rng)
+    parts = [
+        '<rect x="4" y="10" width="132" height="46" rx="2" fill="%s" stroke="%s" stroke-width="1.3"/>' % (body, INK),
+        _boards(4, 10, 132, 46, 3, True, dark, 0.5),
+        '<line x1="5" y1="12" x2="135" y2="12" stroke="%s" stroke-width="1.6" opacity="0.7"/>' % light,
+    ]
+    # A vice at one end, its screw and handle standing off the front edge.
+    vx = rng.choice((10, 112))
+    parts.append('<rect x="%d" y="48" width="18" height="12" fill="%s" stroke="%s" stroke-width="1"/>' % (vx, dark, INK))
+    parts.append('<line x1="%d" y1="64" x2="%d" y2="64" stroke="%s" stroke-width="2"/>' % (vx - 4, vx + 22, IRON))
+    tools = ["saw", "mallet", "chisels", "plane", "square"]
+    rng.shuffle(tools)
+    x = 34
+    for tool in tools[:rng.randint(2, 4)]:
+        if tool == "saw":
+            parts.append('<polygon points="%d,18 %d,18 %d,30 %d,30" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                         % (x, x + 30, x + 30, x + 4, STEEL_LIGHT, INK))
+            parts.append('<rect x="%d" y="16" width="9" height="16" rx="2" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                         % (x + 28, WOOD_LIGHT, INK))
+            x += 44
+        elif tool == "mallet":
+            parts.append('<rect x="%d" y="30" width="22" height="4" rx="1.5" fill="%s" stroke="%s" stroke-width="0.7"/>'
+                         % (x, WOOD_LIGHT, INK))
+            parts.append('<rect x="%d" y="24" width="10" height="16" rx="2" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                         % (x + 20, dark, INK))
+            x += 36
+        elif tool == "chisels":
+            for k in range(3):
+                parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="2.4"/>'
+                             % (x + k * 6, 20, x + k * 6, 30, WOOD_LIGHT))
+                parts.append('<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="1.8"/>'
+                             % (x + k * 6, 30, x + k * 6, 38, STEEL))
+            x += 24
+        elif tool == "plane":
+            parts.append('<rect x="%d" y="20" width="24" height="11" rx="3" fill="%s" stroke="%s" stroke-width="0.9"/>'
+                         % (x, light, INK))
+            parts.append('<rect x="%d" y="23" width="5" height="5" fill="%s"/>' % (x + 10, STEEL))
+            x += 32
+        else:
+            parts.append('<path d="M%d,20 L%d,40 L%d,40" stroke="%s" stroke-width="2.4"/>' % (x, x, x + 14, STEEL))
+            x += 22
+        if x > 104:
+            break
+    # Shavings curled on the floor in front of it.
+    for _ in range(rng.randint(3, 7)):
+        sx, sy = rng.uniform(12, 128), rng.uniform(56, 64)
+        parts.append('<path d="M%.1f,%.1f q2,-3 4,0 q-2,2 -3,0" stroke="%s" stroke-width="0.8" opacity="0.9"/>'
+                     % (sx, sy, HAY_LIGHT))
+    return _svg(w, h, "".join(parts))
+
+
+def loom(rng):
+    w, h = 120, 100
+    body, light, dark = _wood(rng)
+    warp = rng.choice(YARN)
+    weft = rng.choice([c for c in YARN if c != warp])
+    parts = [
+        # The frame, the warp threads running front to back, the cloth already
+        # woven wound towards the weaver's bench (south).
+        '<rect x="10" y="8" width="100" height="72" fill="none" stroke="%s" stroke-width="5"/>' % body,
+        '<rect x="10" y="8" width="100" height="72" fill="none" stroke="%s" stroke-width="0.9"/>' % INK,
+    ]
+    # The floor seen between the threads, so a pale warp still reads.
+    parts.append('<rect x="13" y="11" width="94" height="66" fill="%s" opacity="0.45"/>' % SOOT)
+    for k in range(17):
+        x = 18 + k * 5
+        parts.append('<line x1="%d" y1="12" x2="%d" y2="56" stroke="%s" stroke-width="1.1"/>' % (x, x, warp))
+    woven = rng.uniform(56, 70)
+    parts.append('<rect x="16" y="54" width="88" height="%.1f" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                 % (woven - 54 + 8, weft, INK))
+    for y in range(56, int(woven + 8), 3):
+        parts.append('<line x1="16" y1="%d" x2="104" y2="%d" stroke="%s" stroke-width="0.6" opacity="0.5"/>'
+                     % (y, y, _shade_hex(weft, -0.25)))
+    # The beater bar across the warp, and the shuttle resting on the cloth.
+    parts.append('<rect x="12" y="48" width="96" height="5" fill="%s" stroke="%s" stroke-width="0.9"/>' % (dark, INK))
+    sx = rng.uniform(30, 80)
+    parts.append('<ellipse cx="%.1f" cy="%.1f" rx="9" ry="3" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                 % (sx, woven, light, INK))
+    parts.append('<rect x="30" y="86" width="60" height="10" rx="2" fill="%s" stroke="%s" stroke-width="1.1"/>' % (dark, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def spinning_wheel(rng):
+    w, h = 90, 80
+    body, light, dark = _wood(rng)
+    wool = rng.choice(WOOL)
+    parts = [
+        # Seen from above a spinning wheel is mostly its table and the edge of
+        # the wheel: a long slanted bench with the wheel's rim standing on it.
+        '<polygon points="10,52 70,30 78,40 18,62" fill="%s" stroke="%s" stroke-width="1.2"/>' % (body, INK),
+        '<line x1="12" y1="54" x2="72" y2="32" stroke="%s" stroke-width="1.2" opacity="0.6"/>' % light,
+        '<ellipse cx="34" cy="36" rx="22" ry="7" transform="rotate(-20 34 36)" fill="none" stroke="%s" stroke-width="3"/>' % dark,
+        '<ellipse cx="34" cy="36" rx="22" ry="7" transform="rotate(-20 34 36)" fill="none" stroke="%s" stroke-width="0.8"/>' % INK,
+        '<line x1="14" y1="43" x2="54" y2="29" stroke="%s" stroke-width="1"/>' % INK_SOFT,
+    ]
+    # The flyer and its bobbin of spun yarn at the far end.
+    parts.append('<rect x="64" y="40" width="14" height="7" rx="2" transform="rotate(-20 71 43)" fill="%s" stroke="%s" stroke-width="0.8"/>'
+                 % (wool, INK))
+    # A basket of fleece on the floor beside it.
+    if rng.random() < 0.75:
+        parts.append('<circle cx="70" cy="66" r="11" fill="%s" stroke="%s" stroke-width="1"/>' % (WICKER, INK))
+        for _ in range(5):
+            parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" opacity="0.95"/>'
+                         % (70 + rng.uniform(-5, 5), 66 + rng.uniform(-5, 5), rng.uniform(3, 5), wool))
+    parts.append('<circle cx="22" cy="70" r="7" fill="%s" stroke="%s" stroke-width="1"/>' % (dark, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def potters_wheel(rng):
+    w = h = 84
+    c = 40
+    parts = [
+        # The kick wheel under the bench shows as a ring round the head.
+        '<circle cx="%d" cy="%d" r="30" fill="%s" stroke="%s" stroke-width="1.3"/>' % (c, c, WOOD_DARK, INK),
+        '<circle cx="%d" cy="%d" r="21" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, STONE, INK),
+    ]
+    # The pot on the wheel: rings of a thrown wall, and its open mouth.
+    r = rng.uniform(9, 14)
+    parts.append('<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, r, CLAY, INK))
+    parts.append('<circle cx="%d" cy="%d" r="%.1f" fill="%s" stroke="%s" stroke-width="0.6"/>' % (c, c, r * 0.65, CLAY_DARK, INK_SOFT))
+    parts.append('<path d="M%.1f,%d A%.1f,%.1f 0 0 1 %d,%.1f" stroke="%s" stroke-width="1.4" opacity="0.8"/>'
+                 % (c - r + 2, c, r - 2, r - 2, c, c - r + 2, CLAY_LIGHT))
+    for k in range(rng.randint(0, 3)):
+        a = math.radians(200 + k * 50 + rng.uniform(-10, 10))
+        pr = rng.uniform(5, 7)
+        x, y = c + math.cos(a) * 36, c + math.sin(a) * 36
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="0.9"/>' % (x, y, pr, CLAY_LIGHT, INK))
+        parts.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % (x, y, pr * 0.5, CLAY_DARK))
+    parts.append('<rect x="62" y="56" width="18" height="22" rx="3" fill="%s" stroke="%s" stroke-width="1"/>' % (WOOD, INK))
+    return _svg(w, h, "".join(parts))
+
+
+def grindstone(rng):
+    w, h = 90, 70
+    body, light, dark = _wood(rng)
+    parts = [
+        # A frame of two rails, the stone standing in it on its axle -- from
+        # above a thick dark slot -- and the crank at one end.
+        '<rect x="8" y="12" width="74" height="8" fill="%s" stroke="%s" stroke-width="1"/>' % (body, INK),
+        '<rect x="8" y="48" width="74" height="8" fill="%s" stroke="%s" stroke-width="1"/>' % (body, INK),
+        '<line x1="14" y1="34" x2="80" y2="34" stroke="%s" stroke-width="3"/>' % IRON,
+        '<rect x="30" y="20" width="30" height="28" fill="%s" stroke="%s" stroke-width="0.8" opacity="0.85"/>' % (WATER, INK_SOFT),
+        '<rect x="38" y="16" width="14" height="36" rx="3" fill="%s" stroke="%s" stroke-width="1.3"/>' % (STONE, INK),
+        '<line x1="41" y1="18" x2="41" y2="50" stroke="%s" stroke-width="1.2" opacity="0.7"/>' % STEEL_LIGHT,
+    ]
+    end = rng.choice((0, 1))
+    cx = 80 if end else 10
+    parts.append('<path d="M%d,34 L%d,34 L%d,24" stroke="%s" stroke-width="2.2"/>' % (cx, cx + (6 if end else -6), cx + (6 if end else -6), IRON))
+    parts.append('<circle cx="%d" cy="22" r="2.4" fill="%s" stroke="%s" stroke-width="0.6"/>' % (cx + (6 if end else -6), light, INK))
+    if rng.random() < 0.5:
+        parts.append('<path d="M20,62 L46,58" stroke="%s" stroke-width="2.4"/>' % STEEL_LIGHT)
+        parts.append('<path d="M46,58 L54,57" stroke="%s" stroke-width="3"/>' % WOOD_DARK)
+    return _svg(w, h, "".join(parts))
+
+
+def kiln(rng):
+    w = h = 120
+    c = 58
+    parts = [
+        # A bottle kiln from above: the brick dome in rings, the vent at the
+        # crown, and the firing mouth on the south side, glowing when lit.
+        '<circle cx="%d" cy="%d" r="48" fill="%s" stroke="%s" stroke-width="1.5"/>' % (c, c, KILN_BRICK, INK),
+    ]
+    for r in (40, 31, 22):
+        parts.append('<circle cx="%d" cy="%d" r="%d" stroke="%s" stroke-width="0.9" opacity="0.7"/>' % (c, c, r, CLAY_DARK))
+    for k in range(24):
+        a = math.radians(k * 15 + rng.uniform(-3, 3))
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.7" opacity="0.6"/>'
+                     % (c + math.cos(a) * 40, c + math.sin(a) * 40, c + math.cos(a) * 48, c + math.sin(a) * 48, CLAY_DARK))
+    parts.append('<circle cx="%d" cy="%d" r="9" fill="%s" stroke="%s" stroke-width="1"/>' % (c, c, SOOT, INK))
+    lit = rng.random() < 0.6
+    parts.append('<rect x="%d" y="%d" width="18" height="16" rx="3" fill="%s" stroke="%s" stroke-width="1.2"/>'
+                 % (c - 9, c + 42, COAL_GLOW if lit else SOOT, INK))
+    if lit:
+        parts.append('<rect x="%d" y="%d" width="10" height="8" rx="2" fill="%s"/>' % (c - 5, c + 46, FLAME))
+        parts.append('<circle cx="%d" cy="%d" r="4" fill="%s" opacity="0.6"/>' % (c, c, EMBER))
+    # Smoke, or a stack of fired pots waiting by the mouth.
+    if rng.random() < 0.5:
+        for k in range(3):
+            parts.append('<circle cx="%d" cy="%d" r="%d" fill="#9a948c" opacity="%.2f"/>' % (c + 6 + k * 7, c - 4 - k * 6, 5 + k * 2, 0.35 - k * 0.08))
+    else:
+        for k in range(rng.randint(2, 4)):
+            x = c + 20 + k * 9
+            parts.append('<circle cx="%d" cy="%d" r="5" fill="%s" stroke="%s" stroke-width="0.8"/>' % (x, c + 50, CLAY_LIGHT, INK))
+            parts.append('<circle cx="%d" cy="%d" r="2.2" fill="%s"/>' % (x, c + 50, CLAY_DARK))
+    return _svg(w, h, "".join(parts))
+
+
+def tanning_rack(rng):
+    w, h = 110, 100
+    body, light, dark = _wood(rng)
+    hide = rng.choice((HIDE, "#b08a5e", "#d8c09a"))
+    parts = [
+        '<rect x="8" y="8" width="94" height="84" fill="none" stroke="%s" stroke-width="6"/>' % body,
+        '<rect x="8" y="8" width="94" height="84" fill="none" stroke="%s" stroke-width="0.9"/>' % INK,
+    ]
+    # The hide, stretched by lacing to the frame: an irregular outline with
+    # the legs pulled out to the corners.
+    pts = []
+    for k in range(16):
+        a = math.pi * 2 * k / 16
+        corner = abs(math.sin(2 * a)) > 0.85
+        r = (38 if corner else 28) + rng.uniform(-3, 3)
+        pts.append((55 + math.cos(a) * r * 1.05, 50 + math.sin(a) * r * 0.95))
+    parts.append('<polygon points="%s" fill="%s" stroke="%s" stroke-width="1.1"/>' % (_pts(pts), hide, INK))
+    parts.append('<ellipse cx="55" cy="50" rx="16" ry="20" fill="%s" opacity="0.35"/>' % HIDE_DARK)
+    for x, y in pts[::2]:
+        fx = 8 if x < 30 else 102 if x > 80 else x
+        fy = 8 if y < 25 else 92 if y > 75 else y
+        parts.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"/>' % (x, y, fx, fy, ROPE))
+    if rng.random() < 0.5:
+        parts.append('<path d="M70,36 L84,28" stroke="%s" stroke-width="2.2"/><path d="M84,28 L90,25" stroke="%s" stroke-width="3"/>'
+                     % (STEEL_LIGHT, dark))
+    return _svg(w, h, "".join(parts))
+
+
 CATALOGUE = [
     ("mountain-peak", "Mountain", "terrain", lambda r: mountain(r, False, 1)),
     ("mountain-range", "Mountain Range", "terrain", lambda r: mountain(r, False, 3)),
@@ -2589,12 +2874,20 @@ CATALOGUE = [
     ("stocks", "Stocks", "town", stocks),
     ("notice-board", "Notice Board", "town", notice_board),
     ("street-lamp", "Street Lamp", "town", street_lamp),
+    ("forge", "Forge", "workshop", forge),
+    ("workbench", "Workbench", "workshop", workbench),
+    ("loom", "Loom", "workshop", loom),
+    ("spinning-wheel", "Spinning Wheel", "workshop", spinning_wheel),
+    ("potters-wheel", "Potter's Wheel", "workshop", potters_wheel),
+    ("grindstone", "Grindstone", "workshop", grindstone),
+    ("kiln", "Kiln", "workshop", kiln),
+    ("tanning-rack", "Tanning Frame", "workshop", tanning_rack),
 ]
 
 # Symbols drawn in three random variants, which the Stamp tool mixes so a
 # scatter of them does not look stencilled.
 VARIED = ("terrain", "flora", "furnishing", "underground", "fittings", "camp", "coast", "farm", "river",
-          "town")
+          "town", "workshop")
 
 
 def build(seed):

@@ -153,7 +153,7 @@ t('a settlement label asks for a settlement', st && st.kind === 'settlement', st
 await p.click('.modal [data-names="more"]');
 await p.waitForTimeout(120);
 const more = await chips();
-t('More gives twelve others', more.length === 12 && more.filter((n) => first.includes(n)).length < 3,
+t('More gives twelve others', more.length === 12 && more.filter((n) => first.includes(n)).length === 0,
   more.slice(0, 3).join(', '));
 await p.click('.modal .name-chip >> nth=2');
 await p.waitForTimeout(120);
@@ -390,6 +390,44 @@ const stamped = await p.evaluate(() => {
 t('all eight can be placed with the Stamp tool',
   STAMPS.every((n) => stamped.includes('starter/' + n)), stamped.join(' '));
 if (process.env.CG_SHOT) await p.screenshot({ path: process.env.CG_SHOT });
+
+/* More never repeats itself, and a waiting name stays on its map ----------- */
+
+// Southern regions were the worst case: up to 21 of the 48 names on four
+// pages were ones an earlier page had shown.
+// The dialog's starting seed is random; it is pinned here so the check
+// measures the same five pages every run.
+await p.evaluate(() => { window.__realRandom = Math.random; Math.random = () => 0.4242; });
+await p.click('.tool[data-tool="label"]');
+await p.waitForTimeout(200);
+await clickMap(300, 900);
+await p.waitForSelector('.modal [data-names="chips"] .name-chip');
+await p.evaluate(() => { Math.random = window.__realRandom; });
+await p.selectOption('.modal [data-names="style"]', 'southern');
+await p.selectOption('.modal [data-names="kind"]', 'region');
+await p.waitForTimeout(120);
+const pages = [await chips()];
+for (let i = 0; i < 4; i++) {
+  await p.click('.modal [data-names="more"]');
+  await p.waitForTimeout(100);
+  pages.push(await chips());
+}
+const offeredAll = pages.flat();
+t('five pages of More offer sixty different names', offeredAll.length === 60 && new Set(offeredAll).size === 60,
+  `${new Set(offeredAll).size} of ${offeredAll.length}`);
+await p.click('.modal button:has-text("Cancel")');
+await p.waitForTimeout(200);
+
+const kept = await p.evaluate(async () => {
+  const N = await import('/js/names.js');
+  N.setPendingName('Wendlecombe');
+  return N.takePendingName();
+});
+t('a name waiting for the next label is handed to it', kept === 'Wendlecombe', kept);
+await p.evaluate(async () => (await import('/js/names.js')).setPendingName('Wendlecombe'));
+await newMap(p, { name: 'Names Elsewhere', kind: 'region' });
+const leaked = await p.evaluate(async () => (await import('/js/names.js')).takePendingName());
+t('but not to a label on another map', leaked === '', leaked);
 
 t('no request leaves 127.0.0.1', external.length === 0, external.slice(0, 3).join(' '));
 t('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));

@@ -282,6 +282,25 @@ TERRAINS = {
         stops=[(150, 70, 44), (176, 92, 58), (198, 118, 76)],
         shadow=(84, 36, 24), lichen=(186, 180, 128), courses=7, tiles=8,
         grain=[(60, (130, 58, 36), 0.12, 0.4, 1.2)]),
+    # Floors for the trades, to go under the workshop symbols in a room the
+    # Room tool draws: a good parquet for a merchant's hall, hexagonal clay
+    # tiles for a kitchen or a potter's shop, and the black floor of a smithy.
+    # Added 2026-10-14 (art version 10).
+    "herringbone": dict(
+        group="floor", label="Herringbone Parquet", pattern="herringbone",
+        stops=[(118, 78, 44), (148, 102, 62), (178, 132, 84)],
+        grout=(60, 40, 24), repeats=4,
+        grain=[(40, (96, 64, 36), 0.10, 0.4, 1.1)]),
+    "hex-tiles": dict(
+        group="floor", label="Hexagonal Tiles", pattern="hextiles",
+        stops=[(160, 82, 52), (184, 104, 68), (204, 128, 88)],
+        grout=(150, 136, 116), cols=8, rows=7, odd=0.12, odd_rgb=(120, 104, 86),
+        grain=[(90, (140, 72, 46), 0.12, 0.4, 1.2), (30, (220, 196, 160), 0.10, 0.5, 1.3)]),
+    "cinders": dict(
+        group="floor", label="Smithy Cinders", pattern="cinders",
+        stops=[(34, 30, 27), (54, 49, 44), (80, 73, 65)],
+        ash=(132, 126, 118), clinker=130, clinker_rgb=(44, 40, 38), embers=7,
+        grain=[(220, (90, 84, 78), 0.18, 0.4, 1.0)]),
 }
 
 
@@ -1259,13 +1278,161 @@ def _pantiles(spec, size, rng):
     return px
 
 
+def _herringbone(spec, size, rng):
+    """Parquet blocks in herringbone, square to the tile: each block twice as
+    long as it is wide, alternately along x and along y, stepping
+    diagonally. The pattern repeats every four block widths both ways, so
+    the tile holds a whole number of repeats and the seam falls on a joint.
+
+    Seen as a lattice: a horizontal block H = [0,2]x[0,1] and a vertical one
+    V = [2,3]x[-1,1] (in block widths), repeated by (1,1) and (2,-2)."""
+    lo, mid, hi = spec["stops"]
+    reps = spec["repeats"]
+    u = size / (4.0 * reps)
+    per = 2 * reps          # the tile is 2*reps steps of (1,1) along each axis
+    tones = {}
+    tone = fbm(size, 4, 3, rng)
+    wave = fbm(size, 8, 3, rng)
+    px = bytearray(size * size * 4)
+
+    def block(x, y):
+        s, d = x + y, x - y
+        k0 = int(math.floor(s / 2.0))
+        m0 = int(math.floor(d / 4.0))
+        for k in (k0 - 2, k0 - 1, k0):
+            for m in (m0 - 1, m0, m0 + 1):
+                rx = x - k - 2 * m
+                ry = y - k + 2 * m
+                if 0 <= rx < 2 and 0 <= ry < 1:
+                    return k, m, 0, rx, ry
+                if 2 <= rx < 3 and -1 <= ry < 1:
+                    return k, m, 1, rx - 2, ry + 1
+        return None
+
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            b = block((x + 0.5) / u, (y + 0.5) / u)
+            if b is None:
+                _put(px, i, spec["grout"])
+                continue
+            k, m, vert, rx, ry = b
+            # Which block this is once the tile's own repeats are folded away,
+            # so a block cut by the seam gets the same tone on both sides.
+            q = k // per
+            key = (k - per * q, (m - reps * q) % per, vert)
+            if key not in tones:
+                tones[key] = (rng.random(), rng.random())
+            t, phase = tones[key]
+            along, across = (ry, rx / 2.0) if vert else (rx / 2.0, ry)
+            # Distance to the block's edge, in pixels: the joint and the bevel.
+            ex = min(rx, (1.0 if vert else 2.0) - rx) * u
+            ey = min(ry, (2.0 if vert else 1.0) - ry) * u
+            edge = min(ex, ey)
+            if edge < 0.8:
+                _put(px, i, spec["grout"])
+                continue
+            g = 0.5 + 0.5 * math.sin(2 * math.pi * (across * 2.6 + phase + (wave[i] - 0.5) * 1.8))
+            v = clamp(0.5 + (t - 0.5) * 0.75 + (tone[i] - 0.5) * 0.45 - (g ** 6) * 0.3)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if edge < 2.2:
+                rgb = _shade(rgb, -0.14 * (1.0 - edge / 2.2))
+            _put(px, i, rgb)
+    return px
+
+
+def _hextiles(spec, size, rng):
+    """Flat-topped hexagonal tiles in a thin mortar. A regular hexagon will
+    not repeat on a square, so the rows are squeezed by about one per cent:
+    eight columns and seven rows to the tile, invisible on the floor and
+    exactly seamless."""
+    lo, mid, hi = spec["stops"]
+    cols, rows = spec["cols"], spec["rows"]
+    s = size / (1.5 * cols)                 # circumradius, across the columns
+    h = size / rows                         # one row, centre to centre
+    squash = (math.sqrt(3) * s) / h
+    apothem = math.sqrt(3) / 2 * s
+    tone = fbm(size, 4, 3, rng)
+    tones = {}
+    px = bytearray(size * size * 4)
+    for y in range(size):
+        for x in range(size):
+            i = y * size + x
+            fx, fy = x + 0.5, (y + 0.5) * squash
+            fq = (2.0 / 3.0 * fx) / s
+            fr = (-1.0 / 3.0 * fx + math.sqrt(3) / 3.0 * fy) / s
+            fs = -fq - fr
+            q, r, t = round(fq), round(fr), round(fs)
+            dq, dr, ds = abs(q - fq), abs(r - fr), abs(t - fs)
+            if dq > dr and dq > ds:
+                q = -r - t
+            elif dr > ds:
+                r = -q - t
+            cx = 1.5 * s * q
+            cy = math.sqrt(3) * s * (r + q / 2.0)
+            dx, dy = fx - cx, fy - cy
+            n = max(abs(dy), abs(math.sqrt(3) / 2 * dx + dy / 2), abs(math.sqrt(3) / 2 * dx - dy / 2))
+            edge = (apothem - n) / squash
+            if edge < 1.1:
+                _put(px, i, spec["grout"])
+                continue
+            # The tile's identity with the tile's own repeats folded away:
+            # eight columns across, and a step of eight columns is four rows.
+            qq = q % cols
+            rr = (r + (q - qq) // 2) % rows
+            key = (qq, rr)
+            if key not in tones:
+                tones[key] = (rng.random(), rng.random() < spec["odd"])
+            t0, odd = tones[key]
+            v = clamp(0.5 + (t0 - 0.5) * 0.8 + (tone[i] - 0.5) * 0.5)
+            rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+            if odd:
+                rgb = mix_rgb(rgb, spec["odd_rgb"], 0.55)
+            # Worn in the middle, where the feet go, and darker at the arris.
+            if edge < 3.0:
+                rgb = _shade(rgb, -0.18 * (1.0 - edge / 3.0))
+            elif n < apothem * 0.45:
+                rgb = _shade(rgb, 0.05)
+            _put(px, i, rgb)
+    return px
+
+
+def _cinders(spec, size, rng):
+    """A smithy's floor: earth trodden black with soot, grey ash drifted into
+    the low places, lumps of clinker, and the odd ember still alight."""
+    lo, mid, hi = spec["stops"]
+    field = warp(fbm(size, 8, 4, rng), size, fbm(size, 8, 3, rng), fbm(size, 8, 3, rng), size * 0.05)
+    ash = fbm(size, 4, 3, rng)
+    px = bytearray(size * size * 4)
+    for i in range(size * size):
+        v = field[i]
+        rgb = mix_rgb(lo, mid, v * 2.0) if v < 0.5 else mix_rgb(mid, hi, (v - 0.5) * 2.0)
+        a = clamp((ash[i] - 0.56) * 2.5)
+        if a > 0:
+            rgb = mix_rgb(rgb, spec["ash"], a * 0.42)
+        j = i * 4
+        px[j], px[j + 1], px[j + 2], px[j + 3] = rgb[0], rgb[1], rgb[2], 255
+    for _ in range(spec["clinker"]):
+        cx, cy, r = rng.random() * size, rng.random() * size, rng.uniform(1.6, 3.8)
+        _blob(px, size, cx + 0.8, cy + 1.0, r, (14, 12, 11), 0.55, 0.5)
+        _blob(px, size, cx, cy, r * 0.9, spec["clinker_rgb"], 0.9, 0.35)
+        _blob(px, size, cx - r * 0.3, cy - r * 0.3, r * 0.4, (104, 98, 92), 0.6, 0.6)
+    for _ in range(spec["embers"]):
+        cx, cy = rng.random() * size, rng.random() * size
+        _blob(px, size, cx, cy, rng.uniform(6.0, 9.0), (170, 70, 24), 0.30, 0.95)
+        _blob(px, size, cx, cy, rng.uniform(1.6, 2.4), (246, 160, 62), 0.95, 0.3)
+        _blob(px, size, cx - 0.4, cy - 0.4, 0.9, (255, 226, 150), 0.9, 0.2)
+    return px
+
+
 PATTERNS = {"flagstone": _flagstone, "planks": _planks, "cobble": _cobble, "lava": _lava,
             "brick": _brick, "carpet": _carpet, "marble": _marble,
             "ashlar": _ashlar, "straw": _straw, "ice": _ice,
             "mosaic": _mosaic, "shingle": _shingle, "reef": _reef,
             "vineyard": _vineyard, "wheat": _wheat, "earth": _earth,
             "riverbed": _riverbed, "mudflat": _mudflat, "reeds": _reeds,
-            "thatch": _thatch, "slates": _slates, "pantiles": _pantiles}
+            "thatch": _thatch, "slates": _slates, "pantiles": _pantiles,
+            "herringbone": _herringbone, "hextiles": _hextiles, "cinders": _cinders}
 
 
 def render(name, size, seed):

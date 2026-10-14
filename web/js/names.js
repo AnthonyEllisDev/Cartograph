@@ -302,13 +302,17 @@ export function nameChooser({ kind = 'settlement', onPick }) {
     // can ask suggestNames for the same list.
     seed: Math.floor(Math.random() * 1e9).toString(36),
     step: 0,
+    // Every name this chooser has shown for the style and kind in hand. Each
+    // page is its own seeded draw, so without this More could offer again a
+    // name it had just shown -- up to 21 of 48 over a few pages.
+    shown: new Set(),
   };
   const chips = el('div', { class: 'name-chips', 'data-names': 'chips' });
   const styleSel = el('select', { 'data-names': 'style',
-    onchange: () => { state.style = styleSel.value; setToolSetting('names', 'style', state.style); state.step = 0; fill(); } },
+    onchange: () => { state.style = styleSel.value; setToolSetting('names', 'style', state.style); state.step = 0; state.shown.clear(); fill(); } },
     Object.entries(NAME_STYLES).map(([id, s]) => el('option', { value: id, text: s.label, selected: id === state.style })));
   const kindSel = el('select', { 'data-names': 'kind',
-    onchange: () => { state.kind = kindSel.value; state.step = 0; fill(); } },
+    onchange: () => { state.kind = kindSel.value; state.step = 0; state.shown.clear(); fill(); } },
     Object.entries(NAME_KINDS).map(([id, k]) => el('option', { value: id, text: k.label, selected: id === state.kind })));
   const more = el('button', { class: 'btn', type: 'button', text: 'More', 'data-names': 'more',
     title: 'Twelve more names in this style',
@@ -320,8 +324,10 @@ export function nameChooser({ kind = 'settlement', onPick }) {
     chips.dataset.style = state.style;
     chips.dataset.kind = state.kind;
     chips.innerHTML = '';
+    const avoid = namesOnMap().concat([...state.shown]);
     for (const name of suggestNames({ seed, style: state.style, kind: state.kind,
-                                      count: SUGGESTIONS, avoid: namesOnMap() })) {
+                                      count: SUGGESTIONS, avoid })) {
+      state.shown.add(name);
       chips.appendChild(el('button', { class: 'name-chip', type: 'button', text: name,
                                        'data-name': name, onclick: () => onPick(name) }));
     }
@@ -354,6 +360,13 @@ export async function pickName({ kind = 'settlement', title = 'Suggest a name' }
 /* A name picked from the palette with nothing selected to give it to waits
  * here for the next label the Label tool places, which opens its dialog with
  * the name already filled in. Taken once. */
-let pending = '';
-export function setPendingName(name) { pending = String(name || ''); }
-export function takePendingName() { const n = pending; pending = ''; return n; }
+let pending = { name: '', doc: null };
+// The name is kept with the map it was picked for: it was checked against
+// that map's names, and opening or starting another map left it waiting to
+// fill the first label drawn there.
+export function setPendingName(name) { pending = { name: String(name || ''), doc: app.doc }; }
+export function takePendingName() {
+  const n = pending.doc === app.doc ? pending.name : '';
+  pending = { name: '', doc: null };
+  return n;
+}

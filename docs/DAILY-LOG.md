@@ -5,6 +5,128 @@ starts, so it knows what has already been done and does not do it twice.
 
 ---
 
+## 2026-10-14 -- rooms by the drag, the workshop art, and two things the review found
+
+Anthony's working copy matched `origin/main` byte for byte across all 99
+tracked files but the `.pyc`s and the two screenshots (every one staged and
+compared). A feature day.
+
+**Baseline: green.** Every suite passed before anything was changed, run
+against a pristine clone on port 7871 while today's work went into a second
+clone served on 7872: verify 82, lighting 29, hex 27, pro 25, ext 17, theme 16,
+labels 8, brushes 8, guards 66, regress 135, regions 25, notes 36, clipboard
+40, selection 43, prefabs 41, transform 52, hatch 32, print 29, players 31,
+setedit 21, art 17, caverns 25, backups 21, frames 34, cartouche 39, refs 35,
+dungeon 34, generate 27, props 37, trace 45, rivers 48, names 51 -- 1,176 --
+plus `battle` and `demo`.
+
+**Review.** `node --check` on every module, extension and test,
+`py_compile` on every Python file, and the non-ASCII scan: clean. A second
+reader went through yesterday's names end to end, reproducing each finding on
+a running copy, and found the generator, the undo entries, the dialogs and the
+chips (text only, never `innerHTML`) sound. Two real defects, each now caught
+by a check in `names.mjs` that fails on the 2026-10-13 code:
+
+- *A waiting name followed you to another map.* A name picked from the palette
+  with nothing held waits for the next label -- in a module variable that
+  nothing cleared, so opening or starting another map left it there, and the
+  first label drawn on the new map opened with a name checked against the old
+  map's names. The name is now kept with the map it was picked for, and
+  `takePendingName()` gives nothing on any other.
+- *More could offer a name it had just shown.* Each page is its own seeded
+  draw and only the map's own names were avoided, so pages overlapped -- up to
+  21 names in 48 over four pages for Southern regions. The chooser now
+  remembers everything it has shown for the style and kind in hand and avoids
+  that too. The check pins the dialog's random starting seed so it measures
+  the same five pages every run (54 different names of 60 on the old code).
+
+Written up, not changed: a waiting name is taken when the dialog opens, so
+cancelling that dialog loses it; *Suggest a name* from the palette while
+holding a path, a stamp or a wall treats it as holding nothing and switches to
+the Label tool, where holding two things is refused; with the Region tool up the
+toast still says "click the map to place it" and the dialog offers settlement
+names; and the word filter checks the parts of a name, not the joined name (a
+sweep of 300 seeds in every style and kind found nothing through it).
+
+**The feature: the Room tool.** Research: Dungeon Scrawl's rectangle tool,
+Dungeondraft's room tool and DungeonFog's all make a room from one drag -- floor
+and wall together -- and merge rooms that touch. Cartograph had the dungeon
+generator at one end and the Wall tool at the other: a room drawn by hand was
+four clicks of wall and a separate Shape fill, and joining two meant cutting a
+wall up by hand. Elevation was weighed again and is still a design rather
+than a day; river names along the generated rivers and lakes are smaller and
+still open; `registerExporter` still has nobody asking.
+
+- **Room** (`O`, after Wall in the toolbar): drag a room, on the square grid
+  whether snapping is on or not. Modes: *Add a room*, *Carve back to rock*, and
+  *Put in a door* (Door, Secret door or Window), which lights the wall edge
+  under the pointer and toggles a door there. *Shade the rock* darkens
+  everything outside the rooms. The floor texture comes from the picker and is
+  decoded through `requireAsset`, as every other route must.
+- `web/js/rooms.js`. **The floor rings are the only record of which cells are
+  rooms**: `readCells` tests each cell's centre against the room floor ops'
+  rings (even-odd, the rule the renderer fills by), so there is no cell list
+  beside the picture to drift from it -- the value-in-two-places trap designed
+  out. Each drag reads the cells, changes a box of them, and derives
+  everything again: one floor op per texture (`stroke`/`shape: 'generated'`,
+  `gen: {kind: 'rooms'}`, the generator's own op shape and `floorRings`), the
+  rock shade (`gen.kind 'rooms-shade'`), and the walls between room cells and
+  the rest, merged into runs and tagged `gen: 'rooms'`. The new ops go where
+  the old ones were in the paint layer, so paint laid over the rooms stays on
+  top of them; a run that comes out where one already was keeps its old op and
+  id.
+- **Doors.** The tool's own doors are tagged too, and stay while the outline
+  runs under them; any door, secret door or window on the outline -- the
+  tool's or one drawn with the Wall tool -- leaves a gap in the wall. Walls and
+  doors drawn by hand are otherwise never touched.
+- **One step**: `commitRooms` swaps the two layers' op lists, invalidates the
+  walls layer last so the relight sees the walls that are there now, and
+  pushes nothing for a change to nothing. Reload is pixel-identical by
+  construction -- the layers are rebuilt from their ops on every step.
+- The tool's `snaps` is a getter: off in door mode, where a pointer snapped to
+  a corner is equally near two edges. Hex maps, a locked or missing walls
+  layer and a locked floor layer are refused with a toast.
+- No extension API change; `API_VERSION` stays 1. No renderer change.
+
+Limits, said in the README: a room's walls are derived, so a room wall deleted
+by hand comes back on the next drag (put a door in it instead); there is no
+open archway that is not a door; and two touching rooms always merge -- a wall
+between them has to be drawn with the Wall tool, and is then kept.
+
+**Art version 10.** Three textures and eight symbols, per Anthony's note of
+2026-10-06, for the rooms: the workshops of a town. Textures, all `floor`:
+`herringbone` (*Herringbone Parquet*: blocks two by one along x and along y,
+stepping diagonally -- a lattice of (1,1) and (2,-2) that repeats every four
+block widths, so the tile holds whole repeats and each block's tone is keyed
+with the tile's repeats folded away), `hex-tiles` (*Hexagonal Tiles*: fired
+clay in a pale mortar, the odd greyer tile; a regular hexagon will not repeat on
+a square, so the rows are squeezed about one per cent to fit eight columns and
+seven rows exactly) and `cinders` (*Smithy Cinders*: sooty earth, ash in the
+low places, clinker, the odd ember; the first bake was grey clouds on black and
+was reworked). Stamps, new group `workshop` (in `VARIED`): forge, workbench,
+loom, spinning wheel, potter's wheel, grindstone, kiln and tanning frame, with
+new constants (`COAL COAL_GLOW CLAY CLAY_LIGHT CLAY_DARK KILN_BRICK HIDE
+HIDE_DARK LEATHER WOOL YARN`) that shadow nothing. Names checked against both
+catalogues. Old and new bakes at the same seed: all 294 old files
+byte-identical. Each texture tiled 2 x 2 and looked at, and a contact sheet of
+all 24 variants (a pale warp vanished into the loom and the bellows had no
+handle; both fixed).
+
+**Tests.** New suite `rooms.mjs`, 53 checks (`npm run rooms`), and three more
+in `names.mjs` (54). Checks proved against broken code: with the door gaps
+removed three door checks fail; with the walls rebuilt without relighting, the
+lamp check fails (the first draft lit the room after the walls were placed and
+passed either way, so it was rewritten to put the lamp down first). Its
+neighbour, "and undoing it lifts them", cannot fail on that mutant -- there is
+never a shadow to lift -- and is kept for the undo route it covers. Two full rounds of all thirty-three suites back to
+back, after the change: identical and all green, 1,232 of 1,232 each time,
+plus `battle` and `demo`. Screenshots looked at: a dungeon of rooms in
+three floors with two carved pillars, two doors and a room being dragged, and
+the three new floors as rooms with the eight workshop symbols at their real
+size against the grid.
+
+---
+
 ## 2026-10-13 -- names for the map, the town art, and four things the review found
 
 Anthony's working copy matched `origin/main` byte for byte across all 97
